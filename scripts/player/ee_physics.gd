@@ -295,25 +295,7 @@ func tick(input_h: int, input_v: int, space_just: bool, space_held: bool) -> voi
 			_speedX = tangent.x * tangent_speed
 			_speedY = tangent.y * tangent_speed
 			# Detect V by normal flip (physics-side, before jump)
-			var total_spd: float = absf(_speedX) + absf(_speedY)
-			if _prev_push_normal.x * n.x < -0.1 and absf(n.x) > 0.3:
-				_flip_count += 1
-				if _flip_count >= 3 and total_spd < 1.5:
-					_valley_ticks = 10
-			elif sign(_prev_push_normal.x) == sign(n.x):
-				_flip_count = 0
-			# Clear flip count if moving fast (transitioning, not stuck)
-			if total_spd > 3.0:
-				_flip_count = 0
-			_prev_push_normal = n
-			if _valley_ticks > 0:
-				_valley_ticks -= 1
-				in_valley = true
-				is_grounded = true
-				_speedX = 0
-				on_rotated_block = false
-			else:
-				on_rotated_block = true
+			on_rotated_block = true
 			_surface_normal = n
 			var grav_dir: Vector2 = Vector2(mox, moy)
 			var grav_len2: float = grav_dir.length()
