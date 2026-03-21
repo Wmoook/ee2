@@ -268,15 +268,7 @@ func tick(input_h: int, input_v: int, space_just: bool, space_held: bool) -> voi
 					hit = true
 		# Detect valley: only when actually overlapping 2+ different-rotation blocks
 		var _pre_total_spd: float = absf(_pre_tick_speedX) + absf(_pre_tick_speedY)
-		# Valley detection: overlap-based OR flip-based
-		var _flip_detected: bool = hit and _prev_push_normal.x * best_push.normalized().x < -0.1 and _pre_total_spd < 3.0
-		if hit and (_overlap_rots.size() >= 2 or _flip_detected) and _pre_total_spd < 3.0:
-			_stuck_ticks += 1
-		elif _stuck_ticks > 2 and _pre_total_spd < 1.0:
-			pass  # Sticky when slow
-		else:
-			_stuck_ticks = maxi(0, _stuck_ticks - 1)
-		if _stuck_ticks > 2:
+		if hit and _overlap_rots.size() >= 2:
 			in_valley = true
 			is_grounded = true
 		if hit and best_depth > 0.01:
