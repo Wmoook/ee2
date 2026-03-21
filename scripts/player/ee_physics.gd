@@ -288,24 +288,24 @@ func tick(input_h: int, input_v: int, space_just: bool, space_held: bool) -> voi
 			x += best_push.x
 			y += best_push.y
 			var n: Vector2 = best_push.normalized() if best_push.length() > 0.01 else Vector2(0, -1)
-				var tangent: Vector2 = Vector2(-n.y, n.x)
-				if tangent.x < 0:
-					tangent = -tangent
-				var spd: Vector2 = Vector2(_speedX, _speedY)
-				var spd_mag: float = spd.length()
-				var tangent_speed: float = spd.dot(tangent)
-				var grav: Vector2 = Vector2(mox, moy) * _get_grav_mult() / MULT * 0.5
-				tangent_speed += grav.dot(tangent)
-				var new_spd: Vector2 = tangent * tangent_speed
-				var _falling_into_v: bool = _overlap_rots.size() >= 2 and absf(_pre_tick_speedY) > absf(_pre_tick_speedX) * 1.5
-				if spd_mag > 1.0 and new_spd.length() < spd_mag * 0.2 and not _falling_into_v:
-					var dir: float = sign(_pre_tick_speedX)
-					if dir == 0: dir = 1.0
-					_speedX = tangent.x * spd_mag * dir
-					_speedY = tangent.y * spd_mag * dir
-				else:
-					_speedX = new_spd.x
-					_speedY = new_spd.y
+			var tangent: Vector2 = Vector2(-n.y, n.x)
+			if tangent.x < 0:
+				tangent = -tangent
+			var spd: Vector2 = Vector2(_speedX, _speedY)
+			var spd_mag: float = spd.length()
+			var tangent_speed: float = spd.dot(tangent)
+			var grav: Vector2 = Vector2(mox, moy) * _get_grav_mult() / MULT * 0.5
+			tangent_speed += grav.dot(tangent)
+			var new_spd: Vector2 = tangent * tangent_speed
+			var _falling_into_v: bool = _overlap_rots.size() >= 2 and absf(_pre_tick_speedY) > absf(_pre_tick_speedX) * 1.5
+			if spd_mag > 1.0 and new_spd.length() < spd_mag * 0.2 and not _falling_into_v:
+				var dir: float = sign(_pre_tick_speedX)
+				if dir == 0: dir = 1.0
+				_speedX = tangent.x * spd_mag * dir
+				_speedY = tangent.y * spd_mag * dir
+			else:
+				_speedX = new_spd.x
+				_speedY = new_spd.y
 			on_rotated_block = true
 			_surface_normal = n
 			var grav_dir: Vector2 = Vector2(mox, moy)
