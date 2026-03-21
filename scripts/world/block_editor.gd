@@ -1126,4 +1126,3 @@ func _snap_aligned_to_grid() -> void:
 func _deselect() -> void:
 	_has_selection = false
 	_free_originals.clear()
-	_snap_aligned_to_grid()
