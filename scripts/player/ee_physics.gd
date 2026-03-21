@@ -49,6 +49,7 @@ var _last_push_dir: Vector2 = Vector2.ZERO
 var _last_push_rot2: int = -999
 var _push_dampen: float = 1.0
 var _was_on_rotated: bool = false
+var _valley_floor_y: float = -1.0  # -1 = no valley floor
 var on_dot: bool = false
 var slow_dot: bool = false
 var _active_arrow_dir: int = -1  # -1 = no arrow, 0-3 = nearest cardinal
