@@ -242,16 +242,17 @@ func _input(event: InputEvent) -> void:
 			# Only activate selection if blocks were found
 			# Store indices of blocks in selection
 			_align_sel_indices.clear()
+			# Convert drag start/end to world positions and check block centers
+			var _sp: Vector2 = _get_aligned_snap(Vector2.ZERO)  # unused, just need world coords
 			var _finv: float = deg_to_rad(-_align_angle)
-			var _fmn: Vector2 = Vector2(minf(_align_sel_start.x, _align_sel_end.x), minf(_align_sel_start.y, _align_sel_end.y))
-			var _fmx: Vector2 = Vector2(maxf(_align_sel_start.x, _align_sel_end.x), maxf(_align_sel_start.y, _align_sel_end.y))
+			var _fmn: Vector2 = Vector2(minf(_align_sel_start.x, _align_sel_end.x) - 0.5, minf(_align_sel_start.y, _align_sel_end.y) - 0.5)
+			var _fmx: Vector2 = Vector2(maxf(_align_sel_start.x, _align_sel_end.x) + 0.5, maxf(_align_sel_start.y, _align_sel_end.y) + 0.5)
 			for _fi in range(WorldManager.free_blocks.size()):
 				var _fb: Dictionary = WorldManager.free_blocks[_fi]
 				var _fc: Vector2 = _fb.pos + Vector2(8, 8)
-				var _fl: Vector2 = (_fc - _align_origin).rotated(_finv)
-				var _gx: float = round(_fl.x / 16.0)
-				var _gy: float = round(_fl.y / 16.0)
-				if _gx >= _fmn.x and _gx <= _fmx.x and _gy >= _fmn.y and _gy <= _fmx.y:
+				# Transform block center to local grid space
+				var _fl: Vector2 = (_fc - _align_origin).rotated(_finv) / 16.0
+				if _fl.x >= _fmn.x and _fl.x <= _fmx.x and _fl.y >= _fmn.y and _fl.y <= _fmx.y:
 					_align_sel_indices.append(_fi)
 			# Store wheel center
 			var _bar: float = deg_to_rad(_align_angle)
