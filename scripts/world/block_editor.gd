@@ -433,7 +433,7 @@ func _is_mouse_over_ui() -> bool:
 	return false
 
 func _on_align_pressed() -> void:
-	# Reset all align state
+	# Reset align-specific state (preserve _has_selection for origin finding)
 	_align_has_sel = false
 	_align_sel_indices.clear()
 	_align_drag_angle = 0
@@ -442,7 +442,6 @@ func _on_align_pressed() -> void:
 	_free_originals.clear()
 	_rot_dragging = false
 	_move_dragging = false
-	_has_selection = false
 	if _align_mode:
 		_align_mode = false
 		_align_btn.text = "Align Grid"
