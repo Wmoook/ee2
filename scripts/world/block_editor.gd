@@ -249,8 +249,8 @@ func _input(event: InputEvent) -> void:
 				var _fb: Dictionary = WorldManager.free_blocks[_fi]
 				var _fc: Vector2 = _fb.pos + Vector2(8, 8)
 				var _fl: Vector2 = (_fc - _align_origin).rotated(_finv)
-				var _gx: float = floor(_fl.x / 16.0)
-				var _gy: float = floor(_fl.y / 16.0)
+				var _gx: float = round(_fl.x / 16.0)
+				var _gy: float = round(_fl.y / 16.0)
 				if _gx >= _fmn.x and _gx <= _fmx.x and _gy >= _fmn.y and _gy <= _fmx.y:
 					_align_sel_indices.append(_fi)
 			# Store wheel center
@@ -868,7 +868,7 @@ func _get_aligned_local(world_pos: Vector2) -> Vector2:
 	var rad: float = deg_to_rad(-_align_angle)
 	var rel: Vector2 = world_pos - _align_origin
 	var local: Vector2 = rel.rotated(rad)
-	return Vector2(floor(local.x / 16.0), floor(local.y / 16.0))
+	return Vector2(round(local.x / 16.0), round(local.y / 16.0))
 
 func _aligned_local_to_world(local_grid: Vector2) -> Vector2:
 	# Convert rotated grid coords back to world position
