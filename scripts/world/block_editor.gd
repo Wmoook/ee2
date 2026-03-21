@@ -165,8 +165,12 @@ func _input(event: InputEvent) -> void:
 			if event.is_action_released("place_block"):
 				_rot_dragging = false
 				if _align_has_sel and _align_drag_angle != 0:
-					_align_angle += _align_drag_angle
 					_align_drag_angle = 0
+					# Set grid directly from actual block state - no math drift
+					if _align_sel_indices.size() > 0 and _align_sel_indices[0] < WorldManager.free_blocks.size():
+						var ref_fb: Dictionary = WorldManager.free_blocks[_align_sel_indices[0]]
+						_align_angle = ref_fb.rotation
+						_align_origin = ref_fb.pos
 			return
 
 		# Only trigger rotation when clicking ON the wheel ring (±10px of circle)
@@ -570,6 +574,20 @@ func _draw() -> void:
 		var e: Vector2 = _align_sel_end if not _align_sel_dragging else _get_aligned_local(get_global_mouse_position())
 		var mn: Vector2 = Vector2(minf(s.x, e.x), minf(s.y, e.y))
 		var mx2: Vector2 = Vector2(maxf(s.x, e.x) + 1, maxf(s.y, e.y) + 1)
+		# During drag: grid-based preview. After release: block-based exact.
+		if _align_sel_dragging:
+			var dar: float = deg_to_rad(_align_angle)
+			var dvgo: Vector2 = _align_origin + Vector2(8, 8) + Vector2(-8, -8).rotated(dar)
+			var dc0: Vector2 = dvgo + (mn * 16.0).rotated(dar)
+			var dc1: Vector2 = dvgo + (Vector2(mx2.x, mn.y) * 16.0).rotated(dar)
+			var dc2: Vector2 = dvgo + (mx2 * 16.0).rotated(dar)
+			var dc3: Vector2 = dvgo + (Vector2(mn.x, mx2.y) * 16.0).rotated(dar)
+			var dsc: Color = Color(0.3, 0.6, 1.0, 0.5)
+			draw_line(dc0, dc1, dsc, 1.5)
+			draw_line(dc1, dc2, dsc, 1.5)
+			draw_line(dc2, dc3, dsc, 1.5)
+			draw_line(dc3, dc0, dsc, 1.5)
+
 		# Selection box from stored block indices - always exact
 		var cur_angle: float = _align_angle + _align_drag_angle
 		var inv_r: float = deg_to_rad(-cur_angle)
