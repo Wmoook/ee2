@@ -322,8 +322,9 @@ func tick(input_h: int, input_v: int, space_just: bool, space_held: bool) -> voi
 			else:
 				grav_dir = Vector2(0, 1)
 			var against_grav: float = -n.dot(grav_dir)
-			if against_grav > 0.3 and _pre_tick_grav_speed >= 0 and not on_tile:
+			if against_grav > 0.3 and not on_tile:
 				is_grounded = true
+				_jump_cooldown = 0  # Clear cooldown on rotated block contact
 				_coyote_ticks = 4
 
 	# Coyote time: count down when not grounded on rotated block
@@ -417,6 +418,9 @@ func _handle_jump(space_just: bool, space_held: bool) -> void:
 			var jump_mag: float = _gravity * _jump_height * _get_jump_mult() * 0.995 * TICK_SCALE / MULT
 			_speedY = -jump_mag
 			_jump_cooldown = 5
+			_valley_ticks = 0  # Clear valley on jump
+			_flip_count = 0
+			in_valley = false
 			did_jump = true
 	elif _active_arrow_dir >= 0:
 		# Arrow field: jump opposite to gravity, PRESERVE tangent speed
