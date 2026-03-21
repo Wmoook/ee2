@@ -260,13 +260,29 @@ func tick(input_h: int, input_v: int, space_just: bool, space_held: bool) -> voi
 					best_push = normal * depth
 					hit = true
 		# Detect valley: only when actually overlapping 2+ different-rotation blocks
+		var _all_push_y: float = 0.0
 		if hit and _overlap_rots.size() >= 2:
 			in_valley = true
-			is_grounded = true  # Player is on a surface in the valley
+			is_grounded = true
+			# Sum vertical push from ALL overlapping blocks
+			for fb2 in WorldManager.free_blocks:
+				if not GameState.is_solid(fb2.id):
+					continue
+				var r2: float = deg_to_rad(fb2.rotation)
+				var bc2: Vector2 = fb2.pos + Vector2(8, 8)
+				var d2: Vector2 = Vector2(x + 8, y + 8) - bc2
+				var cr2: float = cos(-r2); var sr2: float = sin(-r2)
+				var lx2: float = d2.x * cr2 - d2.y * sr2
+				var ly2: float = d2.x * sr2 + d2.y * cr2
+				var o2x: float = 16.0 - absf(lx2)
+				var o2y: float = 16.0 - absf(ly2)
+				if o2x > 0 and o2y > 0:
+					var n2: Vector2 = Vector2(-sin(r2), cos(r2))
+					if d2.dot(n2) < 0: n2 = -n2
+					_all_push_y += n2.y * minf(o2x, o2y)
 		if hit and best_depth > 0.01:
-			# Valley: zero horizontal when overlapping 2+ different rotations
 			if in_valley:
-				best_push.x = 0
+				best_push = Vector2(0, _all_push_y)
 				_speedX = 0
 			# Don't push into grid tiles - slide along them
 			if _collides_px(x + best_push.x, y + best_push.y):
