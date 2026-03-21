@@ -242,17 +242,18 @@ func _input(event: InputEvent) -> void:
 			# Only activate selection if blocks were found
 			# Store indices of blocks in selection
 			_align_sel_indices.clear()
-			# Convert drag start/end to world positions and check block centers
-			var _sp: Vector2 = _get_aligned_snap(Vector2.ZERO)  # unused, just need world coords
-			var _finv: float = deg_to_rad(-_align_angle)
-			var _fmn: Vector2 = Vector2(minf(_align_sel_start.x, _align_sel_end.x) - 0.5, minf(_align_sel_start.y, _align_sel_end.y) - 0.5)
-			var _fmx: Vector2 = Vector2(maxf(_align_sel_start.x, _align_sel_end.x) + 0.5, maxf(_align_sel_start.y, _align_sel_end.y) + 0.5)
+			# Use world-space: get actual start/end world positions from the drag
+			var _ws: Vector2 = _get_aligned_snap(get_global_mouse_position())
+			# Compute world-space bounding box from drag corners
+			var _ar2: float = deg_to_rad(_align_angle)
+			var _s_world: Vector2 = _align_origin + (_align_sel_start * 16.0).rotated(_ar2)
+			var _e_world: Vector2 = _align_origin + (_align_sel_end * 16.0).rotated(_ar2)
+			var _wmin: Vector2 = Vector2(minf(_s_world.x, _e_world.x) - 16, minf(_s_world.y, _e_world.y) - 16)
+			var _wmax: Vector2 = Vector2(maxf(_s_world.x, _e_world.x) + 16, maxf(_s_world.y, _e_world.y) + 16)
 			for _fi in range(WorldManager.free_blocks.size()):
 				var _fb: Dictionary = WorldManager.free_blocks[_fi]
 				var _fc: Vector2 = _fb.pos + Vector2(8, 8)
-				# Transform block center to local grid space
-				var _fl: Vector2 = (_fc - _align_origin).rotated(_finv) / 16.0
-				if _fl.x >= _fmn.x and _fl.x <= _fmx.x and _fl.y >= _fmn.y and _fl.y <= _fmx.y:
+				if _fc.x >= _wmin.x and _fc.x <= _wmax.x and _fc.y >= _wmin.y and _fc.y <= _wmax.y:
 					_align_sel_indices.append(_fi)
 			# Store wheel center
 			var _bar: float = deg_to_rad(_align_angle)
@@ -909,23 +910,28 @@ func _lift_aligned_to_free(center_pt: Vector2) -> void:
 	if _free_originals.size() > 0:
 		return
 	_free_center = center_pt
-	var inv: float = deg_to_rad(-_align_angle)
-	var mn: Vector2 = Vector2(minf(_align_sel_start.x, _align_sel_end.x), minf(_align_sel_start.y, _align_sel_end.y))
-	var mx: Vector2 = Vector2(maxf(_align_sel_start.x, _align_sel_end.x), maxf(_align_sel_start.y, _align_sel_end.y))
+	# Re-find blocks using same world-space bounding box as selection
+	var _ar2: float = deg_to_rad(_align_angle)
+	var _s_w: Vector2 = _align_origin + (_align_sel_start * 16.0).rotated(_ar2)
+	var _e_w: Vector2 = _align_origin + (_align_sel_end * 16.0).rotated(_ar2)
+	var _wmn: Vector2 = Vector2(minf(_s_w.x, _e_w.x) - 16, minf(_s_w.y, _e_w.y) - 16)
+	var _wmx: Vector2 = Vector2(maxf(_s_w.x, _e_w.x) + 16, maxf(_s_w.y, _e_w.y) + 16)
 	var to_remove: Array = []
 	for i in range(WorldManager.free_blocks.size()):
 		var fb: Dictionary = WorldManager.free_blocks[i]
 		var fc: Vector2 = fb.pos + Vector2(8, 8)
-		var loc: Vector2 = (fc - _align_origin).rotated(inv)
-		var gx: float = floor(loc.x / 16.0)
-		var gy: float = floor(loc.y / 16.0)
-		if gx >= mn.x and gx <= mx.x and gy >= mn.y and gy <= mx.y:
+		if fc.x >= _wmn.x and fc.x <= _wmx.x and fc.y >= _wmn.y and fc.y <= _wmx.y:
 			_free_originals.append({"pos": fb.pos, "id": fb.id, "rot": fb.rotation})
 			to_remove.append(i)
 	for i in range(to_remove.size() - 1, -1, -1):
 		WorldManager.free_blocks.remove_at(to_remove[i])
 	for orig in _free_originals:
 		WorldManager.free_blocks.append({"pos": orig.pos, "id": orig.id, "rotation": orig.rot})
+	# Update indices to match new positions
+	_align_sel_indices.clear()
+	var base: int = WorldManager.free_blocks.size() - _free_originals.size()
+	for j in range(_free_originals.size()):
+		_align_sel_indices.append(base + j)
 
 func _lift_to_free() -> void:
 	# If already lifted, don't re-lift (blocks already off grid)
