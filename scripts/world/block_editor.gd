@@ -37,7 +37,8 @@ var _align_sel_dragging: bool = false
 var _align_has_sel: bool = false
 var _align_drag_angle: float = 0.0
 var _align_wheel_pos: Vector2 = Vector2.ZERO
-var _align_sel_indices: Array = []  # Indices of selected free blocks
+var _align_sel_indices: Array = []
+var _align_move_start: Vector2 = Vector2.ZERO
 
 var _spin_btn: Button
 var _spin_slider: HSlider
@@ -224,6 +225,8 @@ func _input(event: InputEvent) -> void:
 			_align_sel_end = _align_sel_start
 			_align_sel_dragging = true
 			_align_has_sel = false
+			_align_sel_indices.clear()
+			_has_selection = false
 		if event is InputEventMouseMotion and _align_sel_dragging:
 			_align_sel_end = _get_aligned_local(get_global_mouse_position())
 			queue_redraw()
@@ -263,41 +266,32 @@ func _input(event: InputEvent) -> void:
 		# Move-drag: click inside aligned selection to move blocks
 		if _align_has_sel and not _align_sel_dragging:
 			var mg: Vector2 = get_global_mouse_position()
-			var ml: Vector2 = _get_aligned_local(mg)
-			var smn: Vector2 = Vector2(minf(_align_sel_start.x, _align_sel_end.x), minf(_align_sel_start.y, _align_sel_end.y))
-			var smx: Vector2 = Vector2(maxf(_align_sel_start.x, _align_sel_end.x), maxf(_align_sel_start.y, _align_sel_end.y))
-			var in_asel: bool = ml.x >= smn.x and ml.x <= smx.x and ml.y >= smn.y and ml.y <= smx.y
+			# Check if mouse is near any selected block (not grid coords)
+			var in_asel: bool = false
+			for si in _align_sel_indices:
+				if si < WorldManager.free_blocks.size():
+					var sfb: Dictionary = WorldManager.free_blocks[si]
+					if mg.distance_to(sfb.pos + Vector2(8, 8)) < 16.0:
+						in_asel = true
+						break
 			if _move_dragging:
 				if event is InputEventMouseMotion:
-					var cur_l: Vector2 = _get_aligned_local(get_global_mouse_position())
-					var ddx: float = cur_l.x - _move_start.x
-					var ddy: float = cur_l.y - _move_start.y
-					if absf(ddx) >= 1 or absf(ddy) >= 1:
-						var idx: int = int(ddx)
-						var idy: int = int(ddy)
-						if idx != 0 or idy != 0:
-							# Move all blocks in selection by grid steps
-							var inv_r: float = deg_to_rad(-_align_angle)
-							var ar_r: float = deg_to_rad(_align_angle)
-							var offset: Vector2 = Vector2(idx * 16, idy * 16).rotated(ar_r)
-							for fb in WorldManager.free_blocks:
-								var fc: Vector2 = fb.pos + Vector2(8, 8)
-								var loc: Vector2 = (fc - _align_origin).rotated(inv_r)
-								var gx: float = floor(loc.x / 16.0)
-								var gy: float = floor(loc.y / 16.0)
-								if gx >= smn.x and gx <= smx.x and gy >= smn.y and gy <= smx.y:
-									fb.pos += offset
-							_align_origin += offset
-							_align_sel_start.x += idx; _align_sel_start.y += idy
-							_align_sel_end.x += idx; _align_sel_end.y += idy
-							_move_start = Vector2(_move_start.x + idx, _move_start.y + idy)
+					var cur_snap: Vector2 = _get_aligned_snap(get_global_mouse_position())
+					var offset: Vector2 = cur_snap - _align_move_start
+					if offset.length() > 0.5:
+						for si in _align_sel_indices:
+							if si < WorldManager.free_blocks.size():
+								WorldManager.free_blocks[si].pos += offset
+						_align_origin += offset
+						_align_wheel_pos += offset
+						_align_move_start = cur_snap
 					queue_redraw()
 				if event.is_action_released("place_block"):
 					_move_dragging = false
 				return
 			if event.is_action_pressed("place_block") and in_asel:
 				_move_dragging = true
-				_move_start = ml
+				_align_move_start = _get_aligned_snap(mg)
 				get_viewport().set_input_as_handled()
 				return
 		var _place_aligned: bool = false
@@ -652,7 +646,7 @@ func _draw() -> void:
 		draw_rect(sr, Color(0.3, 0.6, 1.0, 0.7), false, 2.0)
 
 	# Rotation wheel for aligned selection
-	if _align_mode and _align_has_sel:
+	if _align_mode and _align_has_sel and _align_sel_indices.size() > 0:
 		var awc: Vector2 = _align_wheel_pos
 		var wc2: Color = Color(0.4, 0.7, 1.0, 0.5) if not _rot_dragging else Color(0.5, 0.9, 1.0, 0.8)
 		draw_arc(awc, ROT_WHEEL_RADIUS, 0, TAU, 32, wc2, 2.0)
