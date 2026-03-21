@@ -20,6 +20,7 @@ var _name_label: Label
 var _camera: Camera2D
 var _last_normal: Vector2 = Vector2(0, -1)
 var _valley_smiley_ticks: int = 0
+var _slow_ticks: int = 0  # Ticks player has been slow
 var _smiley_textures: Array = []
 var _space_just: bool = false
 var _space_held: bool = false
@@ -108,11 +109,7 @@ func _physics_process(delta: float) -> void:
 		return
 
 	# Pre-tick: valley jump from smiley flip detection
-	physics.valley_jump = _valley_smiley_ticks > 0 and physics.on_rotated_block
-	if _valley_smiley_ticks > 0 and physics.on_rotated_block:
-		physics.is_grounded = true
-		if not Input.is_action_pressed("move_left") and not Input.is_action_pressed("move_right"):
-			physics._speedX = 0
+	physics.valley_jump = false
 
 	# Read input
 	var ix: int = 0
@@ -200,16 +197,13 @@ func _physics_process(delta: float) -> void:
 			_valley_smiley_ticks = 0
 		elif physics.on_rotated_block and physics.is_grounded:
 			var n: Vector2 = physics._surface_normal
-			# Detect normal flip = V-shape (smiley stays upright)
-			var _total_spd: float = absf(physics._speedX) + absf(physics._speedY)
-			if _last_normal.x * n.x < -0.1 and absf(n.x) > 0.3 and _total_spd < 3.0:
+			# Flip detection: normal X flips = V-shape, smiley stays upright
+			if _last_normal.x * n.x < -0.1 and absf(n.x) > 0.3:
 				_valley_smiley_ticks = 10
 			_last_normal = n
 			if _valley_smiley_ticks > 0:
 				_valley_smiley_ticks -= 1
 				_smiley_sprite.rotation = 0.0
-			elif _valley_smiley_ticks == 0:
-				_last_normal = n  # Reset so flip won't re-trigger from stale data
 			else:
 				var target_angle: float = atan2(n.x, -n.y)
 				_smiley_sprite.rotation = lerp_angle(_smiley_sprite.rotation, target_angle, 0.3)

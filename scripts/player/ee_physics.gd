@@ -285,15 +285,9 @@ func tick(input_h: int, input_v: int, space_just: bool, space_held: bool) -> voi
 					best_push.x = 0
 				else:
 					best_push = Vector2.ZERO
-			if valley_jump:
-				best_push.x = 0  # No horizontal push in valley
 			x += best_push.x
 			y += best_push.y
 			var n: Vector2 = best_push.normalized() if best_push.length() > 0.01 else Vector2(0, -1)
-			if valley_jump:
-				_speedX = 0
-				_speedY = 0
-			else:
 				var tangent: Vector2 = Vector2(-n.y, n.x)
 				if tangent.x < 0:
 					tangent = -tangent
@@ -412,7 +406,7 @@ func _handle_jump(space_just: bool, space_held: bool) -> void:
 
 	var did_jump: bool = false
 
-	if in_valley or valley_jump:
+	if in_valley:
 		# Valley: jump straight up like normal gravity
 		if jumpCount < maxJumps:
 			if maxJumps < 1000: jumpCount += 1
