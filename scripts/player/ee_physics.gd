@@ -224,7 +224,8 @@ func tick(input_h: int, input_v: int, space_just: bool, space_held: bool) -> voi
 	on_rotated_block = false
 	in_valley = false
 	var on_tile: bool = _check_grounded() and _pre_tick_grav_speed >= 0
-	if not is_god_mode and WorldManager.free_blocks.size() > 0:
+	# Skip free block collision when grounded on a grid tile (prevents boundary fighting)
+	if not is_god_mode and WorldManager.free_blocks.size() > 0 and not on_tile:
 		var best_push: Vector2 = Vector2.ZERO
 		var best_depth: float = 0.0
 		var hit: bool = false
