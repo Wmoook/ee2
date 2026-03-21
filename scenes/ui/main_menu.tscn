@@ -1,0 +1,110 @@
+[gd_scene load_steps=2 format=3 uid="uid://bfhj3d5q6xvpc"]
+
+[ext_resource type="Script" path="res://scripts/ui/main_menu.gd" id="1_menu"]
+
+[node name="MainMenu" type="Control"]
+layout_mode = 3
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+script = ExtResource("1_menu")
+
+[node name="BG" type="ColorRect" parent="."]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+color = Color(0.08, 0.08, 0.15, 1)
+
+[node name="VBox" type="VBoxContainer" parent="."]
+layout_mode = 1
+anchors_preset = 8
+anchor_left = 0.5
+anchor_top = 0.5
+anchor_right = 0.5
+anchor_bottom = 0.5
+offset_left = -200.0
+offset_top = -220.0
+offset_right = 200.0
+offset_bottom = 220.0
+grow_horizontal = 2
+grow_vertical = 2
+theme_override_constants/separation = 12
+
+[node name="Title" type="Label" parent="VBox"]
+layout_mode = 2
+theme_override_font_sizes/font_size = 36
+text = "EE2"
+horizontal_alignment = 1
+
+[node name="Subtitle" type="Label" parent="VBox"]
+layout_mode = 2
+theme_override_font_sizes/font_size = 14
+theme_override_colors/font_color = Color(0.7, 0.7, 0.7, 1)
+text = "Everybody Edits 2"
+horizontal_alignment = 1
+
+[node name="Sep1" type="HSeparator" parent="VBox"]
+layout_mode = 2
+
+[node name="NameLabel" type="Label" parent="VBox"]
+layout_mode = 2
+text = "Player Name:"
+
+[node name="NameInput" type="LineEdit" parent="VBox"]
+layout_mode = 2
+placeholder_text = "Enter your name..."
+text = "Player"
+
+[node name="SmileyLabel" type="Label" parent="VBox"]
+layout_mode = 2
+text = "Smiley ID (0-187):"
+
+[node name="SmileyInput" type="SpinBox" parent="VBox"]
+layout_mode = 2
+max_value = 187.0
+value = 0.0
+
+[node name="Sep2" type="HSeparator" parent="VBox"]
+layout_mode = 2
+
+[node name="HostBtn" type="Button" parent="VBox"]
+layout_mode = 2
+text = "Host Game"
+
+[node name="HBoxJoin" type="HBoxContainer" parent="VBox"]
+layout_mode = 2
+
+[node name="IPInput" type="LineEdit" parent="VBox/HBoxJoin"]
+layout_mode = 2
+size_flags_horizontal = 3
+placeholder_text = "IP Address"
+text = "127.0.0.1"
+
+[node name="PortInput" type="LineEdit" parent="VBox/HBoxJoin"]
+layout_mode = 2
+custom_minimum_size = Vector2(80, 0)
+placeholder_text = "Port"
+text = "7777"
+
+[node name="JoinBtn" type="Button" parent="VBox"]
+layout_mode = 2
+text = "Join Game"
+
+[node name="Sep3" type="HSeparator" parent="VBox"]
+layout_mode = 2
+
+[node name="QuitBtn" type="Button" parent="VBox"]
+layout_mode = 2
+text = "Quit"
+
+[node name="StatusLabel" type="Label" parent="VBox"]
+layout_mode = 2
+theme_override_colors/font_color = Color(1, 0.8, 0.3, 1)
+text = ""
+horizontal_alignment = 1
+autowrap_mode = 2

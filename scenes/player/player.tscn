@@ -1,0 +1,8 @@
+[gd_scene load_steps=2 format=3 uid="uid://dp7m8cknq6h3a"]
+
+[ext_resource type="Script" path="res://scripts/player/player_controller.gd" id="1_player"]
+
+[node name="Player" type="CharacterBody2D"]
+collision_layer = 2
+collision_mask = 1
+script = ExtResource("1_player")
