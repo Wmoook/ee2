@@ -547,20 +547,18 @@ func _draw() -> void:
 	if _align_mode:
 		var mouse: Vector2 = get_global_mouse_position()
 		var snap: Vector2 = _get_aligned_snap(mouse)
-		# Draw rotated cursor block
+		var rad: float = deg_to_rad(_align_angle)
 		var center: Vector2 = snap + Vector2(8, 8)
 		draw_set_transform(center, deg_to_rad(_align_angle), Vector2.ONE)
 		draw_rect(Rect2(-8, -8, 16, 16), Color(0.3, 1.0, 0.3, 0.4), true)
 		draw_rect(Rect2(-8, -8, 16, 16), Color(0.3, 1.0, 0.3, 0.8), false, 1.5)
 		draw_set_transform(Vector2.ZERO, 0, Vector2.ONE)
-		# Draw rotated grid lines from snap cursor position (always aligned)
-		var rad: float = deg_to_rad(_align_angle)
+		# Draw rotated grid lines
 		var grid_col: Color = Color(0.3, 1.0, 0.3, 0.08)
-		# Grid origin = visual top-left corner of the rotated block
 		var go: Vector2 = center + Vector2(-8, -8).rotated(rad)
-		for i in range(-10, 11):
-			draw_line(go + Vector2(i * 16, -200).rotated(rad), go + Vector2(i * 16, 200).rotated(rad), grid_col, 0.5)
-			draw_line(go + Vector2(-200, i * 16).rotated(rad), go + Vector2(200, i * 16).rotated(rad), grid_col, 0.5)
+		for i in range(-20, 21):
+			draw_line(go + Vector2(i * 16, -400).rotated(rad), go + Vector2(i * 16, 400).rotated(rad), grid_col, 0.5)
+			draw_line(go + Vector2(-400, i * 16).rotated(rad), go + Vector2(400, i * 16).rotated(rad), grid_col, 0.5)
 
 	# Aligned selection: draw from actual block positions in rotated local space
 	if _align_mode and (_align_sel_dragging or _align_has_sel):
@@ -881,8 +879,8 @@ func _get_aligned_snap(world_pos: Vector2) -> Vector2:
 	var rad: float = deg_to_rad(-_align_angle)
 	var rel: Vector2 = world_pos - _align_origin
 	var local: Vector2 = rel.rotated(rad)
-	local.x = floor(local.x / 16.0) * 16.0
-	local.y = floor(local.y / 16.0) * 16.0
+	local.x = round(local.x / 16.0) * 16.0
+	local.y = round(local.y / 16.0) * 16.0
 	return _align_origin + local.rotated(-rad)
 
 var _free_originals: Array = []
