@@ -269,8 +269,12 @@ func tick(input_h: int, input_v: int, space_just: bool, space_held: bool) -> voi
 		# Detect valley: only when actually overlapping 2+ different-rotation blocks
 		var _pre_total_spd: float = absf(_pre_tick_speedX) + absf(_pre_tick_speedY)
 		if hit and _overlap_rots.size() >= 2 and _pre_total_spd < 0.5:
-			in_valley = true
-			is_grounded = true
+			_stuck_ticks += 1
+			if _stuck_ticks > 3:  # Must be slow + overlapping 2+ for 3 ticks
+				in_valley = true
+				is_grounded = true
+		else:
+			_stuck_ticks = maxi(0, _stuck_ticks - 1)  # Decay slowly, don't reset
 		if hit and best_depth > 0.01:
 			# Valley: zero horizontal when overlapping 2+ different rotations
 			if in_valley:
@@ -296,9 +300,15 @@ func tick(input_h: int, input_v: int, space_just: bool, space_held: bool) -> voi
 			var grav: Vector2 = Vector2(mox, moy) * _get_grav_mult() / MULT * 0.5
 			tangent_speed += grav.dot(tangent)
 			var new_spd: Vector2 = tangent * tangent_speed
-			# If projection kills >80% of speed at high velocity, preserve original
-			if spd_mag > 1.0 and new_spd.length() < spd_mag * 0.2:
-				pass  # Keep original speed
+			# If projection kills >80% of speed, redirect along tangent
+			# Skip if falling mostly downward into a V (sY much larger than sX)
+			var _falling_into_v: bool = _overlap_rots.size() >= 2 and absf(_pre_tick_speedY) > absf(_pre_tick_speedX) * 1.5
+			if spd_mag > 1.0 and new_spd.length() < spd_mag * 0.2 and not _falling_into_v:
+				# Use pre-tick horizontal direction (reliable, not affected by projection)
+				var dir: float = sign(_pre_tick_speedX)
+				if dir == 0: dir = 1.0
+				_speedX = tangent.x * spd_mag * dir
+				_speedY = tangent.y * spd_mag * dir
 			else:
 				_speedX = new_spd.x
 				_speedY = new_spd.y
@@ -325,6 +335,7 @@ func tick(input_h: int, input_v: int, space_just: bool, space_held: bool) -> voi
 		# Allow grounded state for a few ticks after leaving rotated block surface
 		if _jump_cooldown == 0:
 			is_grounded = true
+
 
 	# 8. Grounded - ONLY when falling or stationary, never during upward jump
 	if not is_grounded and _pre_tick_grav_speed >= 0:
