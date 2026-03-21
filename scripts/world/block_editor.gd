@@ -224,9 +224,15 @@ func _input(event: InputEvent) -> void:
 			_align_sel_start = _get_aligned_local(get_global_mouse_position())
 			_align_sel_end = _align_sel_start
 			_align_sel_dragging = true
+			# Reset ALL selection state
 			_align_has_sel = false
 			_align_sel_indices.clear()
+			_align_drag_angle = 0
+			_align_wheel_pos = Vector2.ZERO
 			_has_selection = false
+			_free_originals.clear()
+			_rot_dragging = false
+			_move_dragging = false
 		if event is InputEventMouseMotion and _align_sel_dragging:
 			_align_sel_end = _get_aligned_local(get_global_mouse_position())
 			queue_redraw()
