@@ -268,10 +268,6 @@ func tick(input_h: int, input_v: int, space_just: bool, space_held: bool) -> voi
 			in_valley = true
 			is_grounded = true  # Player is on a surface in the valley
 		if hit and best_depth > 0.01:
-			# In valley: only allow vertical push, zero horizontal to stop jitter
-			if in_valley:
-				best_push.x = 0
-				_speedX = 0
 			# Don't push into grid tiles - slide along them
 			if _collides_px(x + best_push.x, y + best_push.y):
 				if not _collides_px(x + best_push.x, y):
