@@ -107,10 +107,16 @@ func _physics_process(delta: float) -> void:
 	if not is_local:
 		return
 
+	# Pre-tick: valley jump from smiley flip detection
+	physics.valley_jump = _valley_smiley_ticks > 0 and physics.on_rotated_block
+	if _valley_smiley_ticks > 0 and physics.on_rotated_block:
+		physics.is_grounded = true
+		if not Input.is_action_pressed("move_left") and not Input.is_action_pressed("move_right"):
+			physics._speedX = 0
+
 	# Read input
 	var ix: int = 0
 	var iy: int = 0
-	# All movement works in both play and edit mode
 	if Input.is_action_pressed("move_left"): ix -= 1
 	if Input.is_action_pressed("move_right"): ix += 1
 	if physics.is_god_mode or physics.on_dot:
@@ -188,15 +194,22 @@ func _physics_process(delta: float) -> void:
 		elif physics.in_valley:
 			_smiley_sprite.rotation = 0.0
 			_valley_smiley_ticks = 10
+		elif not physics.on_rotated_block:
+			# In air or on grid: clear flip state
+			_last_normal = Vector2(0, -1)
+			_valley_smiley_ticks = 0
 		elif physics.on_rotated_block and physics.is_grounded:
 			var n: Vector2 = physics._surface_normal
 			# Detect normal flip = V-shape (smiley stays upright)
-			if _last_normal.x * n.x < -0.1 and absf(n.x) > 0.3:
+			var _total_spd: float = absf(physics._speedX) + absf(physics._speedY)
+			if _last_normal.x * n.x < -0.1 and absf(n.x) > 0.3 and _total_spd < 3.0:
 				_valley_smiley_ticks = 10
 			_last_normal = n
 			if _valley_smiley_ticks > 0:
 				_valley_smiley_ticks -= 1
 				_smiley_sprite.rotation = 0.0
+			elif _valley_smiley_ticks == 0:
+				_last_normal = n  # Reset so flip won't re-trigger from stale data
 			else:
 				var target_angle: float = atan2(n.x, -n.y)
 				_smiley_sprite.rotation = lerp_angle(_smiley_sprite.rotation, target_angle, 0.3)

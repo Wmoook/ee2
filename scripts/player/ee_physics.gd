@@ -39,6 +39,7 @@ var is_god_mode: bool = false
 var is_grounded: bool = false
 var on_rotated_block: bool = false
 var in_valley: bool = false
+var valley_jump: bool = false  # Set by player_controller for straight-up jump
 var _surface_normal: Vector2 = Vector2(0, -1)
 var _prev_push_normal: Vector2 = Vector2.ZERO
 var _valley_ticks: int = 0
@@ -284,31 +285,33 @@ func tick(input_h: int, input_v: int, space_just: bool, space_held: bool) -> voi
 					best_push.x = 0
 				else:
 					best_push = Vector2.ZERO
+			if valley_jump:
+				best_push.x = 0  # No horizontal push in valley
 			x += best_push.x
 			y += best_push.y
-			var n: Vector2 = best_push.normalized()
-			var tangent: Vector2 = Vector2(-n.y, n.x)
-			if tangent.x < 0:
-				tangent = -tangent
-			var spd: Vector2 = Vector2(_speedX, _speedY)
-			var spd_mag: float = spd.length()
-			var tangent_speed: float = spd.dot(tangent)
-			var grav: Vector2 = Vector2(mox, moy) * _get_grav_mult() / MULT * 0.5
-			tangent_speed += grav.dot(tangent)
-			var new_spd: Vector2 = tangent * tangent_speed
-			# If projection kills >80% of speed, redirect along tangent
-			# Skip if falling mostly downward into a V (sY much larger than sX)
-			var _falling_into_v: bool = _overlap_rots.size() >= 2 and absf(_pre_tick_speedY) > absf(_pre_tick_speedX) * 1.5
-			if spd_mag > 1.0 and new_spd.length() < spd_mag * 0.2 and not _falling_into_v:
-				# Use pre-tick horizontal direction (reliable, not affected by projection)
-				var dir: float = sign(_pre_tick_speedX)
-				if dir == 0: dir = 1.0
-				_speedX = tangent.x * spd_mag * dir
-				_speedY = tangent.y * spd_mag * dir
+			var n: Vector2 = best_push.normalized() if best_push.length() > 0.01 else Vector2(0, -1)
+			if valley_jump:
+				_speedX = 0
+				_speedY = 0
 			else:
-				_speedX = new_spd.x
-				_speedY = new_spd.y
-			# Detect V by normal flip (physics-side, before jump)
+				var tangent: Vector2 = Vector2(-n.y, n.x)
+				if tangent.x < 0:
+					tangent = -tangent
+				var spd: Vector2 = Vector2(_speedX, _speedY)
+				var spd_mag: float = spd.length()
+				var tangent_speed: float = spd.dot(tangent)
+				var grav: Vector2 = Vector2(mox, moy) * _get_grav_mult() / MULT * 0.5
+				tangent_speed += grav.dot(tangent)
+				var new_spd: Vector2 = tangent * tangent_speed
+				var _falling_into_v: bool = _overlap_rots.size() >= 2 and absf(_pre_tick_speedY) > absf(_pre_tick_speedX) * 1.5
+				if spd_mag > 1.0 and new_spd.length() < spd_mag * 0.2 and not _falling_into_v:
+					var dir: float = sign(_pre_tick_speedX)
+					if dir == 0: dir = 1.0
+					_speedX = tangent.x * spd_mag * dir
+					_speedY = tangent.y * spd_mag * dir
+				else:
+					_speedX = new_spd.x
+					_speedY = new_spd.y
 			on_rotated_block = true
 			_surface_normal = n
 			var grav_dir: Vector2 = Vector2(mox, moy)
@@ -331,7 +334,6 @@ func tick(input_h: int, input_v: int, space_just: bool, space_held: bool) -> voi
 		# Allow grounded state for a few ticks after leaving rotated block surface
 		if _jump_cooldown == 0:
 			is_grounded = true
-
 
 
 	# 8. Grounded - ONLY when falling or stationary, never during upward jump
@@ -410,7 +412,7 @@ func _handle_jump(space_just: bool, space_held: bool) -> void:
 
 	var did_jump: bool = false
 
-	if in_valley:
+	if in_valley or valley_jump:
 		# Valley: jump straight up like normal gravity
 		if jumpCount < maxJumps:
 			if maxJumps < 1000: jumpCount += 1
