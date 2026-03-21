@@ -35,6 +35,7 @@ var _align_sel_start: Vector2 = Vector2.ZERO
 var _align_sel_end: Vector2 = Vector2.ZERO
 var _align_sel_dragging: bool = false
 var _align_has_sel: bool = false
+var _align_drag_angle: float = 0.0  # Current rotation drag offset
 
 var _spin_btn: Button
 var _spin_slider: HSlider
@@ -138,8 +139,14 @@ func _input(event: InputEvent) -> void:
 			queue_redraw()
 
 	# Rotation wheel input (checked FIRST, before UI/line mode)
-	if _has_selection and not _line_mode:
+	if (_has_selection or _align_has_sel) and not _line_mode:
 		var wheel_center: Vector2 = _get_selection_center_world()
+		if _align_has_sel:
+			var _ar4: float = deg_to_rad(_align_angle)
+			var _s4: Vector2 = _align_sel_start
+			var _e4: Vector2 = _align_sel_end
+			var _mn4: Vector2 = Vector2((minf(_s4.x, _e4.x) + maxf(_s4.x, _e4.x) + 1) * 0.5, (minf(_s4.y, _e4.y) + maxf(_s4.y, _e4.y) + 1) * 0.5)
+			wheel_center = _align_origin + Vector2(8, 8) + (_mn4 * 16.0).rotated(_ar4)
 		var mouse_world: Vector2 = get_global_mouse_position()
 		var dist_to_wheel: float = mouse_world.distance_to(wheel_center)
 
@@ -153,17 +160,23 @@ func _input(event: InputEvent) -> void:
 					snap_deg = round(deg / 45.0) * 45.0
 				# Rotate all free blocks around the group center
 				_rotate_free_blocks(snap_deg)
+				_align_drag_angle = snap_deg
 				queue_redraw()
 			if event.is_action_released("place_block"):
 				_rot_dragging = false
+				if _align_has_sel:
+					_align_angle += _align_drag_angle
+					_align_drag_angle = 0
 			return
 
 		# Only trigger rotation when clicking ON the wheel ring (±10px of circle)
 		if event.is_action_pressed("place_block") and dist_to_wheel > ROT_WHEEL_RADIUS - 10 and dist_to_wheel < ROT_WHEEL_RADIUS + 10:
 			_rot_dragging = true
 			_rot_angle = (mouse_world - wheel_center).angle()
-			# Lift selected blocks off grid into free_blocks
-			_lift_to_free()
+			if _align_has_sel:
+				_lift_aligned_to_free(wheel_center)
+			else:
+				_lift_to_free()
 			get_viewport().set_input_as_handled()
 			return
 
@@ -484,9 +497,11 @@ func _draw() -> void:
 		# Draw rotated grid lines from snap cursor position (always aligned)
 		var rad: float = deg_to_rad(_align_angle)
 		var grid_col: Color = Color(0.3, 1.0, 0.3, 0.08)
+		# Grid origin = visual top-left corner of the rotated block
+		var go: Vector2 = center + Vector2(-8, -8).rotated(rad)
 		for i in range(-10, 11):
-			draw_line(_align_origin + Vector2(i * 16, -160).rotated(rad), _align_origin + Vector2(i * 16, 160).rotated(rad), grid_col, 0.5)
-			draw_line(_align_origin + Vector2(-160, i * 16).rotated(rad), _align_origin + Vector2(160, i * 16).rotated(rad), grid_col, 0.5)
+			draw_line(go + Vector2(i * 16, -200).rotated(rad), go + Vector2(i * 16, 200).rotated(rad), grid_col, 0.5)
+			draw_line(go + Vector2(-200, i * 16).rotated(rad), go + Vector2(200, i * 16).rotated(rad), grid_col, 0.5)
 
 	# Aligned selection: draw from actual block positions in rotated local space
 	if _align_mode and (_align_sel_dragging or _align_has_sel):
@@ -494,45 +509,18 @@ func _draw() -> void:
 		var e: Vector2 = _align_sel_end if not _align_sel_dragging else _get_aligned_local(get_global_mouse_position())
 		var mn: Vector2 = Vector2(minf(s.x, e.x), minf(s.y, e.y))
 		var mx2: Vector2 = Vector2(maxf(s.x, e.x) + 1, maxf(s.y, e.y) + 1)
-		# Compute bounds in ROTATED LOCAL space, then convert corners to world
-		var inv_rad: float = deg_to_rad(-_align_angle)
-		var ar: float = deg_to_rad(_align_angle)
-		var has_blocks: bool = false
-		var lmin: Vector2 = Vector2(INF, INF)
-		var lmax: Vector2 = Vector2(-INF, -INF)
-		for fb in WorldManager.free_blocks:
-			var fc: Vector2 = fb.pos + Vector2(8, 8)
-			var local: Vector2 = (fc - _align_origin).rotated(inv_rad)
-			var gx: float = floor(local.x / 16.0)
-			var gy: float = floor(local.y / 16.0)
-			if gx >= mn.x and gx <= mx2.x - 1 and gy >= mn.y and gy <= mx2.y - 1:
-				# Expand bounds in LOCAL rotated space
-				lmin.x = minf(lmin.x, local.x - 8)
-				lmin.y = minf(lmin.y, local.y - 8)
-				lmax.x = maxf(lmax.x, local.x + 8)
-				lmax.y = maxf(lmax.y, local.y + 8)
-				has_blocks = true
-		if has_blocks:
-			# Convert local corners to world
-			var c0: Vector2 = _align_origin + Vector2(lmin.x, lmin.y).rotated(ar)
-			var c1: Vector2 = _align_origin + Vector2(lmax.x, lmin.y).rotated(ar)
-			var c2: Vector2 = _align_origin + Vector2(lmax.x, lmax.y).rotated(ar)
-			var c3: Vector2 = _align_origin + Vector2(lmin.x, lmax.y).rotated(ar)
-			var sel_col: Color = Color(0.3, 0.6, 1.0, 0.7)
-			draw_line(c0, c1, sel_col, 2.0)
-			draw_line(c1, c2, sel_col, 2.0)
-			draw_line(c2, c3, sel_col, 2.0)
-			draw_line(c3, c0, sel_col, 2.0)
-		else:
-			var c0: Vector2 = _align_origin + (mn * 16.0).rotated(ar)
-			var c1: Vector2 = _align_origin + (Vector2(mx2.x, mn.y) * 16.0).rotated(ar)
-			var c2: Vector2 = _align_origin + (mx2 * 16.0).rotated(ar)
-			var c3: Vector2 = _align_origin + (Vector2(mn.x, mx2.y) * 16.0).rotated(ar)
-			var sel_col: Color = Color(0.3, 0.6, 1.0, 0.5)
-			draw_line(c0, c1, sel_col, 1.5)
-			draw_line(c1, c2, sel_col, 1.5)
-			draw_line(c2, c3, sel_col, 1.5)
-			draw_line(c3, c0, sel_col, 1.5)
+		# Selection uses same visual grid, includes drag rotation
+		var ar: float = deg_to_rad(_align_angle + _align_drag_angle)
+		var vgo: Vector2 = _align_origin + Vector2(8, 8) + Vector2(-8, -8).rotated(ar)
+		var c0: Vector2 = vgo + (mn * 16.0).rotated(ar)
+		var c1: Vector2 = vgo + (Vector2(mx2.x, mn.y) * 16.0).rotated(ar)
+		var c2: Vector2 = vgo + (mx2 * 16.0).rotated(ar)
+		var c3: Vector2 = vgo + (Vector2(mn.x, mx2.y) * 16.0).rotated(ar)
+		var sel_col: Color = Color(0.3, 0.6, 1.0, 0.7)
+		draw_line(c0, c1, sel_col, 2.0)
+		draw_line(c1, c2, sel_col, 2.0)
+		draw_line(c2, c3, sel_col, 2.0)
+		draw_line(c3, c0, sel_col, 2.0)
 
 	# Hover highlight
 	if not _align_mode and _hover.x >= 0 and _hover.y >= 0:
@@ -567,6 +555,28 @@ func _draw() -> void:
 		var sr: Rect2 = Rect2(Vector2(x0 * 16, y0 * 16), Vector2((x1 - x0 + 1) * 16, (y1 - y0 + 1) * 16))
 		draw_rect(sr, Color(0.3, 0.6, 1.0, 0.15), true)
 		draw_rect(sr, Color(0.3, 0.6, 1.0, 0.7), false, 2.0)
+
+	# Rotation wheel for aligned selection
+	if _align_mode and _align_has_sel:
+		# Center of aligned selection
+		var ar2: float = deg_to_rad(_align_angle)
+		var as2: Vector2 = _align_sel_start
+		var ae2: Vector2 = _align_sel_end
+		var amn: Vector2 = Vector2(minf(as2.x, ae2.x) + 0.5, minf(as2.y, ae2.y) + 0.5)
+		var amx: Vector2 = Vector2(maxf(as2.x, ae2.x) + 0.5, maxf(as2.y, ae2.y) + 0.5)
+		var awc: Vector2 = _align_origin + Vector2(8, 8) + Vector2((amn.x + amx.x) * 0.5 * 16.0, (amn.y + amx.y) * 0.5 * 16.0).rotated(ar2)
+		var wc2: Color = Color(0.4, 0.7, 1.0, 0.5) if not _rot_dragging else Color(0.5, 0.9, 1.0, 0.8)
+		draw_arc(awc, ROT_WHEEL_RADIUS, 0, TAU, 32, wc2, 2.0)
+		for tick2 in range(4):
+			var a2: float = tick2 * PI / 2.0
+			draw_line(awc + Vector2(cos(a2), sin(a2)) * (ROT_WHEEL_RADIUS - 6), awc + Vector2(cos(a2), sin(a2)) * (ROT_WHEEL_RADIUS + 6), wc2, 2.0)
+		for tick2 in range(4):
+			var a2: float = tick2 * PI / 2.0 + PI / 4.0
+			draw_line(awc + Vector2(cos(a2), sin(a2)) * (ROT_WHEEL_RADIUS - 3), awc + Vector2(cos(a2), sin(a2)) * (ROT_WHEEL_RADIUS + 3), Color(wc2, 0.3), 1.0)
+		var ha2: float = 0.0
+		if _rot_dragging:
+			ha2 = (get_global_mouse_position() - awc).angle()
+		draw_circle(awc + Vector2(cos(ha2), sin(ha2)) * ROT_WHEEL_RADIUS, 5.0, Color(0.5, 0.8, 1.0, 0.9))
 
 	# Existing selection highlight + rotation wheel (not in align mode)
 	if _has_selection and not _align_mode:
@@ -782,6 +792,28 @@ func _get_aligned_snap(world_pos: Vector2) -> Vector2:
 
 var _free_originals: Array = []
 var _free_center: Vector2 = Vector2.ZERO
+
+func _lift_aligned_to_free(center_pt: Vector2) -> void:
+	if _free_originals.size() > 0:
+		return
+	_free_center = center_pt
+	var inv: float = deg_to_rad(-_align_angle)
+	var mn: Vector2 = Vector2(minf(_align_sel_start.x, _align_sel_end.x), minf(_align_sel_start.y, _align_sel_end.y))
+	var mx: Vector2 = Vector2(maxf(_align_sel_start.x, _align_sel_end.x), maxf(_align_sel_start.y, _align_sel_end.y))
+	var to_remove: Array = []
+	for i in range(WorldManager.free_blocks.size()):
+		var fb: Dictionary = WorldManager.free_blocks[i]
+		var fc: Vector2 = fb.pos + Vector2(8, 8)
+		var loc: Vector2 = (fc - _align_origin).rotated(inv)
+		var gx: float = floor(loc.x / 16.0)
+		var gy: float = floor(loc.y / 16.0)
+		if gx >= mn.x and gx <= mx.x and gy >= mn.y and gy <= mx.y:
+			_free_originals.append({"pos": fb.pos, "id": fb.id, "rot": fb.rotation})
+			to_remove.append(i)
+	for i in range(to_remove.size() - 1, -1, -1):
+		WorldManager.free_blocks.remove_at(to_remove[i])
+	for orig in _free_originals:
+		WorldManager.free_blocks.append({"pos": orig.pos, "id": orig.id, "rotation": orig.rot})
 
 func _lift_to_free() -> void:
 	# If already lifted, don't re-lift (blocks already off grid)
