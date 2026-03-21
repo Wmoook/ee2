@@ -245,22 +245,19 @@ func tick(input_h: int, input_v: int, space_just: bool, space_held: bool) -> voi
 			var ox2: float = 16.0 - absf(lx)
 			var oy2: float = 16.0 - absf(ly)
 			if ox2 > 0 and oy2 > 0:
-				var push_lx: float = 0.0
-				var push_ly: float = 0.0
-				if oy2 < ox2:
-					push_ly = oy2 * sign(ly)
-				else:
-					push_lx = ox2 * sign(lx)
-				var cos_r2: float = cos(rot_rad)
-				var sin_r2: float = sin(rot_rad)
-				var wx: float = push_lx * cos_r2 - push_ly * sin_r2
-				var wy: float = push_lx * sin_r2 + push_ly * cos_r2
-				var depth: float = Vector2(wx, wy).length()
-				var rk: int = int(round(fb.rotation)) % 360
+				# Push along surface normal (consistent for all same-rotation blocks)
+				# Surface normal = "up" direction of the block = Vector2(0,-1) rotated
+				var normal: Vector2 = Vector2(-sin(rot_rad), cos(rot_rad))
+				# Push direction: away from block center toward player
+				if Vector2(dx2, dy2).dot(normal) < 0:
+					normal = -normal
+				# Depth: minimum overlap
+				var depth: float = minf(ox2, oy2)
+				var rk: int = int(round(fb.rotation)) % 180  # 0°==180°, 90°==270° for rectangles
 				_overlap_rots[rk] = true
 				if depth > best_depth:
 					best_depth = depth
-					best_push = Vector2(wx, wy)
+					best_push = normal * depth
 					hit = true
 		# Detect valley: only when actually overlapping 2+ different-rotation blocks
 		if hit and _overlap_rots.size() >= 2:
