@@ -250,6 +250,21 @@ func _input(event: InputEvent) -> void:
 			var _e_world: Vector2 = _align_origin + (_align_sel_end * 16.0).rotated(_ar2)
 			var _wmin: Vector2 = Vector2(minf(_s_world.x, _e_world.x) - 16, minf(_s_world.y, _e_world.y) - 16)
 			var _wmax: Vector2 = Vector2(maxf(_s_world.x, _e_world.x) + 16, maxf(_s_world.y, _e_world.y) + 16)
+			# Also lift any grid blocks in the selection area to free blocks
+			var _tx0: int = maxi(1, int(floor(_wmin.x / 16.0)))
+			var _ty0: int = maxi(1, int(floor(_wmin.y / 16.0)))
+			var _tx1: int = mini(WorldManager.world_width - 1, int(ceil(_wmax.x / 16.0)))
+			var _ty1: int = mini(WorldManager.world_height - 1, int(ceil(_wmax.y / 16.0)))
+			for _ty in range(_ty0, _ty1):
+				for _tx in range(_tx0, _tx1):
+					var _bid: int = WorldManager.get_tile(_tx, _ty)
+					if _bid != 0:
+						var _bpos: Vector2 = Vector2(_tx * 16.0, _ty * 16.0)
+						var _brot: float = float(WorldManager.get_rotation(_tx, _ty))
+						WorldManager.free_blocks.append({"pos": _bpos, "id": _bid, "rotation": _brot})
+						WorldManager.set_fg_tile(_tx, _ty, 0)
+						WorldManager.set_rotation(_tx, _ty, 0)
+			# Select all free blocks in area
 			for _fi in range(WorldManager.free_blocks.size()):
 				var _fb: Dictionary = WorldManager.free_blocks[_fi]
 				var _fc: Vector2 = _fb.pos + Vector2(8, 8)
