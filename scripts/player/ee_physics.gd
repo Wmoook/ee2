@@ -268,15 +268,19 @@ func tick(input_h: int, input_v: int, space_just: bool, space_held: bool) -> voi
 					hit = true
 		# Detect valley: only when actually overlapping 2+ different-rotation blocks
 		var _pre_total_spd: float = absf(_pre_tick_speedX) + absf(_pre_tick_speedY)
-		if hit and _overlap_rots.size() >= 2 and _pre_total_spd < 0.5:
+		# Valley detection: overlap-based OR flip-based
+		var _flip_detected: bool = hit and _prev_push_normal.x * best_push.normalized().x < -0.1 and _pre_total_spd < 3.0
+		if hit and (_overlap_rots.size() >= 2 or _flip_detected) and _pre_total_spd < 3.0:
 			_stuck_ticks += 1
-			if _stuck_ticks > 3:  # Must be slow + overlapping 2+ for 3 ticks
-				in_valley = true
-				is_grounded = true
+		elif _stuck_ticks > 2 and _pre_total_spd < 1.0:
+			pass  # Sticky when slow
 		else:
-			_stuck_ticks = maxi(0, _stuck_ticks - 1)  # Decay slowly, don't reset
+			_stuck_ticks = maxi(0, _stuck_ticks - 1)
+		if _stuck_ticks > 2:
+			in_valley = true
+			is_grounded = true
 		if hit and best_depth > 0.01:
-			# Valley: zero horizontal when overlapping 2+ different rotations
+			# Valley: zero all speed when overlapping 2+ different rotations
 			if in_valley:
 				best_push.x = 0
 				_speedX = 0
@@ -335,6 +339,7 @@ func tick(input_h: int, input_v: int, space_just: bool, space_held: bool) -> voi
 		# Allow grounded state for a few ticks after leaving rotated block surface
 		if _jump_cooldown == 0:
 			is_grounded = true
+
 
 
 	# 8. Grounded - ONLY when falling or stationary, never during upward jump
@@ -420,9 +425,6 @@ func _handle_jump(space_just: bool, space_held: bool) -> void:
 			var jump_mag: float = _gravity * _jump_height * _get_jump_mult() * 0.995 * TICK_SCALE / MULT
 			_speedY = -jump_mag
 			_jump_cooldown = 5
-			_valley_ticks = 0  # Clear valley on jump
-			_flip_count = 0
-			in_valley = false
 			did_jump = true
 	elif _active_arrow_dir >= 0:
 		# Arrow field: jump opposite to gravity, PRESERVE tangent speed
