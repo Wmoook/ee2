@@ -25,9 +25,60 @@ var _move_blocks: Array = []
 var _rot_last_snap: int = 0  # Last snapped rotation count
 const ROT_WHEEL_RADIUS: float = 40.0
 
+# Aligned placement mode
+var _align_mode: bool = false
+var _align_angle: float = 0.0  # Rotation angle in degrees
+var _align_origin: Vector2 = Vector2.ZERO  # Grid origin point
+var _align_block_id: int = 0  # Block to place
+
+var _spin_btn: Button
+var _spin_slider: HSlider
+var _spin_label: Label
+var _spin_panel: VBoxContainer
+var _align_btn: Button
+var _ui_layer: CanvasLayer
+var _spin_speed_val: float = 45.0
+
 func _ready() -> void:
 	z_index = 5
 	GameState.edit_mode_changed.connect(func(_e: bool): queue_redraw())
+	# UI layer for screen-space buttons
+	_ui_layer = CanvasLayer.new()
+	_ui_layer.layer = 11
+	add_child(_ui_layer)
+	# Spin panel on right side
+	_spin_panel = VBoxContainer.new()
+	_spin_panel.visible = false
+	_ui_layer.add_child(_spin_panel)
+
+	_spin_label = Label.new()
+	_spin_label.text = "Speed: 45 deg/s"
+	_spin_label.add_theme_font_size_override("font_size", 11)
+	_spin_label.add_theme_color_override("font_color", Color.WHITE)
+	_spin_panel.add_child(_spin_label)
+
+	_spin_slider = HSlider.new()
+	_spin_slider.min_value = -360
+	_spin_slider.max_value = 360
+	_spin_slider.step = 5
+	_spin_slider.value = 45
+	_spin_slider.custom_minimum_size = Vector2(140, 20)
+	_spin_slider.value_changed.connect(_on_spin_speed_changed)
+	_spin_panel.add_child(_spin_slider)
+
+	_spin_btn = Button.new()
+	_spin_btn.text = "Spin Object"
+	_spin_btn.custom_minimum_size = Vector2(140, 28)
+	_spin_btn.add_theme_font_size_override("font_size", 11)
+	_spin_btn.pressed.connect(_on_spin_pressed)
+	_spin_panel.add_child(_spin_btn)
+
+	_align_btn = Button.new()
+	_align_btn.text = "Align Grid"
+	_align_btn.custom_minimum_size = Vector2(140, 28)
+	_align_btn.add_theme_font_size_override("font_size", 11)
+	_align_btn.pressed.connect(_on_align_pressed)
+	_spin_panel.add_child(_align_btn)
 
 func _input(event: InputEvent) -> void:
 	if not GameState.is_edit_mode:
@@ -57,9 +108,12 @@ func _input(event: InputEvent) -> void:
 		# Delete/Backspace = clear selected blocks
 		if (event.keycode == KEY_DELETE or event.keycode == KEY_BACKSPACE) and _has_selection:
 			_clear_selection()
-		# Escape = deselect
-		if event.keycode == KEY_ESCAPE and _has_selection:
-			_deselect()
+		# Escape = deselect or exit align mode
+		if event.keycode == KEY_ESCAPE:
+			if _align_mode:
+				_align_mode = false
+			elif _has_selection:
+				_deselect()
 			queue_redraw()
 
 	# Rotation wheel input (checked FIRST, before UI/line mode)
@@ -123,6 +177,30 @@ func _input(event: InputEvent) -> void:
 			return
 
 	if _is_mouse_over_ui():
+		return
+
+	# Aligned placement mode
+	if _align_mode:
+		if event.is_action_pressed("place_block"):
+			var snap_pos: Vector2 = _get_aligned_snap(get_global_mouse_position())
+			WorldManager.free_blocks.append({"pos": snap_pos, "id": GameState.selected_block_id, "rotation": _align_angle})
+			queue_redraw()
+		if event.is_action_pressed("remove_block"):
+			# Remove nearest free block to mouse
+			var mouse: Vector2 = get_global_mouse_position()
+			var best_i: int = -1
+			var best_d: float = 12.0
+			for i in range(WorldManager.free_blocks.size()):
+				var fb: Dictionary = WorldManager.free_blocks[i]
+				var d: float = mouse.distance_to(fb.pos + Vector2(8, 8))
+				if d < best_d:
+					best_d = d
+					best_i = i
+			if best_i >= 0:
+				WorldManager.free_blocks.remove_at(best_i)
+				queue_redraw()
+		if event is InputEventMouseMotion:
+			queue_redraw()
 		return
 
 	# Line mode
@@ -217,9 +295,101 @@ func _is_mouse_over_ui() -> bool:
 	# Camera pad on left
 	if mouse.x < 140 and mouse.y > vp_size.y / 2 - 70 and mouse.y < vp_size.y / 2 + 70:
 		return true
+	# Spin panel on right
+	if _spin_panel and _spin_panel.visible and mouse.x > vp_size.x - 170 and mouse.y > vp_size.y / 2 - 50 and mouse.y < vp_size.y / 2 + 50:
+		return true
 	return false
 
+func _on_align_pressed() -> void:
+	if _align_mode:
+		_align_mode = false
+		_align_btn.text = "Align Grid"
+		return
+	# Find rotation from free blocks in selection or any free blocks
+	var rot: float = 0.0
+	var origin: Vector2 = Vector2.ZERO
+	var found: bool = false
+	if _has_selection:
+		var sel_rect: Rect2 = Rect2(
+			_selection.position.x * 16.0, _selection.position.y * 16.0,
+			_selection.size.x * 16.0, _selection.size.y * 16.0)
+		for fb in WorldManager.free_blocks:
+			if sel_rect.has_point(fb.pos + Vector2(8, 8)):
+				rot = fb.rotation
+				origin = fb.pos
+				found = true
+				break
+	if not found:
+		for fb in WorldManager.free_blocks:
+			if GameState.is_solid(fb.id) and absf(fb.rotation) > 0.1:
+				rot = fb.rotation
+				origin = fb.pos
+				found = true
+				break
+	if found:
+		_align_angle = rot
+		_align_origin = origin
+		_align_mode = true
+		_align_btn.text = "Exit Align"
+		_deselect()
+		queue_redraw()
+
+func _on_spin_speed_changed(val: float) -> void:
+	_spin_speed_val = val
+	_spin_label.text = "Speed: %d deg/s" % int(val)
+	# Update ALL currently spinning blocks (they may have moved outside selection)
+	for fb in WorldManager.free_blocks:
+		if fb.has("base_offset"):  # Has been set up for spinning
+			fb.spin = val
+
+func _on_spin_pressed() -> void:
+	if not _has_selection:
+		return
+	_lift_to_free()
+	var sel_rect: Rect2 = Rect2(
+		_selection.position.x * 16.0, _selection.position.y * 16.0,
+		_selection.size.x * 16.0, _selection.size.y * 16.0)
+	var center: Vector2 = sel_rect.position + sel_rect.size / 2.0
+	var any_spinning: bool = false
+	for fb in WorldManager.free_blocks:
+		var fc: Vector2 = fb.pos + Vector2(8, 8)
+		if sel_rect.has_point(fc):
+			if fb.has("spin") and fb.spin != 0:
+				any_spinning = true
+				break
+	for fb in WorldManager.free_blocks:
+		var fc: Vector2 = fb.pos + Vector2(8, 8)
+		if sel_rect.has_point(fc):
+			if any_spinning:
+				fb["spin"] = 0.0
+				fb.erase("pivot")
+				fb.erase("base_offset")
+				fb.erase("base_rot")
+				fb.erase("spin_angle")
+			else:
+				fb["spin"] = _spin_speed_val
+				fb["pivot"] = center
+				fb["base_offset"] = fb.pos + Vector2(8, 8) - center
+				fb["base_rot"] = fb.rotation
+				fb["spin_angle"] = 0.0
+	_spin_btn.text = "Stop Spin" if not any_spinning else "Spin Object"
+
 func _process(_delta: float) -> void:
+	# Spin panel positioning
+	if _spin_panel:
+		var vp_size: Vector2 = get_viewport().get_visible_rect().size
+		_spin_panel.visible = _has_selection and GameState.is_edit_mode
+		_spin_panel.position = Vector2(vp_size.x - 160, vp_size.y / 2 - 40)
+	# Rotate spinning free blocks (rigid body from base positions)
+	if WorldManager.free_blocks.size() > 0:
+		for fb in WorldManager.free_blocks:
+			if fb.has("base_offset") and fb.has("pivot"):
+				fb.spin_angle += fb.spin * _delta
+				var rad: float = deg_to_rad(fb.spin_angle)
+				var pivot: Vector2 = fb.pivot
+				var new_pos: Vector2 = pivot + fb.base_offset.rotated(rad) - Vector2(8, 8)
+				fb.pos = new_pos
+				fb.rotation = fb.base_rot + fb.spin_angle
 	if GameState.is_edit_mode:
 		queue_redraw()
 
@@ -244,8 +414,29 @@ func _draw() -> void:
 	for gy in range(sy, ey + 1):
 		draw_line(Vector2(sx * 16, gy * 16), Vector2(ex * 16, gy * 16), gc, 0.5)
 
+	# Aligned placement mode: show rotated grid cursor
+	if _align_mode:
+		var mouse: Vector2 = get_global_mouse_position()
+		var snap: Vector2 = _get_aligned_snap(mouse)
+		# Draw rotated cursor block
+		var center: Vector2 = snap + Vector2(8, 8)
+		draw_set_transform(center, deg_to_rad(_align_angle), Vector2.ONE)
+		draw_rect(Rect2(-8, -8, 16, 16), Color(0.3, 1.0, 0.3, 0.4), true)
+		draw_rect(Rect2(-8, -8, 16, 16), Color(0.3, 1.0, 0.3, 0.8), false, 1.5)
+		draw_set_transform(Vector2.ZERO, 0, Vector2.ONE)
+		# Draw rotated grid lines near cursor
+		var rad: float = deg_to_rad(_align_angle)
+		var grid_col: Color = Color(0.3, 1.0, 0.3, 0.08)
+		for i in range(-10, 11):
+			var offset: Vector2 = Vector2(i * 16, -160).rotated(rad)
+			var offset2: Vector2 = Vector2(i * 16, 160).rotated(rad)
+			draw_line(_align_origin + offset, _align_origin + offset2, grid_col, 0.5)
+			offset = Vector2(-160, i * 16).rotated(rad)
+			offset2 = Vector2(160, i * 16).rotated(rad)
+			draw_line(_align_origin + offset, _align_origin + offset2, grid_col, 0.5)
+
 	# Hover highlight
-	if _hover.x >= 0 and _hover.y >= 0:
+	if not _align_mode and _hover.x >= 0 and _hover.y >= 0:
 		var hr: Rect2 = Rect2(Vector2(_hover.x * 16, _hover.y * 16), Vector2(16, 16))
 		draw_rect(hr, Color(1, 1, 1, 0.25), false, 1.5)
 
@@ -453,7 +644,19 @@ func _apply_move(dx: int, dy: int) -> void:
 			WorldManager.set_fg_tile(nx, ny, b.id)
 			WorldManager.set_rotation(nx, ny, b.rot)
 
-var _free_originals: Array = []  # Original positions before rotation
+func _get_aligned_snap(world_pos: Vector2) -> Vector2:
+	# Snap world position to the rotated grid
+	var rad: float = deg_to_rad(-_align_angle)  # Inverse rotation
+	var rel: Vector2 = world_pos - _align_origin
+	# Rotate to local grid space
+	var local: Vector2 = rel.rotated(rad)
+	# Snap to 16px grid in local space
+	local.x = round(local.x / 16.0) * 16.0
+	local.y = round(local.y / 16.0) * 16.0
+	# Rotate back to world space
+	return _align_origin + local.rotated(-rad)
+
+var _free_originals: Array = []
 var _free_center: Vector2 = Vector2.ZERO
 
 func _lift_to_free() -> void:

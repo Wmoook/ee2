@@ -138,7 +138,12 @@ func serialize_world() -> Dictionary:
 				rot_data.append([x, y, fg_rotations[y][x]])
 	var free_data: Array = []
 	for fb in free_blocks:
-		free_data.append({"x": fb.pos.x, "y": fb.pos.y, "id": fb.id, "rot": fb.rotation})
+		var fd: Dictionary = {"x": fb.pos.x, "y": fb.pos.y, "id": fb.id, "rot": fb.rotation}
+		if fb.has("spin") and fb.spin != 0:
+			fd["spin"] = fb.spin
+			fd["px"] = fb.pivot.x
+			fd["py"] = fb.pivot.y
+		free_data.append(fd)
 	var line_data: Array = []
 	for ln in lines:
 		if not ln.has("_free"):
@@ -169,7 +174,11 @@ func deserialize_world(data: Dictionary) -> void:
 				fg_rotations[y][x] = int(entry[2])
 	free_blocks.clear()
 	for fb in data.get("free_blocks", []):
-		free_blocks.append({"pos": Vector2(fb.x, fb.y), "id": int(fb.id), "rotation": float(fb.rot)})
+		var fbd: Dictionary = {"pos": Vector2(fb.x, fb.y), "id": int(fb.id), "rotation": float(fb.rot)}
+		if fb.has("spin"):
+			fbd["spin"] = float(fb.spin)
+			fbd["pivot"] = Vector2(float(fb.get("px", fb.x + 8)), float(fb.get("py", fb.y + 8)))
+		free_blocks.append(fbd)
 	lines.clear()
 	for ln in data.get("lines", []):
 		lines.append({"start": Vector2(ln.sx, ln.sy), "end": Vector2(ln.ex, ln.ey),
