@@ -239,8 +239,7 @@ func _input(event: InputEvent) -> void:
 		if event.is_action_released("place_block") and _align_sel_dragging:
 			_align_sel_end = _get_aligned_local(get_global_mouse_position())
 			_align_sel_dragging = false
-			_align_has_sel = true
-			_has_selection = true
+			# Only activate selection if blocks were found
 			# Store indices of blocks in selection
 			_align_sel_indices.clear()
 			var _finv: float = deg_to_rad(-_align_angle)
@@ -262,6 +261,9 @@ func _input(event: InputEvent) -> void:
 			var _c0: Vector2 = _bvgo + (_bmn * 16.0).rotated(_bar)
 			var _c2: Vector2 = _bvgo + (_bmx * 16.0).rotated(_bar)
 			_align_wheel_pos = (_c0 + _c2) / 2.0
+			if _align_sel_indices.size() > 0:
+				_align_has_sel = true
+				_has_selection = true
 			queue_redraw()
 		if event is InputEventKey and event.pressed and not event.echo:
 			if (event.keycode == KEY_DELETE or event.keycode == KEY_BACKSPACE) and _align_has_sel:
