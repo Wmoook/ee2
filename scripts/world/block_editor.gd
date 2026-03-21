@@ -1101,7 +1101,29 @@ func _clear_selection() -> void:
 	_deselect()
 	queue_redraw()
 
+func _snap_aligned_to_grid() -> void:
+	# Convert axis-aligned free blocks (0°/90°/180°/270°) back to grid tiles
+	var to_remove: Array = []
+	for i in range(WorldManager.free_blocks.size()):
+		var fb: Dictionary = WorldManager.free_blocks[i]
+		if not GameState.is_solid(fb.id):
+			continue
+		var rot_mod: float = fmod(absf(fb.rotation), 90.0)
+		if rot_mod > 1.0 and rot_mod < 89.0:
+			continue  # Not axis-aligned, keep as free block
+		# Snap position to grid
+		var tx: int = int(round(fb.pos.x / 16.0))
+		var ty: int = int(round(fb.pos.y / 16.0))
+		if tx >= 0 and tx < WorldManager.world_width and ty >= 0 and ty < WorldManager.world_height:
+			var grid_rot: int = int(round(fb.rotation / 90.0) * 90) % 360
+			if grid_rot < 0: grid_rot += 360
+			WorldManager.set_fg_tile(tx, ty, fb.id)
+			WorldManager.set_rotation(tx, ty, grid_rot)
+			to_remove.append(i)
+	for i in range(to_remove.size() - 1, -1, -1):
+		WorldManager.free_blocks.remove_at(to_remove[i])
+
 func _deselect() -> void:
 	_has_selection = false
 	_free_originals.clear()
-	# Don't clear free_blocks - they should persist in the world!
+	_snap_aligned_to_grid()
