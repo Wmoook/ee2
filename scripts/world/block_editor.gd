@@ -433,9 +433,20 @@ func _is_mouse_over_ui() -> bool:
 	return false
 
 func _on_align_pressed() -> void:
+	# Reset all align state
+	_align_has_sel = false
+	_align_sel_indices.clear()
+	_align_drag_angle = 0
+	_align_wheel_pos = Vector2.ZERO
+	_align_sel_dragging = false
+	_free_originals.clear()
+	_rot_dragging = false
+	_move_dragging = false
+	_has_selection = false
 	if _align_mode:
 		_align_mode = false
 		_align_btn.text = "Align Grid"
+		queue_redraw()
 		return
 	# Find rotation from free blocks in selection or any free blocks
 	var rot: float = 0.0
