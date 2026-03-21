@@ -35,7 +35,9 @@ var _align_sel_start: Vector2 = Vector2.ZERO
 var _align_sel_end: Vector2 = Vector2.ZERO
 var _align_sel_dragging: bool = false
 var _align_has_sel: bool = false
-var _align_drag_angle: float = 0.0  # Current rotation drag offset
+var _align_drag_angle: float = 0.0
+var _align_wheel_pos: Vector2 = Vector2.ZERO
+var _align_sel_indices: Array = []  # Indices of selected free blocks
 
 var _spin_btn: Button
 var _spin_slider: HSlider
@@ -142,7 +144,7 @@ func _input(event: InputEvent) -> void:
 	if (_has_selection or _align_has_sel) and not _line_mode:
 		var wheel_center: Vector2
 		if _align_has_sel:
-			wheel_center = _get_align_sel_center()
+			wheel_center = _align_wheel_pos
 		else:
 			wheel_center = _get_selection_center_world()
 		var mouse_world: Vector2 = get_global_mouse_position()
@@ -163,10 +165,6 @@ func _input(event: InputEvent) -> void:
 			if event.is_action_released("place_block"):
 				_rot_dragging = false
 				if _align_has_sel and _align_drag_angle != 0:
-					# Rotate origin around pivot so selection stays aligned
-					var pivot: Vector2 = _get_align_sel_center()
-					var drag_rad: float = deg_to_rad(_align_drag_angle)
-					_align_origin = pivot + (_align_origin - pivot).rotated(drag_rad)
 					_align_angle += _align_drag_angle
 					_align_drag_angle = 0
 			return
@@ -229,7 +227,28 @@ func _input(event: InputEvent) -> void:
 			_align_sel_end = _get_aligned_local(get_global_mouse_position())
 			_align_sel_dragging = false
 			_align_has_sel = true
-			_has_selection = true  # Enable spin/align buttons
+			_has_selection = true
+			# Store indices of blocks in selection
+			_align_sel_indices.clear()
+			var _finv: float = deg_to_rad(-_align_angle)
+			var _fmn: Vector2 = Vector2(minf(_align_sel_start.x, _align_sel_end.x), minf(_align_sel_start.y, _align_sel_end.y))
+			var _fmx: Vector2 = Vector2(maxf(_align_sel_start.x, _align_sel_end.x), maxf(_align_sel_start.y, _align_sel_end.y))
+			for _fi in range(WorldManager.free_blocks.size()):
+				var _fb: Dictionary = WorldManager.free_blocks[_fi]
+				var _fc: Vector2 = _fb.pos + Vector2(8, 8)
+				var _fl: Vector2 = (_fc - _align_origin).rotated(_finv)
+				var _gx: float = floor(_fl.x / 16.0)
+				var _gy: float = floor(_fl.y / 16.0)
+				if _gx >= _fmn.x and _gx <= _fmx.x and _gy >= _fmn.y and _gy <= _fmx.y:
+					_align_sel_indices.append(_fi)
+			# Store wheel center
+			var _bar: float = deg_to_rad(_align_angle)
+			var _bvgo: Vector2 = _align_origin + Vector2(8, 8) + Vector2(-8, -8).rotated(_bar)
+			var _bmn: Vector2 = Vector2(minf(_align_sel_start.x, _align_sel_end.x), minf(_align_sel_start.y, _align_sel_end.y))
+			var _bmx: Vector2 = Vector2(maxf(_align_sel_start.x, _align_sel_end.x) + 1, maxf(_align_sel_start.y, _align_sel_end.y) + 1)
+			var _c0: Vector2 = _bvgo + (_bmn * 16.0).rotated(_bar)
+			var _c2: Vector2 = _bvgo + (_bmx * 16.0).rotated(_bar)
+			_align_wheel_pos = (_c0 + _c2) / 2.0
 			queue_redraw()
 		if event is InputEventKey and event.pressed and not event.echo:
 			if (event.keycode == KEY_DELETE or event.keycode == KEY_BACKSPACE) and _align_has_sel:
@@ -551,21 +570,29 @@ func _draw() -> void:
 		var e: Vector2 = _align_sel_end if not _align_sel_dragging else _get_aligned_local(get_global_mouse_position())
 		var mn: Vector2 = Vector2(minf(s.x, e.x), minf(s.y, e.y))
 		var mx2: Vector2 = Vector2(maxf(s.x, e.x) + 1, maxf(s.y, e.y) + 1)
-		# Compute base corners (no drag), then rotate around pivot by drag angle
-		var base_ar: float = deg_to_rad(_align_angle)
-		var base_vgo: Vector2 = _align_origin + Vector2(8, 8) + Vector2(-8, -8).rotated(base_ar)
-		var c0: Vector2 = base_vgo + (mn * 16.0).rotated(base_ar)
-		var c1: Vector2 = base_vgo + (Vector2(mx2.x, mn.y) * 16.0).rotated(base_ar)
-		var c2: Vector2 = base_vgo + (mx2 * 16.0).rotated(base_ar)
-		var c3: Vector2 = base_vgo + (Vector2(mn.x, mx2.y) * 16.0).rotated(base_ar)
-		# Rotate corners around the fixed pivot by drag angle
-		if _align_drag_angle != 0:
-			var pivot: Vector2 = _get_align_sel_center()
-			var drag_rad: float = deg_to_rad(_align_drag_angle)
-			c0 = pivot + (c0 - pivot).rotated(drag_rad)
-			c1 = pivot + (c1 - pivot).rotated(drag_rad)
-			c2 = pivot + (c2 - pivot).rotated(drag_rad)
-			c3 = pivot + (c3 - pivot).rotated(drag_rad)
+		# Selection box from stored block indices - always exact
+		var cur_angle: float = _align_angle + _align_drag_angle
+		var inv_r: float = deg_to_rad(-cur_angle)
+		var fwd_r: float = deg_to_rad(cur_angle)
+		var bmin: Vector2 = Vector2(INF, INF)
+		var bmax: Vector2 = Vector2(-INF, -INF)
+		var found_any: bool = false
+		for idx in _align_sel_indices:
+			if idx < WorldManager.free_blocks.size():
+				var fb: Dictionary = WorldManager.free_blocks[idx]
+				var fc: Vector2 = fb.pos + Vector2(8, 8)
+				var loc: Vector2 = (fc - _align_wheel_pos).rotated(inv_r)
+				bmin.x = minf(bmin.x, loc.x - 8); bmin.y = minf(bmin.y, loc.y - 8)
+				bmax.x = maxf(bmax.x, loc.x + 8); bmax.y = maxf(bmax.y, loc.y + 8)
+				found_any = true
+		var c0: Vector2; var c1: Vector2; var c2: Vector2; var c3: Vector2
+		if found_any:
+			c0 = _align_wheel_pos + Vector2(bmin.x, bmin.y).rotated(fwd_r)
+			c1 = _align_wheel_pos + Vector2(bmax.x, bmin.y).rotated(fwd_r)
+			c2 = _align_wheel_pos + Vector2(bmax.x, bmax.y).rotated(fwd_r)
+			c3 = _align_wheel_pos + Vector2(bmin.x, bmax.y).rotated(fwd_r)
+		else:
+			c0 = Vector2.ZERO; c1 = c0; c2 = c0; c3 = c0
 		var sel_col: Color = Color(0.3, 0.6, 1.0, 0.7)
 		draw_line(c0, c1, sel_col, 2.0)
 		draw_line(c1, c2, sel_col, 2.0)
@@ -608,7 +635,7 @@ func _draw() -> void:
 
 	# Rotation wheel for aligned selection
 	if _align_mode and _align_has_sel:
-		var awc: Vector2 = _get_align_sel_center()
+		var awc: Vector2 = _align_wheel_pos
 		var wc2: Color = Color(0.4, 0.7, 1.0, 0.5) if not _rot_dragging else Color(0.5, 0.9, 1.0, 0.8)
 		draw_arc(awc, ROT_WHEEL_RADIUS, 0, TAU, 32, wc2, 2.0)
 		for tick2 in range(4):
