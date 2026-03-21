@@ -282,8 +282,9 @@ func tick(input_h: int, input_v: int, space_just: bool, space_held: bool) -> voi
 					_all_push_y += n2.y * minf(o2x, o2y)
 		if hit and best_depth > 0.01:
 			if in_valley:
-				best_push = Vector2(0, _all_push_y)
+				best_push = Vector2.ZERO  # No push, freeze in place
 				_speedX = 0
+				_speedY = 0
 			# Don't push into grid tiles - slide along them
 			if _collides_px(x + best_push.x, y + best_push.y):
 				if not _collides_px(x + best_push.x, y):
