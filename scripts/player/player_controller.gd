@@ -18,6 +18,8 @@ var _death_timer: float = 0.0
 var _smiley_sprite: Sprite2D
 var _name_label: Label
 var _camera: Camera2D
+var _last_normal: Vector2 = Vector2(0, -1)
+var _valley_smiley_ticks: int = 0
 var _smiley_textures: Array = []
 var _space_just: bool = false
 var _space_held: bool = false
@@ -183,12 +185,12 @@ func _physics_process(delta: float) -> void:
 	if _smiley_sprite:
 		if physics.is_god_mode:
 			_smiley_sprite.rotation = lerp_angle(_smiley_sprite.rotation, 0.0, 0.3)
-		elif physics.on_rotated_block and physics.is_grounded and not physics.in_valley:
+		elif physics.in_valley:
+			_smiley_sprite.rotation = 0.0
+		elif physics.on_rotated_block and physics.is_grounded:
 			var n: Vector2 = physics._surface_normal
 			var target_angle: float = atan2(n.x, -n.y)
 			_smiley_sprite.rotation = lerp_angle(_smiley_sprite.rotation, target_angle, 0.3)
-		elif physics.in_valley:
-			_smiley_sprite.rotation = lerp_angle(_smiley_sprite.rotation, 0.0, 0.3)
 		elif physics.is_grounded:
 			_smiley_sprite.rotation = lerp_angle(_smiley_sprite.rotation, 0.0, 0.2)
 
