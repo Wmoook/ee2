@@ -101,6 +101,7 @@ func tick(input_h: int, input_v: int, space_just: bool, space_held: bool) -> voi
 	_now_ms += MS_PER_TICK
 	# Track speed in gravity direction to prevent jump during launch
 	var _pre_tick_speedY: float = _speedY
+	var _pre_tick_speedX: float = _speedX
 	# Speed TOWARD the ground: dot product of speed with gravity direction
 	# Positive = falling toward ground, negative = jumping away
 	var _pre_tick_grav_speed: float = _speedY  # Default: down gravity
@@ -266,9 +267,10 @@ func tick(input_h: int, input_v: int, space_just: bool, space_held: bool) -> voi
 					best_push = Vector2(wx, wy)
 					hit = true
 		# Detect valley: only when actually overlapping 2+ different-rotation blocks
-		if hit and _overlap_rots.size() >= 2:
+		var _pre_total_spd: float = absf(_pre_tick_speedX) + absf(_pre_tick_speedY)
+		if hit and _overlap_rots.size() >= 2 and _pre_total_spd < 0.5:
 			in_valley = true
-			is_grounded = true  # Player is on a surface in the valley
+			is_grounded = true
 		if hit and best_depth > 0.01:
 			# Valley: zero horizontal when overlapping 2+ different rotations
 			if in_valley:
@@ -289,11 +291,17 @@ func tick(input_h: int, input_v: int, space_just: bool, space_held: bool) -> voi
 			if tangent.x < 0:
 				tangent = -tangent
 			var spd: Vector2 = Vector2(_speedX, _speedY)
+			var spd_mag: float = spd.length()
 			var tangent_speed: float = spd.dot(tangent)
 			var grav: Vector2 = Vector2(mox, moy) * _get_grav_mult() / MULT * 0.5
 			tangent_speed += grav.dot(tangent)
-			_speedX = tangent.x * tangent_speed
-			_speedY = tangent.y * tangent_speed
+			var new_spd: Vector2 = tangent * tangent_speed
+			# If projection kills >80% of speed at high velocity, preserve original
+			if spd_mag > 1.0 and new_spd.length() < spd_mag * 0.2:
+				pass  # Keep original speed
+			else:
+				_speedX = new_spd.x
+				_speedY = new_spd.y
 			# Detect V by normal flip (physics-side, before jump)
 			on_rotated_block = true
 			_surface_normal = n
@@ -325,6 +333,7 @@ func tick(input_h: int, input_v: int, space_just: bool, space_held: bool) -> voi
 			_surface_normal = Vector2(0, -1)  # Flat ground = straight up jump
 
 	_was_on_rotated = on_rotated_block
+
 
 	# 9. Jump
 	_handle_jump(space_just, space_held)
