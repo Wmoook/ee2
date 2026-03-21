@@ -39,7 +39,8 @@ var is_god_mode: bool = false
 var is_grounded: bool = false
 var on_rotated_block: bool = false
 var in_valley: bool = false
-var valley_jump: bool = false  # Set by player_controller for straight-up jump
+var valley_jump: bool = false
+var _pos_history: Array = []  # Last 4 x positions for oscillation detection
 var _surface_normal: Vector2 = Vector2(0, -1)
 var _prev_push_normal: Vector2 = Vector2.ZERO
 var _valley_ticks: int = 0
@@ -123,6 +124,10 @@ func tick(input_h: int, input_v: int, space_just: bool, space_held: bool) -> voi
 		on_dot = true
 		slow_dot = false
 
+	if valley_jump:
+		input_h = 0
+		input_v = 0
+		_speedX = 0
 	_last_input_h = float(input_h)
 
 	# 1. Gravity
@@ -203,6 +208,10 @@ func tick(input_h: int, input_v: int, space_just: bool, space_held: bool) -> voi
 				var new_spd: Vector2 = grav_n * parallel + perp_vec
 				_speedX = new_spd.x
 				_speedY = new_spd.y
+
+	# Valley: zero X speed after ALL modifiers (gravity can add X in arrow fields)
+	if valley_jump:
+		_speedX = 0
 
 	# 7. Step position
 	_step_position()
@@ -285,27 +294,30 @@ func tick(input_h: int, input_v: int, space_just: bool, space_held: bool) -> voi
 					best_push.x = 0
 				else:
 					best_push = Vector2.ZERO
+			if valley_jump:
+				best_push.x = 0
 			x += best_push.x
 			y += best_push.y
 			var n: Vector2 = best_push.normalized() if best_push.length() > 0.01 else Vector2(0, -1)
-			var tangent: Vector2 = Vector2(-n.y, n.x)
-			if tangent.x < 0:
-				tangent = -tangent
-			var spd: Vector2 = Vector2(_speedX, _speedY)
-			var spd_mag: float = spd.length()
-			var tangent_speed: float = spd.dot(tangent)
-			var grav: Vector2 = Vector2(mox, moy) * _get_grav_mult() / MULT * 0.5
-			tangent_speed += grav.dot(tangent)
-			var new_spd: Vector2 = tangent * tangent_speed
-			var _falling_into_v: bool = _overlap_rots.size() >= 2 and absf(_pre_tick_speedY) > absf(_pre_tick_speedX) * 1.5
-			if spd_mag > 1.0 and new_spd.length() < spd_mag * 0.2 and not _falling_into_v:
-				var dir: float = sign(_pre_tick_speedX)
-				if dir == 0: dir = 1.0
-				_speedX = tangent.x * spd_mag * dir
-				_speedY = tangent.y * spd_mag * dir
-			else:
-				_speedX = new_spd.x
-				_speedY = new_spd.y
+			if not valley_jump:
+				var tangent: Vector2 = Vector2(-n.y, n.x)
+				if tangent.x < 0:
+					tangent = -tangent
+				var spd: Vector2 = Vector2(_speedX, _speedY)
+				var spd_mag: float = spd.length()
+				var tangent_speed: float = spd.dot(tangent)
+				var grav: Vector2 = Vector2(mox, moy) * _get_grav_mult() / MULT * 0.5
+				tangent_speed += grav.dot(tangent)
+				var new_spd: Vector2 = tangent * tangent_speed
+				var _falling_into_v: bool = _overlap_rots.size() >= 2 and absf(_pre_tick_speedY) > absf(_pre_tick_speedX) * 1.5
+				if spd_mag > 1.0 and new_spd.length() < spd_mag * 0.2 and not _falling_into_v:
+					var dir: float = sign(_pre_tick_speedX)
+					if dir == 0: dir = 1.0
+					_speedX = tangent.x * spd_mag * dir
+					_speedY = tangent.y * spd_mag * dir
+				else:
+					_speedX = new_spd.x
+					_speedY = new_spd.y
 			on_rotated_block = true
 			_surface_normal = n
 			var grav_dir: Vector2 = Vector2(mox, moy)
@@ -320,6 +332,33 @@ func tick(input_h: int, input_v: int, space_just: bool, space_held: bool) -> voi
 				_jump_cooldown = 0  # Clear cooldown on rotated block contact
 				_coyote_ticks = 4
 
+	# Position oscillation detection for V-shapes
+	_pos_history.append(x)
+	if _pos_history.size() > 4:
+		_pos_history.pop_front()
+	if _pos_history.size() == 4 and on_rotated_block:
+		# Check A-B-A-B pattern (position alternating)
+		var d01: float = absf(_pos_history[0] - _pos_history[1])
+		var d02: float = absf(_pos_history[0] - _pos_history[2])
+		var d13: float = absf(_pos_history[1] - _pos_history[3])
+		if d01 > 0.1 and d02 < 0.05 and d13 < 0.05:
+			in_valley = true
+			valley_jump = true
+			is_grounded = true
+			_speedX = 0
+			_speedY = 0
+			# Snap to exact center and lock there
+			var _center_x: float = (_pos_history[0] + _pos_history[1]) / 2.0
+			x = _center_x
+			_pos_history = [_center_x, _center_x, _center_x, _center_x]
+	elif valley_jump and on_rotated_block:
+		# Stay locked while still on rotated blocks
+		_speedX = 0
+		is_grounded = true
+	if not on_rotated_block and _jump_cooldown == 0:
+		_pos_history.clear()
+		valley_jump = false
+
 	# Coyote time: count down when not grounded on rotated block
 	if on_rotated_block and is_grounded:
 		_coyote_ticks = 4
@@ -328,6 +367,7 @@ func tick(input_h: int, input_v: int, space_just: bool, space_held: bool) -> voi
 		# Allow grounded state for a few ticks after leaving rotated block surface
 		if _jump_cooldown == 0:
 			is_grounded = true
+
 
 
 	# 8. Grounded - ONLY when falling or stationary, never during upward jump
