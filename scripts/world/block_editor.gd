@@ -140,13 +140,11 @@ func _input(event: InputEvent) -> void:
 
 	# Rotation wheel input (checked FIRST, before UI/line mode)
 	if (_has_selection or _align_has_sel) and not _line_mode:
-		var wheel_center: Vector2 = _get_selection_center_world()
+		var wheel_center: Vector2
 		if _align_has_sel:
-			var _ar4: float = deg_to_rad(_align_angle)
-			var _s4: Vector2 = _align_sel_start
-			var _e4: Vector2 = _align_sel_end
-			var _mn4: Vector2 = Vector2((minf(_s4.x, _e4.x) + maxf(_s4.x, _e4.x) + 1) * 0.5, (minf(_s4.y, _e4.y) + maxf(_s4.y, _e4.y) + 1) * 0.5)
-			wheel_center = _align_origin + Vector2(8, 8) + (_mn4 * 16.0).rotated(_ar4)
+			wheel_center = _get_align_sel_center()
+		else:
+			wheel_center = _get_selection_center_world()
 		var mouse_world: Vector2 = get_global_mouse_position()
 		var dist_to_wheel: float = mouse_world.distance_to(wheel_center)
 
@@ -164,7 +162,11 @@ func _input(event: InputEvent) -> void:
 				queue_redraw()
 			if event.is_action_released("place_block"):
 				_rot_dragging = false
-				if _align_has_sel:
+				if _align_has_sel and _align_drag_angle != 0:
+					# Rotate origin around pivot so selection stays aligned
+					var pivot: Vector2 = _get_align_sel_center()
+					var drag_rad: float = deg_to_rad(_align_drag_angle)
+					_align_origin = pivot + (_align_origin - pivot).rotated(drag_rad)
 					_align_angle += _align_drag_angle
 					_align_drag_angle = 0
 			return
@@ -235,6 +237,46 @@ func _input(event: InputEvent) -> void:
 		return
 
 	if _align_mode:
+		# Move-drag: click inside aligned selection to move blocks
+		if _align_has_sel and not _align_sel_dragging:
+			var mg: Vector2 = get_global_mouse_position()
+			var ml: Vector2 = _get_aligned_local(mg)
+			var smn: Vector2 = Vector2(minf(_align_sel_start.x, _align_sel_end.x), minf(_align_sel_start.y, _align_sel_end.y))
+			var smx: Vector2 = Vector2(maxf(_align_sel_start.x, _align_sel_end.x), maxf(_align_sel_start.y, _align_sel_end.y))
+			var in_asel: bool = ml.x >= smn.x and ml.x <= smx.x and ml.y >= smn.y and ml.y <= smx.y
+			if _move_dragging:
+				if event is InputEventMouseMotion:
+					var cur_l: Vector2 = _get_aligned_local(get_global_mouse_position())
+					var ddx: float = cur_l.x - _move_start.x
+					var ddy: float = cur_l.y - _move_start.y
+					if absf(ddx) >= 1 or absf(ddy) >= 1:
+						var idx: int = int(ddx)
+						var idy: int = int(ddy)
+						if idx != 0 or idy != 0:
+							# Move all blocks in selection by grid steps
+							var inv_r: float = deg_to_rad(-_align_angle)
+							var ar_r: float = deg_to_rad(_align_angle)
+							var offset: Vector2 = Vector2(idx * 16, idy * 16).rotated(ar_r)
+							for fb in WorldManager.free_blocks:
+								var fc: Vector2 = fb.pos + Vector2(8, 8)
+								var loc: Vector2 = (fc - _align_origin).rotated(inv_r)
+								var gx: float = floor(loc.x / 16.0)
+								var gy: float = floor(loc.y / 16.0)
+								if gx >= smn.x and gx <= smx.x and gy >= smn.y and gy <= smx.y:
+									fb.pos += offset
+							_align_origin += offset
+							_align_sel_start.x += idx; _align_sel_start.y += idy
+							_align_sel_end.x += idx; _align_sel_end.y += idy
+							_move_start = Vector2(_move_start.x + idx, _move_start.y + idy)
+					queue_redraw()
+				if event.is_action_released("place_block"):
+					_move_dragging = false
+				return
+			if event.is_action_pressed("place_block") and in_asel:
+				_move_dragging = true
+				_move_start = ml
+				get_viewport().set_input_as_handled()
+				return
 		var _place_aligned: bool = false
 		if event.is_action_pressed("place_block"):
 			_place_aligned = true
@@ -509,13 +551,21 @@ func _draw() -> void:
 		var e: Vector2 = _align_sel_end if not _align_sel_dragging else _get_aligned_local(get_global_mouse_position())
 		var mn: Vector2 = Vector2(minf(s.x, e.x), minf(s.y, e.y))
 		var mx2: Vector2 = Vector2(maxf(s.x, e.x) + 1, maxf(s.y, e.y) + 1)
-		# Selection uses same visual grid, includes drag rotation
-		var ar: float = deg_to_rad(_align_angle + _align_drag_angle)
-		var vgo: Vector2 = _align_origin + Vector2(8, 8) + Vector2(-8, -8).rotated(ar)
-		var c0: Vector2 = vgo + (mn * 16.0).rotated(ar)
-		var c1: Vector2 = vgo + (Vector2(mx2.x, mn.y) * 16.0).rotated(ar)
-		var c2: Vector2 = vgo + (mx2 * 16.0).rotated(ar)
-		var c3: Vector2 = vgo + (Vector2(mn.x, mx2.y) * 16.0).rotated(ar)
+		# Compute base corners (no drag), then rotate around pivot by drag angle
+		var base_ar: float = deg_to_rad(_align_angle)
+		var base_vgo: Vector2 = _align_origin + Vector2(8, 8) + Vector2(-8, -8).rotated(base_ar)
+		var c0: Vector2 = base_vgo + (mn * 16.0).rotated(base_ar)
+		var c1: Vector2 = base_vgo + (Vector2(mx2.x, mn.y) * 16.0).rotated(base_ar)
+		var c2: Vector2 = base_vgo + (mx2 * 16.0).rotated(base_ar)
+		var c3: Vector2 = base_vgo + (Vector2(mn.x, mx2.y) * 16.0).rotated(base_ar)
+		# Rotate corners around the fixed pivot by drag angle
+		if _align_drag_angle != 0:
+			var pivot: Vector2 = _get_align_sel_center()
+			var drag_rad: float = deg_to_rad(_align_drag_angle)
+			c0 = pivot + (c0 - pivot).rotated(drag_rad)
+			c1 = pivot + (c1 - pivot).rotated(drag_rad)
+			c2 = pivot + (c2 - pivot).rotated(drag_rad)
+			c3 = pivot + (c3 - pivot).rotated(drag_rad)
 		var sel_col: Color = Color(0.3, 0.6, 1.0, 0.7)
 		draw_line(c0, c1, sel_col, 2.0)
 		draw_line(c1, c2, sel_col, 2.0)
@@ -558,13 +608,7 @@ func _draw() -> void:
 
 	# Rotation wheel for aligned selection
 	if _align_mode and _align_has_sel:
-		# Center of aligned selection
-		var ar2: float = deg_to_rad(_align_angle)
-		var as2: Vector2 = _align_sel_start
-		var ae2: Vector2 = _align_sel_end
-		var amn: Vector2 = Vector2(minf(as2.x, ae2.x) + 0.5, minf(as2.y, ae2.y) + 0.5)
-		var amx: Vector2 = Vector2(maxf(as2.x, ae2.x) + 0.5, maxf(as2.y, ae2.y) + 0.5)
-		var awc: Vector2 = _align_origin + Vector2(8, 8) + Vector2((amn.x + amx.x) * 0.5 * 16.0, (amn.y + amx.y) * 0.5 * 16.0).rotated(ar2)
+		var awc: Vector2 = _get_align_sel_center()
 		var wc2: Color = Color(0.4, 0.7, 1.0, 0.5) if not _rot_dragging else Color(0.5, 0.9, 1.0, 0.8)
 		draw_arc(awc, ROT_WHEEL_RADIUS, 0, TAU, 32, wc2, 2.0)
 		for tick2 in range(4):
@@ -752,6 +796,18 @@ func _apply_move(dx: int, dy: int) -> void:
 		if nx >= 1 and nx < WorldManager.world_width - 1 and ny >= 1 and ny < WorldManager.world_height - 1:
 			WorldManager.set_fg_tile(nx, ny, b.id)
 			WorldManager.set_rotation(nx, ny, b.rot)
+
+func _get_align_sel_center(include_drag: bool = false) -> Vector2:
+	# Visual center of the aligned selection box
+	# include_drag=false for pivot point (stays fixed), true for visual drawing
+	var extra: float = _align_drag_angle if include_drag else 0.0
+	var ar: float = deg_to_rad(_align_angle + extra)
+	var vgo: Vector2 = _align_origin + Vector2(8, 8) + Vector2(-8, -8).rotated(ar)
+	var mn: Vector2 = Vector2(minf(_align_sel_start.x, _align_sel_end.x), minf(_align_sel_start.y, _align_sel_end.y))
+	var mx: Vector2 = Vector2(maxf(_align_sel_start.x, _align_sel_end.x) + 1, maxf(_align_sel_start.y, _align_sel_end.y) + 1)
+	var c0: Vector2 = vgo + (mn * 16.0).rotated(ar)
+	var c2: Vector2 = vgo + (mx * 16.0).rotated(ar)
+	return (c0 + c2) / 2.0
 
 func _get_aligned_local(world_pos: Vector2) -> Vector2:
 	var rad: float = deg_to_rad(-_align_angle)
