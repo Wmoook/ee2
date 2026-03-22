@@ -117,30 +117,60 @@ func _draw() -> void:
 			var v0: float = float(csy) / ah
 			var u1: float = float(csx + TILE_SIZE) / aw
 			var v1: float = float(csy + TILE_SIZE) / ah
-			# Draw quads every ~8px for smooth curves (convex = no artifacts)
-			var cum_d: float = 0.0
+			# 3-slice: first 2px cap | middle stretched | last 2px cap
+			# Compute total curve length and cumulative distances
+			var cdists: Array = [0.0]
+			for pli in range(1, poly_pts.size()):
+				cdists.append(cdists[pli - 1] + poly_pts[pli].distance_to(poly_pts[pli - 1]))
+			var total_len: float = cdists[-1]
+			var cap_px: float = 2.0  # Cap size in pixels
+			var cap_frac: float = cap_px / 16.0  # UV fraction for cap
+			# Draw quads every ~8px
 			var last_d: float = 0.0
 			var pn0: Vector2 = poly_norms[0] if poly_norms.size() > 0 else Vector2(0, -1)
 			var prev_t: Vector2 = poly_pts[0] + pn0 * half_w
 			var prev_b: Vector2 = poly_pts[0] - pn0 * half_w
+			var prev_along: float = 0.0
 			for pli in range(1, poly_pts.size()):
-				cum_d += poly_pts[pli].distance_to(poly_pts[pli - 1])
-				if cum_d - last_d >= 8.0 or pli == poly_pts.size() - 1:
+				if cdists[pli] - last_d >= 8.0 or pli == poly_pts.size() - 1:
 					var pn: Vector2 = poly_norms[pli] if pli < poly_norms.size() else Vector2(0, -1)
 					var cur_t: Vector2 = poly_pts[pli] + pn * half_w
 					var cur_b: Vector2 = poly_pts[pli] - pn * half_w
-					var qp: PackedVector2Array = PackedVector2Array([prev_t, cur_t, cur_b, prev_b])
 					if curve_tex:
+						# Map UV based on position along curve (3-slice)
+						var t0: float = prev_along / maxf(total_len, 1.0)
+						var t1: float = cdists[pli] / maxf(total_len, 1.0)
+						# Convert curve position to UV: caps at ends, stretch in middle
+						var uv_left: float = _curve_uv(t0, cap_frac, u0, u1)
+						var uv_right: float = _curve_uv(t1, cap_frac, u0, u1)
+						var qp: PackedVector2Array = PackedVector2Array([prev_t, cur_t, cur_b, prev_b])
 						var quv: PackedVector2Array = PackedVector2Array([
-							Vector2(u0, v0), Vector2(u1, v0), Vector2(u1, v1), Vector2(u0, v1)])
+							Vector2(uv_left, v0), Vector2(uv_right, v0),
+							Vector2(uv_right, v1), Vector2(uv_left, v1)])
 						draw_colored_polygon(qp, Color.WHITE, quv, curve_tex)
 					else:
+						var qp: PackedVector2Array = PackedVector2Array([prev_t, cur_t, cur_b, prev_b])
 						draw_colored_polygon(qp, Color(0.5, 0.5, 0.52, 1.0))
 					prev_t = cur_t
 					prev_b = cur_b
-					last_d = cum_d
+					prev_along = cdists[pli]
+					last_d = cdists[pli]
 			if GameState.is_edit_mode:
 				draw_polyline(poly_pts, Color(0.2, 0.8, 1.0, 0.4), 1.0, true)
+
+func _curve_uv(t: float, cap_frac: float, uv0: float, uv1: float) -> float:
+	## 3-slice UV: first cap_frac at start, last cap_frac at end, middle stretched
+	var uv_range: float = uv1 - uv0
+	if t <= cap_frac:
+		# Start cap: map 0..cap_frac to uv0..uv0+cap_frac*range
+		return uv0 + t * uv_range
+	elif t >= 1.0 - cap_frac:
+		# End cap: map (1-cap_frac)..1 to uv1-cap_frac*range..uv1
+		return uv1 - (1.0 - t) * uv_range
+	else:
+		# Middle: stretch from cap_frac..1-cap_frac to the middle UV region
+		var mid_t: float = (t - cap_frac) / (1.0 - 2.0 * cap_frac)
+		return uv0 + cap_frac * uv_range + mid_t * (1.0 - 2.0 * cap_frac) * uv_range
 
 func draw_block(x: int, y: int, block_id: int, alpha: float) -> void:
 	var dest: Rect2 = Rect2(x * TILE_SIZE, y * TILE_SIZE, TILE_SIZE, TILE_SIZE)
