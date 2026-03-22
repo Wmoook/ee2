@@ -78,29 +78,44 @@ func _draw() -> void:
 				else:
 					draw_block(x, y, fg_id, 1.0)
 
-	# Draw free (rotated/off-grid) blocks
+	# Draw free (rotated/off-grid) blocks (skip curve_visual — rendered as polygon strip)
 	for fb in WorldManager.free_blocks:
+		if fb.get("curve_visual", false):
+			continue
 		_draw_free_block(fb)
 
 	# Draw freeform lines (always visible, not just edit mode)
 	for line in WorldManager.lines:
 		draw_line(line.start, line.end, line.color, line.width, true)
 
-	# Draw polyline spline colliders (always visible)
+	# Draw polyline curves as filled polygon strips
 	for poly in WorldManager.polylines:
 		var poly_pts: PackedVector2Array = poly.points
 		var poly_norms: Array = poly.normals
 		if poly_pts.size() >= 2:
-			# Draw the polyline surface
-			for pli in range(poly_pts.size() - 1):
-				draw_line(poly_pts[pli], poly_pts[pli + 1], Color(0.2, 0.8, 1.0, 0.8), 3.0, true)
+			# Build polygon strip: two edges offset from center
+			var top_pts: PackedVector2Array = PackedVector2Array()
+			var bot_pts: PackedVector2Array = PackedVector2Array()
+			for pli in range(poly_pts.size()):
+				var pn: Vector2 = poly_norms[pli] if pli < poly_norms.size() else Vector2(0, -1)
+				top_pts.append(poly_pts[pli] + pn * 8.0)
+				bot_pts.append(poly_pts[pli] - pn * 8.0)
+			# Create polygon from top edge + reversed bottom edge
+			var strip: PackedVector2Array = PackedVector2Array()
+			for pli in range(top_pts.size()):
+				strip.append(top_pts[pli])
+			for pli in range(bot_pts.size() - 1, -1, -1):
+				strip.append(bot_pts[pli])
+			# Draw filled polygon with block color
+			draw_colored_polygon(strip, Color(0.45, 0.45, 0.48, 1.0))
+			# Draw edges
+			for pli in range(top_pts.size() - 1):
+				draw_line(top_pts[pli], top_pts[pli + 1], Color(0.35, 0.35, 0.38, 1.0), 1.5, true)
+				draw_line(bot_pts[pli], bot_pts[pli + 1], Color(0.35, 0.35, 0.38, 1.0), 1.5, true)
 			if GameState.is_edit_mode:
-				# Draw vertex normals as small lines
-				for pli in range(poly_pts.size()):
-					var n_end: Vector2 = poly_pts[pli] + poly_norms[pli] * 8.0
-					draw_line(poly_pts[pli], n_end, Color(1.0, 0.4, 0.2, 0.6), 1.5)
-				for pli in range(poly_pts.size()):
-					draw_circle(poly_pts[pli], 2.5, Color(0.2, 0.8, 1.0, 0.9))
+				# Center line
+				for pli in range(poly_pts.size() - 1):
+					draw_line(poly_pts[pli], poly_pts[pli + 1], Color(0.2, 0.8, 1.0, 0.5), 1.0, true)
 
 func draw_block(x: int, y: int, block_id: int, alpha: float) -> void:
 	var dest: Rect2 = Rect2(x * TILE_SIZE, y * TILE_SIZE, TILE_SIZE, TILE_SIZE)

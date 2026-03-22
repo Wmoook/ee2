@@ -1638,7 +1638,7 @@ func _compute_spline_blocks(points: Array, mouse_pos: Vector2) -> Array:
 		var p2: Vector2 = cp[seg + 1]
 		var p3: Vector2 = cp[seg + 2]
 		var seg_len: float = p1.distance_to(p2)
-		var steps: int = int(max(2, ceil(seg_len / 6.0)))
+		var steps: int = int(max(2, ceil(seg_len / 2.0)))
 		for i in range(steps):
 			var t: float = float(i) / float(steps)
 			# Catmull-Rom interpolation
