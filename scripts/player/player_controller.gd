@@ -32,6 +32,7 @@ var _visual_pos: Vector2 = Vector2.ZERO
 var _phys_pos: Vector2 = Vector2.ZERO
 var _prev_pos: Vector2 = Vector2.ZERO
 var _smooth_look: Vector2 = Vector2.ZERO  # Smoothed look-ahead offset
+var _smooth_normal: Vector2 = Vector2(0, -1)  # Smoothed surface normal for smiley
 
 func _ready() -> void:
 	for i in range(2):
@@ -199,22 +200,23 @@ func _physics_process(delta: float) -> void:
 			_smiley_sprite.rotation = lerp_angle(_smiley_sprite.rotation, 0.0, 0.3)
 		elif physics.on_rotated_block and physics.is_grounded:
 			var n: Vector2 = physics._surface_normal
-			# Smooth the normal to prevent flicker (exponential moving average)
-			_smooth_look = _smooth_look.lerp(n, 0.2)
-			if _smooth_look.length() > 0.01:
-				_smooth_look = _smooth_look.normalized()
-			else:
-				_smooth_look = n
-			var sn: Vector2 = _smooth_look
+			# Smooth the normal to prevent flicker
+			_smooth_normal = _smooth_normal.lerp(n, 0.15)
+			if _smooth_normal.length() > 0.01:
+				_smooth_normal = _smooth_normal.normalized()
 			# Flip detection: normal X flips = V-shape, smiley stays upright
-			if _last_normal.x * sn.x < -0.1 and absf(sn.x) > 0.3:
+			if _last_normal.x * n.x < -0.1 and absf(n.x) > 0.3:
 				_valley_smiley_ticks = 10
-			_last_normal = sn
+			_last_normal = n
+			# At rest: force upright (normal averaging at V bottom = ~straight up)
+			var spd_total: float = absf(physics._speedX) + absf(physics._speedY)
 			if _valley_smiley_ticks > 0:
 				_valley_smiley_ticks -= 1
-				_smiley_sprite.rotation = 0.0
+				_smiley_sprite.rotation = lerp_angle(_smiley_sprite.rotation, 0.0, 0.3)
+			elif spd_total < 0.3:
+				_smiley_sprite.rotation = lerp_angle(_smiley_sprite.rotation, 0.0, 0.1)
 			else:
-				var target_angle: float = atan2(sn.x, -sn.y)
+				var target_angle: float = atan2(_smooth_normal.x, -_smooth_normal.y)
 				_smiley_sprite.rotation = lerp_angle(_smiley_sprite.rotation, target_angle, 0.15)
 		elif physics.is_grounded:
 			_smiley_sprite.rotation = lerp_angle(_smiley_sprite.rotation, 0.0, 0.2)

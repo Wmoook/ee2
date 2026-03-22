@@ -1109,19 +1109,8 @@ func _process(_delta: float) -> void:
 		var c_now: bool = Input.is_physical_key_pressed(KEY_C)
 		if c_now and not _c_was_pressed and not Input.is_key_pressed(KEY_CTRL):
 			if _curve_mode and _curve_points.size() >= 2:
-				# Confirm: place curve blocks (only up to last clicked point)
+				# Confirm: build polyline (polygon strip renders the curve)
 				_save_undo()
-				_curve_preview = _compute_spline_blocks(_curve_points, _curve_points[-1])
-				# Place visual blocks (non-solid, just for rendering)
-				for cbp in _curve_preview:
-					var cexists: bool = false
-					for cfb in WorldManager.free_blocks:
-						if cfb.pos.distance_to(cbp.pos) < 2.0:
-							cexists = true
-							break
-					if not cexists:
-						var cb: Dictionary = {"pos": cbp.pos, "id": GameState.selected_block_id, "rotation": cbp.rot, "curve_visual": true}
-						WorldManager.free_blocks.append(cb)
 				# Build polyline from the spline curve directly (high resolution)
 				if _curve_points.size() >= 2:
 					var spline_pts: PackedVector2Array = PackedVector2Array()
