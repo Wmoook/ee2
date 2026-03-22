@@ -44,6 +44,7 @@ var _pos_history: Array = []
 var _valley_center: Vector2 = Vector2(-1, -1)  # Locked position in V
 var _surface_normal: Vector2 = Vector2(0, -1)
 var _prev_push_normal: Vector2 = Vector2.ZERO
+var _prev_poly_normal: Vector2 = Vector2.ZERO  # Polyline push from last tick
 var _valley_ticks: int = 0
 var _flip_count: int = 0
 var _jump_cooldown: int = 0
@@ -237,9 +238,9 @@ func tick(input_h: int, input_v: int, space_just: bool, space_held: bool) -> voi
 			var poly_vel: Vector2 = Vector2(_speedX, _speedY)
 			var vel_toward: float = poly_vel.dot(-poly_result.normal)
 			var _skip_poly: bool = vel_toward < -3.0 and poly_result.push.length() < 1.0
-			# Detect oscillation: push flipped from last tick = trapped between surfaces
-			if not _skip_poly and _prev_push_normal.length() > 0.1:
-				if _prev_push_normal.dot(poly_result.normal) < -0.3 and poly_result.push.length() < 10.0:
+			# Detect oscillation: polyline push flipped from last tick = trapped
+			if not _skip_poly and _prev_poly_normal.length() > 0.1:
+				if _prev_poly_normal.dot(poly_result.normal) < -0.3 and poly_result.push.length() < 10.0:
 					# Trapped! Push along gravity direction to escape
 					var escape_dir: Vector2 = Vector2(mox, moy)
 					if escape_dir.length() < 0.01:
@@ -273,6 +274,7 @@ func tick(input_h: int, input_v: int, space_just: bool, space_held: bool) -> voi
 					if poly_into > 0:
 						_speedX += poly_result.normal.x * poly_into
 						_speedY += poly_result.normal.y * poly_into
+				_prev_poly_normal = poly_result.normal
 
 	# 7.5 Line collision
 	if not is_god_mode:
