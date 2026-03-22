@@ -538,7 +538,8 @@ func _handle_jump(space_just: bool, space_held: bool) -> void:
 	var did_jump: bool = false
 
 	if in_valley or valley_jump:
-		# Valley: jump straight up like normal gravity
+		# Valley: always allow jump when at valley floor
+		jumpCount = 0
 		if jumpCount < maxJumps:
 			if maxJumps < 1000: jumpCount += 1
 			var jump_mag: float = _gravity * _jump_height * _get_jump_mult() * 0.995 * TICK_SCALE / MULT

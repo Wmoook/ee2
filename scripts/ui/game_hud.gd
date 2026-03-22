@@ -573,20 +573,8 @@ var _save_btn: Button
 var _save_label: Label
 
 func _build_save_button() -> void:
-	_save_btn = Button.new()
-	_save_btn.text = "Save World"
-	_save_btn.position = Vector2(8, 8)
-	_save_btn.size = Vector2(100, 30)
-	_save_btn.add_theme_font_size_override("font_size", 12)
-	_save_btn.pressed.connect(_on_save_pressed)
-	add_child(_save_btn)
-
-	_save_label = Label.new()
-	_save_label.text = ""
-	_save_label.position = Vector2(115, 12)
-	_save_label.add_theme_font_size_override("font_size", 11)
-	_save_label.add_theme_color_override("font_color", Color(0.5, 1.0, 0.5))
-	add_child(_save_label)
+	# Save button moved to block editor UI
+	pass
 
 func _on_save_pressed() -> void:
 	var err: Error = WorldManager.save_to_file("user://world_save.json")

@@ -195,19 +195,38 @@ func _ready() -> void:
 	_group_panel.visible = false
 	_spin_panel.add_child(_group_panel)
 
-	# Reset grid button - always visible in edit mode (separate from panel)
-	_reset_btn = Button.new()
-	_reset_btn.text = "Reset Grid"
-	_reset_btn.size = Vector2(90, 25)
-	_reset_btn.add_theme_font_size_override("font_size", 10)
-	_reset_btn.pressed.connect(func():
-		_align_mode = false
-		_align_btn.text = "Align Grid"
+	# Reset grid button removed - use Ctrl+R instead
+
+	# Clear world button
+	var _clear_btn: Button = Button.new()
+	_clear_btn.name = "ClearWorldBtn"
+	_clear_btn.text = "Clear World"
+	_clear_btn.size = Vector2(90, 25)
+	_clear_btn.add_theme_font_size_override("font_size", 10)
+	_clear_btn.pressed.connect(func():
+		_save_undo()
 		WorldManager.free_blocks.clear()
+		WorldManager.block_groups.clear()
+		for y in range(1, WorldManager.world_height - 1):
+			for x in range(1, WorldManager.world_width - 1):
+				WorldManager.set_fg_tile(x, y, 0)
+				WorldManager.set_bg_tile(x, y, 0)
+				WorldManager.set_rotation(x, y, 0)
 		_free_originals.clear()
 		_deselect()
 		queue_redraw())
-	_ui_layer.add_child(_reset_btn)
+	_ui_layer.add_child(_clear_btn)
+
+	# Save world button
+	var _save_btn: Button = Button.new()
+	_save_btn.name = "SaveWorldBtn"
+	_save_btn.text = "Save World"
+	_save_btn.size = Vector2(90, 25)
+	_save_btn.add_theme_font_size_override("font_size", 10)
+	_save_btn.pressed.connect(func():
+		WorldManager.save_to_file("user://world_save.json")
+	)
+	_ui_layer.add_child(_save_btn)
 
 	# Group filter dropdown (bottom-right)
 	var _gf_container: HBoxContainer = HBoxContainer.new()
@@ -264,6 +283,23 @@ func _input(event: InputEvent) -> void:
 				if WorldManager.get_tile(t.x, t.y) != 0:
 					var cur: int = WorldManager.get_rotation(t.x, t.y)
 					WorldManager.set_rotation(t.x, t.y, (cur + 90) % 360)
+		# Arrow keys = nudge selected blocks
+		if _align_has_sel and _align_sel_indices.size() > 0:
+			var nudge: Vector2 = Vector2.ZERO
+			var step: float = 16.0 if not Input.is_key_pressed(KEY_SHIFT) else 1.6
+			if event.keycode == KEY_LEFT: nudge.x = -step
+			elif event.keycode == KEY_RIGHT: nudge.x = step
+			elif event.keycode == KEY_UP: nudge.y = -step
+			elif event.keycode == KEY_DOWN: nudge.y = step
+			if nudge != Vector2.ZERO:
+				_save_undo()
+				for si in _align_sel_indices:
+					if si < WorldManager.free_blocks.size():
+						WorldManager.free_blocks[si].pos += nudge
+				_align_wheel_pos += nudge
+				_align_origin += nudge
+				get_viewport().set_input_as_handled()
+				queue_redraw()
 		# Delete/Backspace = clear selected blocks
 		if (event.keycode == KEY_DELETE or event.keycode == KEY_BACKSPACE) and _has_selection:
 			_clear_selection()
@@ -810,6 +846,13 @@ func _is_mouse_over_ui() -> bool:
 		var gf_rect: Rect2 = Rect2(gf.global_position, gf.size)
 		if gf_rect.has_point(mouse):
 			return true
+	# Clear/Save buttons
+	for btn_name in ["ClearWorldBtn", "SaveWorldBtn"]:
+		var btn: Button = _ui_layer.get_node_or_null(btn_name) as Button
+		if btn and btn.visible:
+			var br: Rect2 = Rect2(btn.global_position, btn.size)
+			if br.has_point(mouse):
+				return true
 	return false
 
 func _on_group_pressed() -> void:
@@ -844,8 +887,7 @@ func _on_group_pressed() -> void:
 			WorldManager.free_blocks[si]["group"] = gid
 	_selected_group_id = gid
 	_group_panel.visible = true
-	_group_name_edit.text = g.name
-	_group_btn.text = "Group: %s" % g.name
+	_group_btn.text = "Group: %d" % gid
 	_update_group_filter()
 	queue_redraw()
 
@@ -856,8 +898,7 @@ func _show_group_props(gid: int) -> void:
 		return
 	_selected_group_id = gid
 	_group_panel.visible = true
-	_group_name_edit.text = g.name
-	_group_btn.text = "Group: %s" % g.name
+	_group_btn.text = "Group: %d" % gid
 
 func _update_group_filter() -> void:
 	var gf: OptionButton = _ui_layer.get_node_or_null("GroupFilter/GroupFilterOption")
@@ -978,10 +1019,19 @@ func _process(_delta: float) -> void:
 		var panel_y: float = maxf(8, minf(vp_size.y / 2 - _spin_panel.size.y / 2, vp_size.y - _spin_panel.size.y - 40))
 		_spin_panel.position = Vector2(vp_size.x - _spin_panel.size.x - 8, panel_y)
 	# Reset button always visible in edit mode
-	if _reset_btn:
-		var vp_size2: Vector2 = get_viewport().get_visible_rect().size
-		_reset_btn.visible = GameState.is_edit_mode
-		_reset_btn.position = Vector2(vp_size2.x - 110, 8)
+	# Clear world + Save world buttons under editor palette
+	var clear_btn: Button = _ui_layer.get_node_or_null("ClearWorldBtn") as Button
+	var save_btn: Button = _ui_layer.get_node_or_null("SaveWorldBtn") as Button
+	if clear_btn:
+		var vps3: Vector2 = get_viewport().get_visible_rect().size
+		clear_btn.visible = GameState.is_edit_mode
+		clear_btn.size = Vector2(90, 25)
+		clear_btn.position = Vector2(vps3.x - 200, 320)
+	if save_btn:
+		var vps4: Vector2 = get_viewport().get_visible_rect().size
+		save_btn.visible = GameState.is_edit_mode
+		save_btn.size = Vector2(90, 25)
+		save_btn.position = Vector2(vps4.x - 100, 320)
 	# Group filter position (bottom-right)
 	var gf_node: Control = _ui_layer.get_node_or_null("GroupFilter")
 	if gf_node:
