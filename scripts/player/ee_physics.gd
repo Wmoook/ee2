@@ -255,6 +255,9 @@ func tick(input_h: int, input_v: int, space_just: bool, space_held: bool) -> voi
 					var poly_spd_along: float = Vector2(_speedX, _speedY).dot(poly_tangent)
 					_speedX = poly_tangent.x * poly_spd_along
 					_speedY = poly_tangent.y * poly_spd_along
+					# Snap tiny horizontal drift to zero (clean U-bottom landing)
+					if absf(_speedX) < 0.3:
+						_speedX = 0
 				else:
 					# Wall/ceiling: zero speed component going into the surface
 					var poly_spd: Vector2 = Vector2(_speedX, _speedY)
