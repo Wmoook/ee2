@@ -250,7 +250,6 @@ func tick(input_h: int, input_v: int, space_just: bool, space_held: bool) -> voi
 				on_rotated_block = true
 				_surface_normal = poly_result.normal
 				var poly_against: float = -poly_result.normal.dot(poly_grav_n)
-				push_warning("PCOL ag=%.2f preGS=%.1f sX=%.1f sY=%.1f push=%.1f,%.1f" % [poly_against, _pre_tick_grav_speed, _speedX, _speedY, poly_push.x, poly_push.y])
 				# Floor: only ground when was falling/standing (not jumping up)
 				if poly_against > 0.2 and _pre_tick_grav_speed >= 0:
 					is_grounded = true
@@ -704,7 +703,7 @@ func _step_position() -> void:
 			elif WorldManager.polylines.size() > 0 and not is_god_mode:
 				var pc: Dictionary = WorldManager.check_polyline_collision(x, y, 16.0, 16.0)
 				if pc.hit and pc.push.length() > 2.0:
-					x = ox; _speedX = 0; currentSX = osx; donex = true
+					x = ox; currentSX = 0; donex = true
 
 		# Step Y
 		if currentSY != 0 and not doney:
@@ -725,9 +724,8 @@ func _step_position() -> void:
 			elif WorldManager.polylines.size() > 0 and not is_god_mode:
 				var pcy: Dictionary = WorldManager.check_polyline_collision(x, y, 16.0, 16.0)
 				if pcy.hit and pcy.push.length() > 2.0:
-					y = oy; _speedY = 0; currentSY = osy; doney = true
-					# Only ground when falling (moving down), not jumping up
-					if currentSY > 0:
+					y = oy; currentSY = 0; doney = true
+					if osy > 0:
 						is_grounded = true
 
 func _collides_px(px: float, py: float) -> bool:
