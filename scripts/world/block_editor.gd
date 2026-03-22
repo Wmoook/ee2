@@ -1148,8 +1148,21 @@ func _process(_delta: float) -> void:
 					if spline_pts.size() > 0 and spline_pts[-1].distance_to(cpts[-1]) > 4.0:
 						spline_pts.append(cpts[-1])
 					if spline_pts.size() >= 2:
-						# Use center line — collision handles full block width from all sides
+						# Main curve polyline
 						WorldManager.add_polyline(spline_pts, "both")
+						# Add flat cap polylines at each endpoint (perpendicular walls)
+						var start_dir: Vector2 = (spline_pts[1] - spline_pts[0]).normalized()
+						var start_perp: Vector2 = Vector2(-start_dir.y, start_dir.x)
+						var cap_start: PackedVector2Array = PackedVector2Array()
+						cap_start.append(spline_pts[0] + start_perp * 10.0)
+						cap_start.append(spline_pts[0] - start_perp * 10.0)
+						WorldManager.add_polyline(cap_start, "both")
+						var end_dir: Vector2 = (spline_pts[-1] - spline_pts[-2]).normalized()
+						var end_perp: Vector2 = Vector2(-end_dir.y, end_dir.x)
+						var cap_end: PackedVector2Array = PackedVector2Array()
+						cap_end.append(spline_pts[-1] + end_perp * 10.0)
+						cap_end.append(spline_pts[-1] - end_perp * 10.0)
+						WorldManager.add_polyline(cap_end, "both")
 				_curve_points.clear()
 				_curve_preview.clear()
 				_curve_mode = false
