@@ -220,18 +220,18 @@ func check_polyline_collision(px: float, py: float, pw: float, ph: float) -> Dic
 					if checked.has(si):
 						continue
 					checked[si] = true
-					var sb: Vector2 = pts[si + 1]
 					var sa: Vector2 = pts[si]
-			var ab: Vector2 = sb - sa
-			var ap: Vector2 = Vector2(pcx, pcy) - sa
-			var ab_dot: float = ab.dot(ab)
-			var seg_t: float = clampf(ap.dot(ab) / maxf(ab_dot, 0.001), 0.0, 1.0)
-			var closest_pt: Vector2 = sa + ab * seg_t
-			var dist: float = Vector2(pcx, pcy).distance_to(closest_pt)
-			if dist < closest_dist:
-				closest_dist = dist
-				closest_seg = si
-				closest_t = seg_t
+					var sb: Vector2 = pts[si + 1]
+					var ab: Vector2 = sb - sa
+					var ap: Vector2 = Vector2(pcx, pcy) - sa
+					var ab_dot: float = ab.dot(ab)
+					var seg_t: float = clampf(ap.dot(ab) / maxf(ab_dot, 0.001), 0.0, 1.0)
+					var closest_pt: Vector2 = sa + ab * seg_t
+					var dist: float = Vector2(pcx, pcy).distance_to(closest_pt)
+					if dist < closest_dist:
+						closest_dist = dist
+						closest_seg = si
+						closest_t = seg_t
 		if closest_seg < 0:
 			continue
 		# Interpolate normal at closest point on segment
