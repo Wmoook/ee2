@@ -1112,25 +1112,34 @@ func _process(_delta: float) -> void:
 					if not cexists:
 						var cb: Dictionary = {"pos": cbp.pos, "id": GameState.selected_block_id, "rotation": cbp.rot, "curve_visual": true}
 						WorldManager.free_blocks.append(cb)
-				# Build polyline spline collider from curve preview positions
-				if _curve_preview.size() >= 2:
-					var surface_pts: PackedVector2Array = PackedVector2Array()
-					for cpi in range(_curve_preview.size()):
-						var cp_center: Vector2 = _curve_preview[cpi].pos + Vector2(8, 8)
-						# Compute outward normal from tangent at this point
-						var cp_tangent: Vector2 = Vector2.ZERO
-						if cpi == 0:
-							cp_tangent = (_curve_preview[1].pos - _curve_preview[0].pos).normalized()
-						elif cpi == _curve_preview.size() - 1:
-							cp_tangent = (_curve_preview[cpi].pos - _curve_preview[cpi - 1].pos).normalized()
-						else:
-							cp_tangent = (_curve_preview[cpi + 1].pos - _curve_preview[cpi - 1].pos).normalized()
-						var cp_normal: Vector2 = Vector2(-cp_tangent.y, cp_tangent.x)
-						# Normal should point outward (upward for top surfaces)
-						if cp_normal.y > 0:
-							cp_normal = -cp_normal
-						surface_pts.append(cp_center + cp_normal * 8.0)
-					WorldManager.add_polyline(surface_pts, "top")
+				# Build polyline from the spline curve directly (high resolution)
+				if _curve_points.size() >= 2:
+					var spline_pts: PackedVector2Array = PackedVector2Array()
+					# Recompute spline at high resolution for smooth polyline
+					var cpts: Array = _curve_points.duplicate()
+					cpts.append(get_global_mouse_position())  # Include final mouse pos
+					var vcp: Array = [cpts[0] - (cpts[1] - cpts[0])]
+					vcp.append_array(cpts)
+					vcp.append(cpts[-1] + (cpts[-1] - cpts[-2]))
+					for cseg in range(1, vcp.size() - 2):
+						var cp0: Vector2 = vcp[cseg - 1]
+						var cp1: Vector2 = vcp[cseg]
+						var cp2: Vector2 = vcp[cseg + 1]
+						var cp3: Vector2 = vcp[cseg + 2]
+						var cseg_len: float = cp1.distance_to(cp2)
+						var csteps: int = int(max(3, ceil(cseg_len / 8.0)))
+						for ci in range(csteps):
+							var ct: float = float(ci) / float(csteps)
+							var ctt: float = ct * ct
+							var cttt: float = ctt * ct
+							var spos: Vector2 = 0.5 * ((2.0 * cp1) + (-cp0 + cp2) * ct + (2.0 * cp0 - 5.0 * cp1 + 4.0 * cp2 - cp3) * ctt + (-cp0 + 3.0 * cp1 - 3.0 * cp2 + cp3) * cttt)
+							if spline_pts.size() == 0 or spline_pts[-1].distance_to(spos) > 4.0:
+								spline_pts.append(spos)
+					# Add final point
+					if spline_pts.size() > 0 and spline_pts[-1].distance_to(cpts[-1]) > 4.0:
+						spline_pts.append(cpts[-1])
+					if spline_pts.size() >= 2:
+						WorldManager.add_polyline(spline_pts, "top")
 				_curve_points.clear()
 				_curve_preview.clear()
 				_curve_mode = false

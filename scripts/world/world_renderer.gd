@@ -86,22 +86,21 @@ func _draw() -> void:
 	for line in WorldManager.lines:
 		draw_line(line.start, line.end, line.color, line.width, true)
 
-	# Draw polyline spline colliders (visible in edit mode for debugging)
-	if GameState.is_edit_mode:
-		for poly in WorldManager.polylines:
-			var poly_pts: PackedVector2Array = poly.points
-			var poly_norms: Array = poly.normals
-			if poly_pts.size() >= 2:
-				# Draw the polyline surface
-				for pli in range(poly_pts.size() - 1):
-					draw_line(poly_pts[pli], poly_pts[pli + 1], Color(0.2, 0.8, 1.0, 0.6), 2.0, true)
+	# Draw polyline spline colliders (always visible)
+	for poly in WorldManager.polylines:
+		var poly_pts: PackedVector2Array = poly.points
+		var poly_norms: Array = poly.normals
+		if poly_pts.size() >= 2:
+			# Draw the polyline surface
+			for pli in range(poly_pts.size() - 1):
+				draw_line(poly_pts[pli], poly_pts[pli + 1], Color(0.2, 0.8, 1.0, 0.8), 3.0, true)
+			if GameState.is_edit_mode:
 				# Draw vertex normals as small lines
 				for pli in range(poly_pts.size()):
-					var n_end: Vector2 = poly_pts[pli] + poly_norms[pli] * 6.0
-					draw_line(poly_pts[pli], n_end, Color(1.0, 0.4, 0.2, 0.5), 1.0)
-				# Draw vertices as dots
+					var n_end: Vector2 = poly_pts[pli] + poly_norms[pli] * 8.0
+					draw_line(poly_pts[pli], n_end, Color(1.0, 0.4, 0.2, 0.6), 1.5)
 				for pli in range(poly_pts.size()):
-					draw_circle(poly_pts[pli], 2.0, Color(0.2, 0.8, 1.0, 0.8))
+					draw_circle(poly_pts[pli], 2.5, Color(0.2, 0.8, 1.0, 0.9))
 
 func draw_block(x: int, y: int, block_id: int, alpha: float) -> void:
 	var dest: Rect2 = Rect2(x * TILE_SIZE, y * TILE_SIZE, TILE_SIZE, TILE_SIZE)

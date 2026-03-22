@@ -66,18 +66,20 @@ func add_polyline(points: PackedVector2Array, side: String = "top") -> void:
 	var vert_normals: Array = []
 	var seg_count: int = points.size() - 1
 	var seg_normals: Array = []
+	# Determine consistent normal direction from first segment
+	var first_dir: Vector2 = (points[1] - points[0]).normalized()
+	var first_n: Vector2 = Vector2(-first_dir.y, first_dir.x)
+	# For "top": first normal should point upward (y < 0)
+	var flip_all: bool = false
+	if side == "top" and first_n.y > 0:
+		flip_all = true
+	elif side == "bottom" and first_n.y < 0:
+		flip_all = true
 	for si in range(seg_count):
 		var seg_dir: Vector2 = (points[si + 1] - points[si]).normalized()
-		# Normal perpendicular to segment: rotate 90 degrees CCW
 		var seg_n: Vector2 = Vector2(-seg_dir.y, seg_dir.x)
-		# For "top" side, normal should point "outward" (usually upward for a floor)
-		# For "bottom" side, flip
-		if side == "bottom":
+		if flip_all:
 			seg_n = -seg_n
-		elif side == "top":
-			# Default: if normal points downward (y>0), flip it upward
-			if seg_n.y > 0:
-				seg_n = -seg_n
 		seg_normals.append(seg_n)
 	# First vertex: use first segment normal
 	vert_normals.append(seg_normals[0])
