@@ -199,15 +199,22 @@ func _physics_process(delta: float) -> void:
 			_smiley_sprite.rotation = lerp_angle(_smiley_sprite.rotation, 0.0, 0.3)
 		elif physics.on_rotated_block and physics.is_grounded:
 			var n: Vector2 = physics._surface_normal
+			# Smooth the normal to prevent flicker (exponential moving average)
+			_smooth_look = _smooth_look.lerp(n, 0.2)
+			if _smooth_look.length() > 0.01:
+				_smooth_look = _smooth_look.normalized()
+			else:
+				_smooth_look = n
+			var sn: Vector2 = _smooth_look
 			# Flip detection: normal X flips = V-shape, smiley stays upright
-			if _last_normal.x * n.x < -0.1 and absf(n.x) > 0.3:
+			if _last_normal.x * sn.x < -0.1 and absf(sn.x) > 0.3:
 				_valley_smiley_ticks = 10
-			_last_normal = n
+			_last_normal = sn
 			if _valley_smiley_ticks > 0:
 				_valley_smiley_ticks -= 1
 				_smiley_sprite.rotation = 0.0
 			else:
-				var target_angle: float = atan2(n.x, -n.y)
+				var target_angle: float = atan2(sn.x, -sn.y)
 				_smiley_sprite.rotation = lerp_angle(_smiley_sprite.rotation, target_angle, 0.15)
 		elif physics.is_grounded:
 			_smiley_sprite.rotation = lerp_angle(_smiley_sprite.rotation, 0.0, 0.2)
