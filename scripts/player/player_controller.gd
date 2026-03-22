@@ -123,12 +123,10 @@ func _physics_process(delta: float) -> void:
 	if Input.is_key_pressed(KEY_S) or Input.is_key_pressed(KEY_DOWN): raw_v += 1
 	var ix: int = raw_h
 	var iy: int = raw_v
-	# Space = jump (works in all modes)
-	if not physics.is_god_mode and not physics.on_dot:
-		_space_held = Input.is_key_pressed(KEY_SPACE)
-		# Only latch if CBF hasn't already consumed the jump this frame
-		if not _cbf_consumed_jump and Input.is_action_just_pressed("jump") and Input.is_key_pressed(KEY_SPACE):
-			_space_just = true
+	# Space = jump (always check, works in all modes)
+	_space_held = Input.is_key_pressed(KEY_SPACE)
+	if not _cbf_consumed_jump and Input.is_action_just_pressed("jump") and Input.is_key_pressed(KEY_SPACE):
+		_space_just = true
 
 	# Save pre-tick position for interpolation
 	_prev_pos = Vector2(physics.get_pixel_x(), physics.get_pixel_y())
