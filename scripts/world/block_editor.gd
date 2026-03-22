@@ -280,6 +280,17 @@ func _input(event: InputEvent) -> void:
 			get_viewport().set_input_as_handled()
 			return
 
+	# Ctrl+R = reset grid angle to 0°
+	if event is InputEventKey and event.pressed and not event.echo:
+		if event.physical_keycode == KEY_R and Input.is_key_pressed(KEY_CTRL):
+			_align_angle = 0.0
+			_angle_spin.set_value_no_signal(0.0)
+			_align_origin = Vector2.ZERO
+			_deselect()
+			queue_redraw()
+			get_viewport().set_input_as_handled()
+			return
+
 	if _is_mouse_over_ui():
 		return
 
@@ -772,10 +783,11 @@ func _draw() -> void:
 			draw_rect(Rect2(-8, -8, 16, 16), Color(0.3, 1.0, 0.3, 0.4), true)
 			draw_rect(Rect2(-8, -8, 16, 16), Color(0.3, 1.0, 0.3, 0.8), false, 1.5)
 			draw_set_transform(Vector2.ZERO, 0, Vector2.ONE)
-		# Draw rotated grid lines (always visible)
-		# Offset by (8,8) to match block center positioning
+		# Draw rotated grid lines centered on cursor (aligned to origin grid)
 		var grid_col: Color = Color(0.3, 1.0, 0.3, 0.08)
-		var go: Vector2 = _align_origin + Vector2(8, 8) - Vector2(8, 8).rotated(rad)
+		var cursor_snap: Vector2 = _get_aligned_snap(get_global_mouse_position())
+		var grid_offset: Vector2 = Vector2(8, 8) - Vector2(8, 8).rotated(rad)
+		var go: Vector2 = cursor_snap + grid_offset
 		for i in range(-30, 31):
 			draw_line(go + Vector2(i * 16, -500).rotated(rad), go + Vector2(i * 16, 500).rotated(rad), grid_col, 0.5)
 			draw_line(go + Vector2(-500, i * 16).rotated(rad), go + Vector2(500, i * 16).rotated(rad), grid_col, 0.5)

@@ -217,6 +217,10 @@ func tick(input_h: int, input_v: int, space_just: bool, space_held: bool) -> voi
 				_speedX = new_spd.x
 				_speedY = new_spd.y
 
+	# Valley: zero X speed after ALL modifiers (arrow gravity can add X)
+	if valley_jump:
+		_speedX = 0
+
 	# 7. Step position
 	_step_position()
 
@@ -267,7 +271,14 @@ func tick(input_h: int, input_v: int, space_just: bool, space_held: bool) -> voi
 				var ly: float = dx2 * sin_r + dy2 * cos_r
 				var ox2: float = 16.0 - absf(lx)
 				var oy2: float = 16.0 - absf(ly)
-				if ox2 > 0 and oy2 > 0:
+				# World-axis SAT: trim diamond corners for axis-aligned player
+				var abs_c: float = absf(cos(rot_rad))
+				var abs_s: float = absf(sin(rot_rad))
+				var bpx: float = 8.0 * abs_c + 8.0 * abs_s
+				var bpy: float = 8.0 * abs_s + 8.0 * abs_c
+				var wox: float = (8.0 + bpx) - absf(dx2)
+				var woy: float = (8.0 + bpy) - absf(dy2)
+				if ox2 > 0 and oy2 > 0 and wox > 0 and woy > 0:
 					var push_lx: float = 0.0
 					var push_ly: float = 0.0
 					if oy2 < ox2:
@@ -326,7 +337,12 @@ func tick(input_h: int, input_v: int, space_just: bool, space_held: bool) -> voi
 				tangent_speed += grav.dot(tangent)
 				var new_spd: Vector2 = tangent * tangent_speed
 				var _falling_into_v: bool = _overlap_rots.size() >= 2 and absf(_pre_tick_speedY) > absf(_pre_tick_speedX) * 1.5
-				if spd_mag > 1.0 and new_spd.length() < spd_mag * 0.2 and not _falling_into_v:
+				# Speed preservation at slope junctions: redirect speed along new tangent
+				# Only when already on a slope (_was_on_rotated) or speed mostly parallel
+				# Skip for head-on impacts from air (not on slope, speed perpendicular)
+				var parallel_ratio: float = absf(tangent_speed) / maxf(spd_mag, 0.01)
+				var from_slope: bool = _was_on_rotated or parallel_ratio > 0.1
+				if spd_mag > 1.0 and new_spd.length() < spd_mag * 0.2 and not _falling_into_v and from_slope:
 					var dir: float = sign(_pre_tick_speedX)
 					if dir == 0: dir = 1.0
 					_speedX = tangent.x * spd_mag * dir
@@ -349,7 +365,8 @@ func tick(input_h: int, input_v: int, space_just: bool, space_held: bool) -> voi
 				_coyote_ticks = 4
 
 	# Fast V-shape detection: push normal X flips + low speed = settling into valley
-	if on_rotated_block and not valley_jump and _prev_push_normal.length() > 0.1:
+	# Only when falling (pre_tick_speedY >= 0), not jumping up into a V
+	if on_rotated_block and not valley_jump and _prev_push_normal.length() > 0.1 and _pre_tick_speedY >= -0.5:
 		if _prev_push_normal.x * _surface_normal.x < -0.1 and absf(_surface_normal.x) > 0.3 and absf(_speedX) < 0.5:
 			in_valley = true
 			valley_jump = true
@@ -378,7 +395,7 @@ func tick(input_h: int, input_v: int, space_just: bool, space_held: bool) -> voi
 	_pos_history.append(x)
 	if _pos_history.size() > 4:
 		_pos_history.pop_front()
-	if _pos_history.size() == 4 and on_rotated_block:
+	if _pos_history.size() == 4 and on_rotated_block and _pre_tick_speedY >= -0.5:
 		# Check A-B-A-B pattern (position alternating)
 		var d01: float = absf(_pos_history[0] - _pos_history[1])
 		var d02: float = absf(_pos_history[0] - _pos_history[2])
@@ -400,8 +417,15 @@ func tick(input_h: int, input_v: int, space_just: bool, space_held: bool) -> voi
 		if _valley_center.y >= 0 and y >= _valley_center.y - 2.0:
 			is_grounded = true
 			in_valley = true
-	# Only clear valley_jump when player has walked away (on ground, no overlap)
-	# Don't count during jumps (player is above valley, will return)
+	# Clear valley_jump when far from valley center (landed elsewhere)
+	if valley_jump and _valley_center.x >= 0:
+		var dist_from_v: float = Vector2(x - _valley_center.x, y - _valley_center.y).length()
+		if dist_from_v > 48.0 and _fb_hit and _jump_cooldown == 0:
+			valley_jump = false
+			_valley_center = Vector2(-1, -1)
+			_pos_history.clear()
+			_prev_push_normal = Vector2.ZERO
+	# Clear valley_jump when no block overlap near valley floor
 	if not _fb_hit and y >= _valley_center.y - 2.0 and _jump_cooldown == 0:
 		_stuck_ticks += 1
 		if _stuck_ticks > 10:
