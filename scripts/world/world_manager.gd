@@ -202,8 +202,7 @@ func check_polyline_collision(px: float, py: float, pw: float, ph: float) -> Dic
 			continue
 		var pts: PackedVector2Array = poly.points
 		var norms: Array = poly.normals
-		# Find segment with deepest penetration using spatial hash
-		var best_seg_pen: float = -999.0
+		# Find NEAREST segment using spatial hash
 		var closest_seg: int = -1
 		var closest_t: float = 0.0
 		var closest_dist: float = 999999.0
@@ -229,12 +228,10 @@ func check_polyline_collision(px: float, py: float, pw: float, ph: float) -> Dic
 					var seg_t: float = clampf(ap.dot(ab) / maxf(ab_dot, 0.001), 0.0, 1.0)
 					var on_pt: Vector2 = sa + ab * seg_t
 					var dist: float = Vector2(pcx, pcy).distance_to(on_pt)
-					var seg_pen: float = 8.0 - dist  # 8 = eff_radius
-					if seg_pen > best_seg_pen:
-						best_seg_pen = seg_pen
+					if dist < closest_dist:
+						closest_dist = dist
 						closest_seg = si
 						closest_t = seg_t
-						closest_dist = dist
 		if closest_seg < 0:
 			continue
 		# Interpolate normal at closest point on segment
