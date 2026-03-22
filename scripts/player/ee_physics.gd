@@ -272,6 +272,8 @@ func tick(input_h: int, input_v: int, space_just: bool, space_held: bool) -> voi
 					_speedY = 0
 
 	# 7.6 Rotated block surface sliding (simple best-push)
+	var _on_polyline: bool = on_rotated_block  # Save polyline state before reset
+	var _polyline_normal: Vector2 = _surface_normal
 	on_rotated_block = false
 	in_valley = false
 	var on_tile: bool = _check_grounded() and _pre_tick_grav_speed >= 0
@@ -427,6 +429,11 @@ func tick(input_h: int, input_v: int, space_just: bool, space_held: bool) -> voi
 				_jump_cooldown = 0  # Clear cooldown on rotated block contact
 				_coyote_ticks = 4
 
+
+	# Restore polyline visual state (rotation) if no free block overrode it
+	if not on_rotated_block and _on_polyline:
+		on_rotated_block = true
+		_surface_normal = _polyline_normal
 
 	# Fast V-shape detection: push normal X flips + low speed = settling into valley
 	# Only for FLOOR V's (normal points against gravity), not ceiling V's
