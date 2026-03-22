@@ -199,7 +199,10 @@ func _draw_free_block(fb: Dictionary) -> void:
 	var sx: int = (local_off % cols) * TILE_SIZE
 	var sy: int = (local_off / cols) * TILE_SIZE
 	var center: Vector2 = pos + Vector2(8, 8)
-	draw_set_transform(center, deg_to_rad(rot), Vector2.ONE)
+	var scale: Vector2 = Vector2.ONE
+	if fb.get("curve_visual", false) or fb.get("curve", false):
+		scale.x = 1.25  # Stretch along tangent to fill gaps between curve blocks
+	draw_set_transform(center, deg_to_rad(rot), scale)
 	# Dim blocks not in active group filter (edit mode only)
 	var filter: int = WorldManager.active_group_filter
 	if filter > 0 and GameState.is_edit_mode:

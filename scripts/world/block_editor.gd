@@ -10,6 +10,11 @@ var _line_mode: bool = false
 var _line_start: Vector2 = Vector2(-1, -1)
 var _line_drawing: bool = false
 
+# Curve tool
+var _curve_mode: bool = false
+var _curve_points: Array = []  # Up to 3 world-space points
+var _curve_preview: Array = []  # Preview block positions + rotations
+
 # Selection mode
 var _selection: Rect2i = Rect2i()
 var _has_selection: bool = false
@@ -296,6 +301,9 @@ func _has_ui_focus() -> bool:
 	var focused: Control = get_viewport().gui_get_focus_owner()
 	return focused != null and (focused is LineEdit or focused is SpinBox or focused is TextEdit)
 
+func _unhandled_key_input(_event: InputEvent) -> void:
+	pass  # C key handled in _process via polling
+
 func _input(event: InputEvent) -> void:
 	if not GameState.is_edit_mode:
 		return
@@ -317,8 +325,10 @@ func _input(event: InputEvent) -> void:
 		if event.keycode == KEY_L:
 			_line_mode = not _line_mode
 			_line_drawing = false
+			_curve_mode = false
 			_deselect()
 			queue_redraw()
+		# C key for curve mode handled in _process
 		# R = rotate 90° CW (group if selection, single block otherwise)
 		if event.keycode == KEY_R or event.physical_keycode == KEY_R:
 			if _has_selection:
@@ -497,6 +507,24 @@ func _input(event: InputEvent) -> void:
 			return
 
 	if _is_mouse_over_ui():
+		return
+
+	# Curve mode (before align/selection so it gets clicks)
+	if _curve_mode:
+		if event.is_action_pressed("place_block"):
+			_curve_points.append(get_global_mouse_position())
+			_curve_preview = _compute_spline_blocks(_curve_points, get_global_mouse_position())
+			queue_redraw()
+			return
+		if event.is_action_pressed("remove_block"):
+			if _curve_points.size() > 0:
+				_curve_points.pop_back()
+			_curve_preview = _compute_spline_blocks(_curve_points, get_global_mouse_position())
+			queue_redraw()
+			return
+		if event is InputEventMouseMotion:
+			_curve_preview = _compute_spline_blocks(_curve_points, get_global_mouse_position())
+			queue_redraw()
 		return
 
 	# Aligned mode: shift = rotated select, normal = place
@@ -753,6 +781,7 @@ func _input(event: InputEvent) -> void:
 		if event is InputEventMouseMotion:
 			queue_redraw()
 		return
+
 
 	var shift: bool = Input.is_key_pressed(KEY_SHIFT)
 
@@ -1064,7 +1093,59 @@ func _on_spin_pressed() -> void:
 				fb["spin_angle"] = 0.0
 	_spin_btn.text = "Stop Spin" if not any_spinning else "Spin Object"
 
+var _c_was_pressed: bool = false
 func _process(_delta: float) -> void:
+	# C key for curve mode (polled to avoid input consumption issues)
+	if GameState.is_edit_mode:
+		var c_now: bool = Input.is_physical_key_pressed(KEY_C)
+		if c_now and not _c_was_pressed and not Input.is_key_pressed(KEY_CTRL):
+			if _curve_mode and _curve_points.size() >= 2:
+				# Confirm: place curve blocks
+				_save_undo()
+				# Place visual blocks (non-solid, just for rendering)
+				for cbp in _curve_preview:
+					var cexists: bool = false
+					for cfb in WorldManager.free_blocks:
+						if cfb.pos.distance_to(cbp.pos) < 2.0:
+							cexists = true
+							break
+					if not cexists:
+						var cb: Dictionary = {"pos": cbp.pos, "id": GameState.selected_block_id, "rotation": cbp.rot, "curve_visual": true}
+						WorldManager.free_blocks.append(cb)
+				# Add smooth collision lines along the curve surface
+				# Use longer segments (every 3rd block) for fewer junctions
+				if _curve_preview.size() >= 2:
+					var step: int = maxi(1, _curve_preview.size() / 20)  # ~20 segments max
+					var prev_surf: Vector2 = Vector2.ZERO
+					for cli in range(0, _curve_preview.size(), step):
+						var end_i: int = mini(cli + step, _curve_preview.size() - 1)
+						var ca: Vector2 = _curve_preview[cli].pos + Vector2(8, 8)
+						var cb2: Vector2 = _curve_preview[end_i].pos + Vector2(8, 8)
+						var seg_dir: Vector2 = (cb2 - ca).normalized()
+						var seg_normal: Vector2 = Vector2(-seg_dir.y, seg_dir.x)
+						if seg_normal.y > 0:
+							seg_normal = -seg_normal
+						var la: Vector2 = ca + seg_normal * 8.0
+						var lb: Vector2 = cb2 + seg_normal * 8.0
+						if prev_surf != Vector2.ZERO:
+							la = prev_surf  # Connect seamlessly to previous segment
+						WorldManager.add_line(la, lb, Color(0.5, 0.5, 0.5, 0.0), 3.0)
+						prev_surf = lb
+				_curve_points.clear()
+				_curve_preview.clear()
+				_curve_mode = false
+			elif _curve_mode:
+				# Exit without placing
+				_curve_mode = false
+				_curve_points.clear()
+				_curve_preview.clear()
+			else:
+				# Enter curve mode
+				_curve_mode = true
+				_line_mode = false
+				_deselect()
+			queue_redraw()
+		_c_was_pressed = c_now
 	# Spin panel positioning
 	if _spin_panel:
 		var vp_size: Vector2 = get_viewport().get_visible_rect().size
@@ -1158,6 +1239,34 @@ func _draw() -> void:
 		for i in range(-30, 31):
 			draw_line(go + Vector2(i * 16, -500).rotated(rad), go + Vector2(i * 16, 500).rotated(rad), grid_col, 0.5)
 			draw_line(go + Vector2(-500, i * 16).rotated(rad), go + Vector2(500, i * 16).rotated(rad), grid_col, 0.5)
+
+	# Curve mode preview
+	if _curve_mode:
+		# Draw placed points
+		for cp in _curve_points:
+			draw_circle(cp, 4.0, Color(1.0, 0.5, 0.0, 0.9))
+		# Draw preview blocks
+		for bp in _curve_preview:
+			var bc: Vector2 = bp.pos + Vector2(8, 8)
+			draw_set_transform(bc, deg_to_rad(bp.rot), Vector2.ONE)
+			draw_rect(Rect2(-8, -8, 16, 16), Color(1.0, 0.6, 0.2, 0.35), true)
+			draw_rect(Rect2(-8, -8, 16, 16), Color(1.0, 0.6, 0.2, 0.8), false, 1.0)
+			draw_set_transform(Vector2.ZERO, 0, Vector2.ONE)
+		# Draw curve line through preview blocks
+		if _curve_preview.size() >= 2:
+			for ci in range(1, _curve_preview.size()):
+				var pa: Vector2 = _curve_preview[ci - 1].pos + Vector2(8, 8)
+				var pb: Vector2 = _curve_preview[ci].pos + Vector2(8, 8)
+				draw_line(pa, pb, Color(1.0, 0.6, 0.2, 0.4), 1.5)
+		# Draw mouse preview line to next point
+		if _curve_points.size() >= 1:
+			draw_line(_curve_points[-1], get_global_mouse_position(), Color(1.0, 0.6, 0.2, 0.3), 1.0)
+		# Mode indicator
+		# Mode indicator: draw in screen space via inverse canvas transform
+		var inv_ct: Transform2D = get_viewport().get_canvas_transform().affine_inverse()
+		var screen_pos: Vector2 = inv_ct * Vector2(60, 20)
+		draw_circle(screen_pos, 8.0, Color.ORANGE)
+		draw_circle(screen_pos, 6.0, Color(1.0, 0.6, 0.0))
 
 	# Ctrl+drag line preview
 	if _ctrl_line_active and _align_mode:
@@ -1458,6 +1567,106 @@ func _get_aligned_local(world_pos: Vector2) -> Vector2:
 	var rel: Vector2 = world_pos - _align_origin
 	var local: Vector2 = rel.rotated(rad)
 	return Vector2(floor(local.x / 16.0), floor(local.y / 16.0))
+
+func _compute_spline_blocks(points: Array, mouse_pos: Vector2) -> Array:
+	## Compute blocks along a smooth spline through all points + mouse preview
+	var pts: Array = points.duplicate()
+	if pts.size() == 0:
+		return []
+	pts.append(mouse_pos)
+	if pts.size() == 1:
+		return [{"pos": pts[0] - Vector2(8, 8), "rot": 0.0, "curve": true}]
+	if pts.size() == 2:
+		return _compute_bezier_blocks(pts[0], (pts[0] + pts[1]) / 2.0, pts[1])
+	# For 3+ points: chain quadratic beziers through midpoints
+	var result: Array = []
+	for seg in range(pts.size() - 1):
+		var sp0: Vector2 = pts[seg]
+		var sp2: Vector2 = pts[seg + 1]
+		var sp1: Vector2  # Control point = average of neighboring midpoints
+		if seg == 0:
+			sp1 = sp0 + (sp2 - sp0) * 0.5
+		elif seg == pts.size() - 2:
+			sp1 = sp0 + (sp2 - sp0) * 0.5
+		else:
+			sp1 = (sp0 + sp2) / 2.0
+		# For smooth curves: use the actual points as control points
+		# and midpoints between consecutive points as segment endpoints
+		pass
+	# Simpler approach: Catmull-Rom style
+	# Insert virtual start/end points for smooth ends
+	var cp: Array = [pts[0] - (pts[1] - pts[0])]
+	cp.append_array(pts)
+	cp.append(pts[-1] + (pts[-1] - pts[-2]))
+	for seg in range(1, cp.size() - 2):
+		var p0: Vector2 = cp[seg - 1]
+		var p1: Vector2 = cp[seg]
+		var p2: Vector2 = cp[seg + 1]
+		var p3: Vector2 = cp[seg + 2]
+		var seg_len: float = p1.distance_to(p2)
+		var steps: int = int(max(2, ceil(seg_len / 12.0)))
+		for i in range(steps):
+			var t: float = float(i) / float(steps)
+			# Catmull-Rom interpolation
+			var tt: float = t * t
+			var ttt: float = tt * t
+			var pos: Vector2 = 0.5 * ((2.0 * p1) + (-p0 + p2) * t + (2.0 * p0 - 5.0 * p1 + 4.0 * p2 - p3) * tt + (-p0 + 3.0 * p1 - 3.0 * p2 + p3) * ttt)
+			# Tangent
+			var tan: Vector2 = 0.5 * ((-p0 + p2) + (4.0 * p0 - 10.0 * p1 + 8.0 * p2 - 2.0 * p3) * t + (-3.0 * p0 + 9.0 * p1 - 9.0 * p2 + 3.0 * p3) * tt)
+			var angle: float = rad_to_deg(atan2(tan.y, tan.x))
+			var block_pos: Vector2 = pos - Vector2(8, 8)
+			var skip: bool = false
+			for existing in result:
+				if existing.pos.distance_to(block_pos) < 8.0:
+					skip = true
+					break
+			if not skip:
+				result.append({"pos": block_pos, "rot": angle, "curve": true})
+	# Add final point
+	if result.size() > 0:
+		var last_pt: Vector2 = pts[-1] - Vector2(8, 8)
+		var skip2: bool = false
+		for existing in result:
+			if existing.pos.distance_to(last_pt) < 8.0:
+				skip2 = true
+				break
+		if not skip2:
+			var final_tan: Vector2 = pts[-1] - pts[-2]
+			result.append({"pos": last_pt, "rot": rad_to_deg(atan2(final_tan.y, final_tan.x)), "curve": true})
+	return result
+
+func _compute_bezier_blocks(p0: Vector2, p1: Vector2, p2: Vector2) -> Array:
+	## Compute block positions + rotations along a quadratic bezier curve
+	var result: Array = []
+	var total_len: float = 0.0
+	var prev: Vector2 = p0
+	# Estimate curve length
+	for i in range(1, 51):
+		var t: float = float(i) / 50.0
+		var pt: Vector2 = p0 * (1.0 - t) * (1.0 - t) + p1 * 2.0 * (1.0 - t) * t + p2 * t * t
+		total_len += prev.distance_to(pt)
+		prev = pt
+	# Place blocks every 14px (slight overlap to fill gaps)
+	var spacing: float = 14.0
+	var block_count: int = int(max(1, round(total_len / spacing)))
+	for i in range(block_count + 1):
+		var t: float = float(i) / float(block_count)
+		# Bezier position
+		var pos: Vector2 = p0 * (1.0 - t) * (1.0 - t) + p1 * 2.0 * (1.0 - t) * t + p2 * t * t
+		# Bezier tangent (derivative)
+		var tangent: Vector2 = (p1 - p0) * 2.0 * (1.0 - t) + (p2 - p1) * 2.0 * t
+		var angle: float = rad_to_deg(atan2(tangent.y, tangent.x))
+		# Block top-left from center
+		var block_pos: Vector2 = pos - Vector2(8, 8)
+		# Check for duplicates at same position
+		var skip: bool = false
+		for existing in result:
+			if existing.pos.distance_to(block_pos) < 8.0:
+				skip = true
+				break
+		if not skip:
+			result.append({"pos": block_pos, "rot": angle, "curve": true})
+	return result
 
 func _aligned_local_to_world(local_grid: Vector2) -> Vector2:
 	# Convert rotated grid coords back to world position

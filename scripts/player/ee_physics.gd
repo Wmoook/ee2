@@ -253,6 +253,8 @@ func tick(input_h: int, input_v: int, space_just: bool, space_held: bool) -> voi
 			for fb in WorldManager.free_blocks:
 				if not GameState.is_solid(fb.id):
 					continue
+				if fb.get("curve_visual", false):
+					continue  # Curve blocks use line collision instead
 				var bpos: Vector2 = fb.pos
 				var rot_rad: float = deg_to_rad(fb.rotation)
 				var bcx: float = bpos.x + 8.0
@@ -340,7 +342,7 @@ func tick(input_h: int, input_v: int, space_just: bool, space_held: bool) -> voi
 			var against_grav2: float = -n.dot(grav_dir2)  # Positive = floor, negative = ceiling
 			if not valley_jump:
 				# Wall-like: push nearly perpendicular to gravity (< 0.2)
-				# Floor/slope: push has gravity component (> 0.2) - includes steep slopes
+				# Floor/slope: push has gravity component (> 0.2)
 				if against_grav2 < 0.2:
 					# Wall: just zero the speed component into the wall
 					var into_wall: float = Vector2(_speedX, _speedY).dot(n)
@@ -354,7 +356,12 @@ func tick(input_h: int, input_v: int, space_just: bool, space_held: bool) -> voi
 						tangent = -tangent
 					var spd: Vector2 = Vector2(_speedX, _speedY)
 					var spd_mag: float = spd.length()
+					# Small angle change (curve blocks): preserve full speed
+					var prev_n_dot: float = _prev_push_normal.dot(n) if _prev_push_normal.length() > 0.1 else 0.0
 					var tangent_speed: float = spd.dot(tangent)
+					if prev_n_dot > 0.95 and spd_mag > 0.5 and _was_on_rotated:
+						# Nearly same surface — keep full magnitude
+						tangent_speed = spd_mag * (1.0 if tangent_speed >= 0 else -1.0)
 					var grav: Vector2 = Vector2(mox, moy) * _get_grav_mult() / MULT * 0.5
 					tangent_speed += grav.dot(tangent)
 					var new_spd: Vector2 = tangent * tangent_speed
