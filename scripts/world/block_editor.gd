@@ -1150,13 +1150,13 @@ func _process(_delta: float) -> void:
 						WorldManager.add_polyline(spline_pts, "both", GameState.selected_block_id)
 						# End cap blocks: placed just OUTSIDE the curve ends
 						var s_dir: Vector2 = (spline_pts[1] - spline_pts[0]).normalized()
-						var s_pos: Vector2 = spline_pts[0] - s_dir * 16.0 - Vector2(8, 8)
+						var s_pos: Vector2 = spline_pts[0] - Vector2(8, 8)
 						var s_rot: float = rad_to_deg(atan2(s_dir.y, s_dir.x))
-						WorldManager.free_blocks.append({"pos": s_pos, "id": GameState.selected_block_id, "rotation": s_rot})
+						WorldManager.free_blocks.append({"pos": s_pos, "id": GameState.selected_block_id, "rotation": s_rot, "curve_visual": true})
 						var e_dir: Vector2 = (spline_pts[-1] - spline_pts[-2]).normalized()
-						var e_pos: Vector2 = spline_pts[-1] + e_dir * 0.0 - Vector2(8, 8)
+						var e_pos: Vector2 = spline_pts[-1] - Vector2(8, 8)
 						var e_rot: float = rad_to_deg(atan2(e_dir.y, e_dir.x))
-						WorldManager.free_blocks.append({"pos": e_pos, "id": GameState.selected_block_id, "rotation": e_rot})
+						WorldManager.free_blocks.append({"pos": e_pos, "id": GameState.selected_block_id, "rotation": e_rot, "curve_visual": true})
 				_curve_points.clear()
 				_curve_preview.clear()
 				_curve_mode = false
