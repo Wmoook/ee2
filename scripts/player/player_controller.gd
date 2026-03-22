@@ -236,17 +236,19 @@ func _draw() -> void:
 	if not _show_hitboxes:
 		return
 	# Player hitbox (16x16 square - this IS the EE collision shape)
-	draw_rect(Rect2(0, 0, 16, 16), Color(0, 1, 0, 0.3), true)
-	draw_rect(Rect2(0, 0, 16, 16), Color(0, 1, 0, 0.8), false)
+	# Draw OVER the smiley with z_index handled by draw order
+	draw_rect(Rect2(0, 0, 16, 16), Color(0, 1, 0, 0.4), true)
+	draw_rect(Rect2(0, 0, 16, 16), Color(0, 1, 0, 1.0), false, 2.0)
 	# Draw grid tile hitboxes nearby
-	var ptx: int = int(floor(physics.x)) / 16
-	var pty: int = int(floor(physics.y)) / 16
-	for ty in range(pty - 5, pty + 6):
-		for tx in range(ptx - 8, ptx + 9):
-			if WorldManager.is_solid_at(tx, ty):
-				var tile_pos: Vector2 = Vector2(tx * 16, ty * 16) - position
-				draw_rect(Rect2(tile_pos, Vector2(16, 16)), Color(0, 0.5, 1, 0.2), true)
-				draw_rect(Rect2(tile_pos, Vector2(16, 16)), Color(0, 0.5, 1, 0.6), false)
+	var ptx: int = int(floor(physics.x / 16.0))
+	var pty: int = int(floor(physics.y / 16.0))
+	for ty in range(pty - 8, pty + 9):
+		for tx in range(ptx - 12, ptx + 13):
+			if tx >= 0 and ty >= 0 and tx < WorldManager.world_width and ty < WorldManager.world_height:
+				if WorldManager.is_solid_at(tx, ty):
+					var tile_pos: Vector2 = Vector2(tx * 16.0, ty * 16.0) - position
+					draw_rect(Rect2(tile_pos, Vector2(16, 16)), Color(0, 0.5, 1, 0.2), true)
+					draw_rect(Rect2(tile_pos, Vector2(16, 16)), Color(0, 0.5, 1, 0.6), false)
 	# Draw free block hitboxes relative to player
 	for fb in WorldManager.free_blocks:
 		if not GameState.is_solid(fb.id):
@@ -278,6 +280,8 @@ func _input(event: InputEvent) -> void:
 			_name_label.visible = not _name_label.visible
 		elif event.physical_keycode == KEY_B:
 			_show_hitboxes = not _show_hitboxes
+			if not physics.is_god_mode:
+				_smiley_sprite.modulate = Color(1, 1, 1, 0.3) if _show_hitboxes else Color.WHITE
 			queue_redraw()
 
 	# CBF - disabled in arrow fields to prevent extra ticks on key press

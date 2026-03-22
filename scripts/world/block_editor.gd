@@ -26,7 +26,7 @@ var _rot_last_snap: int = 0  # Last snapped rotation count
 const ROT_WHEEL_RADIUS: float = 40.0
 
 # Aligned placement mode
-var _align_mode: bool = false
+var _align_mode: bool = true
 var _align_angle: float = 0.0
 var _align_origin: Vector2 = Vector2.ZERO
 var _align_block_id: int = 0
@@ -46,6 +46,7 @@ var _spin_label: Label
 var _spin_panel: VBoxContainer
 var _align_btn: Button
 var _reset_btn: Button
+var _angle_spin: SpinBox
 var _ui_layer: CanvasLayer
 var _spin_speed_val: float = 45.0
 
@@ -84,11 +85,35 @@ func _ready() -> void:
 	_spin_panel.add_child(_spin_btn)
 
 	_align_btn = Button.new()
-	_align_btn.text = "Align Grid"
+	_align_btn.text = "Align Grid (ON)"
+	_align_btn.toggle_mode = true
+	_align_btn.button_pressed = true
 	_align_btn.custom_minimum_size = Vector2(140, 28)
 	_align_btn.add_theme_font_size_override("font_size", 11)
 	_align_btn.pressed.connect(_on_align_pressed)
 	_spin_panel.add_child(_align_btn)
+
+	# Grid angle spinbox
+	var angle_row: HBoxContainer = HBoxContainer.new()
+	_spin_panel.add_child(angle_row)
+	var angle_lbl: Label = Label.new()
+	angle_lbl.text = "Grid °"
+	angle_lbl.add_theme_font_size_override("font_size", 11)
+	angle_lbl.add_theme_color_override("font_color", Color.WHITE)
+	angle_row.add_child(angle_lbl)
+	_angle_spin = SpinBox.new()
+	_angle_spin.min_value = -360
+	_angle_spin.max_value = 360
+	_angle_spin.step = 5
+	_angle_spin.value = 0
+	_angle_spin.suffix = "°"
+	_angle_spin.custom_minimum_size = Vector2(90, 24)
+	_angle_spin.add_theme_font_size_override("font_size", 11)
+	_angle_spin.value_changed.connect(func(val: float):
+		_align_angle = val
+		queue_redraw()
+	)
+	angle_row.add_child(_angle_spin)
 
 	# Reset grid button - always visible in edit mode (separate from panel)
 	_reset_btn = Button.new()
@@ -171,6 +196,7 @@ func _input(event: InputEvent) -> void:
 					if _align_sel_indices.size() > 0 and _align_sel_indices[0] < WorldManager.free_blocks.size():
 						var ref_fb: Dictionary = WorldManager.free_blocks[_align_sel_indices[0]]
 						_align_angle = ref_fb.rotation
+						_angle_spin.set_value_no_signal(_align_angle)
 						_align_origin = ref_fb.pos
 			return
 
@@ -260,26 +286,68 @@ func _input(event: InputEvent) -> void:
 	# Aligned mode: shift = rotated select, normal = place
 	if _align_mode and Input.is_key_pressed(KEY_SHIFT):
 		if event.is_action_pressed("place_block"):
-			_align_sel_start = _get_aligned_local(get_global_mouse_position())
-			_align_sel_end = _align_sel_start
-			_align_sel_dragging = true
-			# Reset ALL selection state
-			_align_has_sel = false
-			_align_sel_indices.clear()
-			_align_drag_angle = 0
-			_align_wheel_pos = Vector2.ZERO
-			_has_selection = false
-			_free_originals.clear()
-			_rot_dragging = false
-			_move_dragging = false
+			# Check for block under cursor — show selection immediately
+			var _pmg: Vector2 = get_global_mouse_position()
+			var _pfb_idx: int = -1
+			for _pfi in range(WorldManager.free_blocks.size()):
+				var _pfb: Dictionary = WorldManager.free_blocks[_pfi]
+				if _pmg.distance_to(_pfb.pos + Vector2(8, 8)) < 14.0:
+					_pfb_idx = _pfi
+					break
+			if _pfb_idx < 0:
+				# Check grid tiles
+				var _pgt: Vector2i = _get_tile()
+				var _pgbid: int = WorldManager.get_tile(_pgt.x, _pgt.y)
+				if _pgbid != 0 and _pgt.x > 0 and _pgt.y > 0 and _pgt.x < WorldManager.world_width - 1 and _pgt.y < WorldManager.world_height - 1:
+					var _pgrot: float = float(WorldManager.get_rotation(_pgt.x, _pgt.y))
+					var _pgpos: Vector2 = Vector2(_pgt.x * 16.0, _pgt.y * 16.0)
+					WorldManager.free_blocks.append({"pos": _pgpos, "id": _pgbid, "rotation": _pgrot})
+					WorldManager.set_fg_tile(_pgt.x, _pgt.y, 0)
+					WorldManager.set_rotation(_pgt.x, _pgt.y, 0)
+					_pfb_idx = WorldManager.free_blocks.size() - 1
+			if _pfb_idx >= 0:
+				# Immediately show selection
+				_deselect()
+				var _psfb: Dictionary = WorldManager.free_blocks[_pfb_idx]
+				_align_sel_indices = [_pfb_idx]
+				_align_has_sel = true
+				_has_selection = true
+				_align_wheel_pos = _psfb.pos + Vector2(8, 8)
+				_align_angle = _psfb.rotation
+				_angle_spin.set_value_no_signal(_align_angle)
+				_align_origin = _psfb.pos
+				_align_block_id = _psfb.id
+				queue_redraw()
+			# Start drag tracking only if no block was clicked
+			if _pfb_idx < 0:
+				_align_sel_start = _get_aligned_local(get_global_mouse_position())
+				_align_sel_end = _align_sel_start
+				_align_sel_dragging = true
+			# Reset drag state (keep selection if block was found)
+			if _pfb_idx < 0:
+				_align_has_sel = false
+				_align_sel_indices.clear()
+				_align_drag_angle = 0
+				_align_wheel_pos = Vector2.ZERO
+				_has_selection = false
+				_free_originals.clear()
+				_rot_dragging = false
+				_move_dragging = false
 		if event is InputEventMouseMotion and _align_sel_dragging:
 			_align_sel_end = _get_aligned_local(get_global_mouse_position())
 			queue_redraw()
 		if event.is_action_released("place_block") and _align_sel_dragging:
 			_align_sel_end = _get_aligned_local(get_global_mouse_position())
 			_align_sel_dragging = false
-			# Only activate selection if blocks were found
-			# Store indices of blocks in selection
+			# If tiny drag (click) — keep selection from press handler
+			var _drag_dist: float = (_align_sel_end - _align_sel_start).length()
+			if _drag_dist < 0.5:
+				# Already handled on press — just finalize
+				if not _align_has_sel:
+					_deselect()
+				queue_redraw()
+				return
+			# Box select: find blocks in area
 			_align_sel_indices.clear()
 			# Use world-space: get actual start/end world positions from the drag
 			var _ws: Vector2 = _get_aligned_snap(get_global_mouse_position())
@@ -358,6 +426,10 @@ func _input(event: InputEvent) -> void:
 				_align_move_start = _get_aligned_snap(mg)
 				get_viewport().set_input_as_handled()
 				return
+		# Clear stale selection when placing (not holding shift)
+		if event.is_action_pressed("place_block") and not Input.is_key_pressed(KEY_SHIFT):
+			if _align_has_sel:
+				_deselect()
 		var _place_aligned: bool = false
 		if event.is_action_pressed("place_block"):
 			_place_aligned = true
@@ -412,12 +484,7 @@ func _input(event: InputEvent) -> void:
 	if event.is_action_pressed("place_block"):
 		var t: Vector2i = _get_tile()
 		if shift:
-			if _has_selection or _align_has_sel:
-				_deselect()
-				_rot_dragging = false
-				queue_redraw()
-				return
-			# Check if clicking on a free block — auto-select it
+			# Check if clicking on a free block FIRST — switch selection directly
 			var mg: Vector2 = get_global_mouse_position()
 			var _clicked_fb: int = -1
 			for fi in range(WorldManager.free_blocks.size()):
@@ -426,6 +493,7 @@ func _input(event: InputEvent) -> void:
 					_clicked_fb = fi
 					break
 			if _clicked_fb >= 0:
+				_deselect()
 				# Auto-select this free block and activate align mode
 				_align_sel_indices = [_clicked_fb]
 				_align_has_sel = true
@@ -434,13 +502,43 @@ func _input(event: InputEvent) -> void:
 				var cfb: Dictionary = WorldManager.free_blocks[_clicked_fb]
 				_align_wheel_pos = cfb.pos + Vector2(8, 8)
 				_align_angle = cfb.rotation
+				_angle_spin.set_value_no_signal(_align_angle)
 				_align_origin = cfb.pos
 				_align_block_id = cfb.id
 				if _align_btn:
 					_align_btn.button_pressed = true
 				queue_redraw()
 				return
-			# Shift+drag = box select
+			# Check if clicking on a grid tile — lift to free block and select
+			var gt: Vector2i = _get_tile()
+			var gbid: int = WorldManager.get_tile(gt.x, gt.y)
+			if gbid != 0 and gt.x > 0 and gt.y > 0 and gt.x < WorldManager.world_width - 1 and gt.y < WorldManager.world_height - 1:
+				_deselect()
+				var grot: float = float(WorldManager.get_rotation(gt.x, gt.y))
+				var gpos: Vector2 = Vector2(gt.x * 16.0, gt.y * 16.0)
+				WorldManager.free_blocks.append({"pos": gpos, "id": gbid, "rotation": grot})
+				WorldManager.set_fg_tile(gt.x, gt.y, 0)
+				WorldManager.set_rotation(gt.x, gt.y, 0)
+				var new_idx: int = WorldManager.free_blocks.size() - 1
+				_align_sel_indices = [new_idx]
+				_align_has_sel = true
+				_has_selection = true
+				_align_mode = true
+				_align_wheel_pos = gpos + Vector2(8, 8)
+				_align_angle = grot
+				_angle_spin.set_value_no_signal(_align_angle)
+				_align_origin = gpos
+				_align_block_id = gbid
+				if _align_btn:
+					_align_btn.button_pressed = true
+				queue_redraw()
+				return
+			# Nothing clicked — deselect if selected, or start box select
+			if _has_selection or _align_has_sel:
+				_deselect()
+				_rot_dragging = false
+				queue_redraw()
+				return
 			_sel_start = t
 			_sel_dragging = true
 		elif Input.is_key_pressed(KEY_CTRL):
@@ -560,6 +658,7 @@ func _on_align_pressed() -> void:
 				break
 	if found:
 		_align_angle = rot
+		_angle_spin.set_value_no_signal(_align_angle)
 		_align_origin = origin
 		_align_mode = true
 		_align_btn.text = "Exit Align"
@@ -651,22 +750,23 @@ func _draw() -> void:
 	for gy in range(sy, ey + 1):
 		draw_line(Vector2(sx * 16, gy * 16), Vector2(ex * 16, gy * 16), gc, 0.5)
 
-	# Aligned placement mode: show rotated grid cursor
-	if _align_mode:
+	# Aligned placement mode: show rotated grid cursor (hide during selection)
+	if _align_mode and not _align_has_sel:
 		var mouse: Vector2 = get_global_mouse_position()
 		var snap: Vector2 = _get_aligned_snap(mouse)
 		var rad: float = deg_to_rad(_align_angle)
 		var center: Vector2 = snap + Vector2(8, 8)
-		draw_set_transform(center, deg_to_rad(_align_angle), Vector2.ONE)
+		draw_set_transform(center, rad, Vector2.ONE)
 		draw_rect(Rect2(-8, -8, 16, 16), Color(0.3, 1.0, 0.3, 0.4), true)
 		draw_rect(Rect2(-8, -8, 16, 16), Color(0.3, 1.0, 0.3, 0.8), false, 1.5)
 		draw_set_transform(Vector2.ZERO, 0, Vector2.ONE)
-		# Draw rotated grid lines
+		# Draw rotated grid lines fixed to align origin
+		# Offset by (8,8) to match block center positioning
 		var grid_col: Color = Color(0.3, 1.0, 0.3, 0.08)
-		var go: Vector2 = center + Vector2(-8, -8).rotated(rad)
-		for i in range(-20, 21):
-			draw_line(go + Vector2(i * 16, -400).rotated(rad), go + Vector2(i * 16, 400).rotated(rad), grid_col, 0.5)
-			draw_line(go + Vector2(-400, i * 16).rotated(rad), go + Vector2(400, i * 16).rotated(rad), grid_col, 0.5)
+		var go: Vector2 = _align_origin + Vector2(8, 8) - Vector2(8, 8).rotated(rad)
+		for i in range(-30, 31):
+			draw_line(go + Vector2(i * 16, -500).rotated(rad), go + Vector2(i * 16, 500).rotated(rad), grid_col, 0.5)
+			draw_line(go + Vector2(-500, i * 16).rotated(rad), go + Vector2(500, i * 16).rotated(rad), grid_col, 0.5)
 
 	# Aligned selection: draw from actual block positions in rotated local space
 	if _align_mode and (_align_sel_dragging or _align_has_sel):
@@ -674,8 +774,8 @@ func _draw() -> void:
 		var e: Vector2 = _align_sel_end if not _align_sel_dragging else _get_aligned_local(get_global_mouse_position())
 		var mn: Vector2 = Vector2(minf(s.x, e.x), minf(s.y, e.y))
 		var mx2: Vector2 = Vector2(maxf(s.x, e.x) + 1, maxf(s.y, e.y) + 1)
-		# During drag: grid-based preview. After release: block-based exact.
-		if _align_sel_dragging:
+		# During drag: grid-based preview (only if no block already selected)
+		if _align_sel_dragging and not _align_has_sel:
 			var dar: float = deg_to_rad(_align_angle)
 			var dvgo: Vector2 = _align_origin + Vector2(8, 8) + Vector2(-8, -8).rotated(dar)
 			var dc0: Vector2 = dvgo + (mn * 16.0).rotated(dar)
@@ -987,8 +1087,8 @@ func _get_aligned_snap(world_pos: Vector2) -> Vector2:
 	var rad: float = deg_to_rad(-_align_angle)
 	var rel: Vector2 = world_pos - _align_origin
 	var local: Vector2 = rel.rotated(rad)
-	local.x = round(local.x / 16.0) * 16.0
-	local.y = round(local.y / 16.0) * 16.0
+	local.x = floor(local.x / 16.0) * 16.0
+	local.y = floor(local.y / 16.0) * 16.0
 	return _align_origin + local.rotated(-rad)
 
 var _free_originals: Array = []
