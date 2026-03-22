@@ -180,7 +180,7 @@ func _physics_process(delta: float) -> void:
 		if on_line >= 0:
 			_visual_pos = _phys_pos
 		else:
-			_visual_pos = Vector2(round(_phys_pos.x), round(_phys_pos.y))
+			_visual_pos = Vector2(floor(_phys_pos.x), floor(_phys_pos.y))
 	position = _visual_pos
 
 	# Smiley rotation: match slope surface whenever touching rotated blocks
