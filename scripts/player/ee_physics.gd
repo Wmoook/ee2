@@ -222,30 +222,36 @@ func tick(input_h: int, input_v: int, space_just: bool, space_held: bool) -> voi
 	if not is_god_mode:
 		var poly_result: Dictionary = WorldManager.check_polyline_collision(x, y, 16.0, 16.0)
 		if poly_result.hit:
-			x += poly_result.push.x
-			y += poly_result.push.y
-			on_rotated_block = true
-			_surface_normal = poly_result.normal
-			# Check if floor (push opposes gravity)
-			var poly_grav_n: Vector2 = Vector2(mox, moy)
-			if poly_grav_n.length() < 0.01:
-				poly_grav_n = Vector2(0, 1)
-			poly_grav_n = poly_grav_n.normalized()
-			var poly_against: float = -poly_result.normal.dot(poly_grav_n)
-			if poly_against > 0.2:
-				# Floor: ground player, project speed along tangent
-				is_grounded = true
-				var poly_tangent: Vector2 = poly_result.tangent
-				var poly_spd_along: float = Vector2(_speedX, _speedY).dot(poly_tangent)
-				_speedX = poly_tangent.x * poly_spd_along
-				_speedY = poly_tangent.y * poly_spd_along
+			# Skip collision if player is moving AWAY from surface (launching off ramp)
+			var poly_vel: Vector2 = Vector2(_speedX, _speedY)
+			var vel_toward: float = poly_vel.dot(-poly_result.normal)
+			if vel_toward < -1.5 and poly_result.push.length() < 3.0:
+				pass  # Flying away from surface — don't snap back
 			else:
-				# Wall/ceiling: zero speed component going into the surface
-				var poly_spd: Vector2 = Vector2(_speedX, _speedY)
-				var poly_into: float = poly_spd.dot(-poly_result.normal)
-				if poly_into > 0:
-					_speedX += poly_result.normal.x * poly_into
-					_speedY += poly_result.normal.y * poly_into
+				x += poly_result.push.x
+				y += poly_result.push.y
+				on_rotated_block = true
+				_surface_normal = poly_result.normal
+				# Check if floor (push opposes gravity)
+				var poly_grav_n: Vector2 = Vector2(mox, moy)
+				if poly_grav_n.length() < 0.01:
+					poly_grav_n = Vector2(0, 1)
+				poly_grav_n = poly_grav_n.normalized()
+				var poly_against: float = -poly_result.normal.dot(poly_grav_n)
+				if poly_against > 0.2:
+					# Floor: ground player, project speed along tangent
+					is_grounded = true
+					var poly_tangent: Vector2 = poly_result.tangent
+					var poly_spd_along: float = Vector2(_speedX, _speedY).dot(poly_tangent)
+					_speedX = poly_tangent.x * poly_spd_along
+					_speedY = poly_tangent.y * poly_spd_along
+				else:
+					# Wall/ceiling: zero speed component going into the surface
+					var poly_spd: Vector2 = Vector2(_speedX, _speedY)
+					var poly_into: float = poly_spd.dot(-poly_result.normal)
+					if poly_into > 0:
+						_speedX += poly_result.normal.x * poly_into
+						_speedY += poly_result.normal.y * poly_into
 
 	# 7.5 Line collision
 	if not is_god_mode:
