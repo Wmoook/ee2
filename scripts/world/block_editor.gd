@@ -1144,28 +1144,8 @@ func _process(_delta: float) -> void:
 					if spline_pts.size() > 0 and spline_pts[-1].distance_to(cpts[-1]) > 4.0:
 						spline_pts.append(cpts[-1])
 					if spline_pts.size() >= 2:
-						# Offset points 8px outward (surface of blocks, not center)
-						var offset_pts: PackedVector2Array = PackedVector2Array()
-						for oi in range(spline_pts.size()):
-							var otangent: Vector2
-							if oi == 0:
-								otangent = (spline_pts[1] - spline_pts[0]).normalized()
-							elif oi == spline_pts.size() - 1:
-								otangent = (spline_pts[oi] - spline_pts[oi - 1]).normalized()
-							else:
-								otangent = (spline_pts[oi + 1] - spline_pts[oi - 1]).normalized()
-							var onormal: Vector2 = Vector2(-otangent.y, otangent.x)
-							# Consistent direction: first normal determines up
-							if oi == 0:
-								if onormal.y > 0:
-									onormal = -onormal
-							else:
-								# Keep consistent with previous
-								var prev_n: Vector2 = (offset_pts[oi - 1] - spline_pts[oi - 1]).normalized()
-								if onormal.dot(prev_n) < 0:
-									onormal = -onormal
-							offset_pts.append(spline_pts[oi] + onormal * 8.0)
-						WorldManager.add_polyline(offset_pts, "both")
+						# Use center line — collision handles full block width from all sides
+						WorldManager.add_polyline(spline_pts, "both")
 				_curve_points.clear()
 				_curve_preview.clear()
 				_curve_mode = false
@@ -1641,7 +1621,7 @@ func _compute_spline_blocks(points: Array, mouse_pos: Vector2) -> Array:
 		var p2: Vector2 = cp[seg + 1]
 		var p3: Vector2 = cp[seg + 2]
 		var seg_len: float = p1.distance_to(p2)
-		var steps: int = int(max(2, ceil(seg_len / 12.0)))
+		var steps: int = int(max(2, ceil(seg_len / 6.0)))
 		for i in range(steps):
 			var t: float = float(i) / float(steps)
 			# Catmull-Rom interpolation

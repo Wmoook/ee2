@@ -217,7 +217,7 @@ func _draw_free_block(fb: Dictionary) -> void:
 	var center: Vector2 = pos + Vector2(8, 8)
 	var scale: Vector2 = Vector2.ONE
 	if fb.get("curve_visual", false) or fb.get("curve", false):
-		scale.x = 1.25  # Stretch along tangent to fill gaps between curve blocks
+		scale.x = 1.4  # Stretch along tangent to fill gaps between curve blocks
 	draw_set_transform(center, deg_to_rad(rot), scale)
 	# Dim blocks not in active group filter (edit mode only)
 	var filter: int = WorldManager.active_group_filter
