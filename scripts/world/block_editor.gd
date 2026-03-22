@@ -1139,7 +1139,7 @@ func _process(_delta: float) -> void:
 					if spline_pts.size() > 0 and spline_pts[-1].distance_to(cpts[-1]) > 4.0:
 						spline_pts.append(cpts[-1])
 					if spline_pts.size() >= 2:
-						WorldManager.add_polyline(spline_pts, "top")
+						WorldManager.add_polyline(spline_pts, "both")
 				_curve_points.clear()
 				_curve_preview.clear()
 				_curve_mode = false

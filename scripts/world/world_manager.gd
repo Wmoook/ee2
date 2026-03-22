@@ -153,19 +153,22 @@ func check_polyline_collision(px: float, py: float, pw: float, ph: float) -> Dic
 		var seg_a: Vector2 = pts[closest_seg]
 		var seg_b: Vector2 = pts[closest_seg + 1]
 		var on_seg: Vector2 = seg_a + (seg_b - seg_a) * closest_t
-		# Signed distance from player center to surface along normal
+		# Distance from player center to surface
 		var to_player: Vector2 = Vector2(pcx, pcy) - on_seg
-		var signed_dist: float = to_player.dot(interp_normal)
-		# Effective radius: half-size of player box projected onto normal direction
-		var eff_radius: float = (pw * 0.5) * absf(interp_normal.x) + (ph * 0.5) * absf(interp_normal.y)
-		# Penetration: how far inside the surface the player is
-		var penetration: float = eff_radius - signed_dist
-		if penetration > 0 and penetration < eff_radius * 2.0:
+		var dist_to_line: float = to_player.length()
+		# Effective radius: half-size of player box projected onto push direction
+		var push_dir: Vector2 = to_player.normalized() if dist_to_line > 0.01 else interp_normal
+		var eff_radius: float = (pw * 0.5) * absf(push_dir.x) + (ph * 0.5) * absf(push_dir.y)
+		# Penetration: player overlaps the line's effective width (8px each side = 16px total)
+		var line_half_width: float = 8.0
+		var penetration: float = (eff_radius + line_half_width) - dist_to_line
+		if penetration > 0 and dist_to_line < eff_radius + line_half_width + 4.0:
 			if penetration > best_pen:
 				best_pen = penetration
-				var push_vec: Vector2 = interp_normal * penetration
+				var push_vec: Vector2 = push_dir * penetration
+				# Use the push direction as normal for grounding/speed
 				var seg_tangent: Vector2 = (seg_b - seg_a).normalized()
-				result = {"hit": true, "push": push_vec, "normal": interp_normal, "tangent": seg_tangent}
+				result = {"hit": true, "push": push_vec, "normal": push_dir, "tangent": seg_tangent}
 	return result
 
 func remove_polyline_near(pos: Vector2, radius: float = 16.0) -> void:
