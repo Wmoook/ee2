@@ -71,7 +71,6 @@ func _input(event: InputEvent) -> void:
 		if event.physical_keycode == KEY_E:
 			GameState.set_edit_mode(not GameState.is_edit_mode)
 			get_viewport().set_input_as_handled()
-		if event.physical_keycode == KEY_ESCAPE:
-			get_tree().quit()
+		# Escape handled by block_editor for deselect
 	if event.is_action_pressed("save_world"):
 		WorldManager.save_to_file("user://world_save.json")

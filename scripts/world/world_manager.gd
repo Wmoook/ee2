@@ -75,6 +75,13 @@ func init_empty_world(w: int = 50, h: int = 30) -> void:
 		bg_row.resize(world_width)
 		bg_row.fill(0)
 		bg_tiles.append(bg_row)
+	# Place border walls
+	for x in range(world_width):
+		fg_tiles[0][x] = 9
+		fg_tiles[world_height - 1][x] = 9
+	for y in range(world_height):
+		fg_tiles[y][0] = 9
+		fg_tiles[y][world_width - 1] = 9
 	spawn_points = [Vector2(3, 3)]
 
 func get_tile(x: int, y: int) -> int:

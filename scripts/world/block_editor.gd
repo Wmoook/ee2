@@ -81,6 +81,11 @@ func _save_undo() -> void:
 			if bid != 0 or rot != 0:
 				tiles.append({"x": x, "y": y, "id": bid, "rot": rot})
 	state["tiles"] = tiles
+	state["align_angle"] = _align_angle
+	state["align_origin"] = _align_origin
+	state["sel_indices"] = _align_sel_indices.duplicate()
+	state["has_sel"] = _align_has_sel
+	state["wheel_pos"] = _align_wheel_pos
 	_undo_stack.append(state)
 	if _undo_stack.size() > MAX_UNDO:
 		_undo_stack.pop_front()
@@ -103,7 +108,23 @@ func _do_undo() -> void:
 	for t in state["tiles"]:
 		WorldManager.set_fg_tile(t.x, t.y, t.id)
 		WorldManager.set_rotation(t.x, t.y, t.rot)
-	_deselect()
+	# Restore align state
+	if state.has("align_angle"):
+		_align_angle = state["align_angle"]
+		_angle_spin.set_value_no_signal(_align_angle)
+	if state.has("align_origin"):
+		_align_origin = state["align_origin"]
+	# Restore selection
+	_free_originals.clear()
+	_rot_dragging = false
+	_move_dragging = false
+	if state.has("sel_indices") and state.get("has_sel", false):
+		_align_sel_indices = state["sel_indices"].duplicate()
+		_align_has_sel = true
+		_has_selection = true
+		_align_wheel_pos = state.get("wheel_pos", Vector2.ZERO)
+	else:
+		_deselect()
 	queue_redraw()
 
 func _ready() -> void:
@@ -228,6 +249,31 @@ func _ready() -> void:
 	)
 	_ui_layer.add_child(_save_btn)
 
+	# Help button
+	var _help_btn: Button = Button.new()
+	_help_btn.name = "HelpBtn"
+	_help_btn.text = "?"
+	_help_btn.size = Vector2(25, 25)
+	_help_btn.add_theme_font_size_override("font_size", 12)
+	_help_btn.pressed.connect(func():
+		var hlp: Label = _ui_layer.get_node_or_null("HelpLabel")
+		if hlp:
+			hlp.visible = not hlp.visible
+	)
+	_ui_layer.add_child(_help_btn)
+
+	# Help label (hidden by default)
+	var _help_label: Label = Label.new()
+	_help_label.name = "HelpLabel"
+	_help_label.visible = false
+	_help_label.text = "SHORTCUTS:\n\nE - Toggle Edit Mode\nShift+Click - Select block\nShift+Drag - Box select\nClick+Drag - Move selected\nCtrl+Drag - Free move\nCtrl+Click+Drag - Line tool\nArrow Keys - Nudge (16px)\nShift+Arrows - Fine nudge (1.6px)\nDelete/Backspace - Delete selected\nEscape - Deselect\nCtrl+Z - Undo\nCtrl+R - Reset grid to 0°\nCtrl+Scroll - Zoom\nR - Rotate 90°\nB - Toggle hitboxes\nG - God mode\nN - Toggle name\nScroll - Cycle blocks\n1-9 - Quick select"
+	_help_label.add_theme_font_size_override("font_size", 11)
+	_help_label.add_theme_color_override("font_color", Color.WHITE)
+	_help_label.add_theme_color_override("font_shadow_color", Color(0, 0, 0, 0.9))
+	_help_label.add_theme_constant_override("shadow_offset_x", 1)
+	_help_label.add_theme_constant_override("shadow_offset_y", 1)
+	_ui_layer.add_child(_help_label)
+
 	# Group filter dropdown (bottom-right)
 	var _gf_container: HBoxContainer = HBoxContainer.new()
 	_gf_container.name = "GroupFilter"
@@ -301,14 +347,15 @@ func _input(event: InputEvent) -> void:
 				get_viewport().set_input_as_handled()
 				queue_redraw()
 		# Delete/Backspace = clear selected blocks
-		if (event.keycode == KEY_DELETE or event.keycode == KEY_BACKSPACE) and _has_selection:
-			_clear_selection()
-		# Escape = deselect or exit align mode
+		if (event.keycode == KEY_DELETE or event.keycode == KEY_BACKSPACE) and (_has_selection or _align_has_sel):
+			if _align_has_sel:
+				_save_undo()
+				_delete_aligned_selection()
+			else:
+				_clear_selection()
+		# Escape = deselect
 		if event.keycode == KEY_ESCAPE:
-			if _align_mode:
-				_align_mode = false
-			elif _has_selection:
-				_deselect()
+			_deselect()
 			queue_redraw()
 
 	# Rotation wheel input (checked FIRST, before UI/line mode)
@@ -347,6 +394,7 @@ func _input(event: InputEvent) -> void:
 
 		# Only trigger rotation when clicking ON the wheel ring (±10px of circle)
 		if event.is_action_pressed("place_block") and dist_to_wheel > ROT_WHEEL_RADIUS - 10 and dist_to_wheel < ROT_WHEEL_RADIUS + 10:
+			_save_undo()
 			_rot_dragging = true
 			_rot_angle = (mouse_world - wheel_center).angle()
 			if _align_has_sel:
@@ -408,6 +456,7 @@ func _input(event: InputEvent) -> void:
 			return
 
 		if event.is_action_pressed("place_block") and (in_sel or in_fb_sel):
+			_save_undo()
 			_move_dragging = true
 			if _align_has_sel and in_fb_sel:
 				if Input.is_key_pressed(KEY_CTRL):
@@ -432,10 +481,17 @@ func _input(event: InputEvent) -> void:
 			get_viewport().set_input_as_handled()
 			return
 		if event.physical_keycode == KEY_R and Input.is_key_pressed(KEY_CTRL):
-			_align_angle = 0.0
-			_angle_spin.set_value_no_signal(0.0)
-			_align_origin = Vector2.ZERO
-			_deselect()
+			if _align_has_sel and _align_sel_indices.size() > 0:
+				# Reset rotation to 0° without moving blocks
+				_save_undo()
+				_align_angle = 0.0
+				_angle_spin.set_value_no_signal(0.0)
+				_align_origin = Vector2.ZERO
+			else:
+				_align_angle = 0.0
+				_angle_spin.set_value_no_signal(0.0)
+				_align_origin = Vector2.ZERO
+				_deselect()
 			queue_redraw()
 			get_viewport().set_input_as_handled()
 			return
@@ -520,8 +576,8 @@ func _input(event: InputEvent) -> void:
 			var _wmin: Vector2 = Vector2(minf(_s_world.x, _e_world.x) - 16, minf(_s_world.y, _e_world.y) - 16)
 			var _wmax: Vector2 = Vector2(maxf(_s_world.x, _e_world.x) + 16, maxf(_s_world.y, _e_world.y) + 16)
 			# Selection bounds in rotated local space
-			var _sel_mn: Vector2 = Vector2(minf(_align_sel_start.x, _align_sel_end.x), minf(_align_sel_start.y, _align_sel_end.y))
-			var _sel_mx: Vector2 = Vector2(maxf(_align_sel_start.x, _align_sel_end.x) + 1.0, maxf(_align_sel_start.y, _align_sel_end.y) + 1.0)
+			var _sel_mn: Vector2 = Vector2(minf(_align_sel_start.x, _align_sel_end.x) - 0.1, minf(_align_sel_start.y, _align_sel_end.y) - 0.1)
+			var _sel_mx: Vector2 = Vector2(maxf(_align_sel_start.x, _align_sel_end.x) + 1.1, maxf(_align_sel_start.y, _align_sel_end.y) + 1.1)
 			# Lift grid blocks that fall within the rotated selection area
 			var _lift_inv: float = deg_to_rad(-_align_angle)
 			var _tx0: int = maxi(1, int(floor(_wmin.x / 16.0)))
@@ -551,14 +607,14 @@ func _input(event: InputEvent) -> void:
 				var _local_fc: Vector2 = (_fc - _align_origin).rotated(_inv_ar) / 16.0
 				if _local_fc.x >= _sel_mn.x and _local_fc.x <= _sel_mx.x and _local_fc.y >= _sel_mn.y and _local_fc.y <= _sel_mx.y:
 					_align_sel_indices.append(_fi)
-			# Store wheel center
-			var _bar: float = deg_to_rad(_align_angle)
-			var _bvgo: Vector2 = _align_origin + Vector2(8, 8) + Vector2(-8, -8).rotated(_bar)
-			var _bmn: Vector2 = Vector2(minf(_align_sel_start.x, _align_sel_end.x), minf(_align_sel_start.y, _align_sel_end.y))
-			var _bmx: Vector2 = Vector2(maxf(_align_sel_start.x, _align_sel_end.x) + 1, maxf(_align_sel_start.y, _align_sel_end.y) + 1)
-			var _c0: Vector2 = _bvgo + (_bmn * 16.0).rotated(_bar)
-			var _c2: Vector2 = _bvgo + (_bmx * 16.0).rotated(_bar)
-			_align_wheel_pos = (_c0 + _c2) / 2.0
+			# Store wheel center from actual selected blocks
+			var _avg_pos: Vector2 = Vector2.ZERO
+			for _wi in _align_sel_indices:
+				if _wi < WorldManager.free_blocks.size():
+					_avg_pos += WorldManager.free_blocks[_wi].pos + Vector2(8, 8)
+			if _align_sel_indices.size() > 0:
+				_avg_pos /= float(_align_sel_indices.size())
+			_align_wheel_pos = _avg_pos
 			if _align_sel_indices.size() > 0:
 				_align_has_sel = true
 				_has_selection = true
@@ -596,6 +652,7 @@ func _input(event: InputEvent) -> void:
 					_move_dragging = false
 				return
 			if event.is_action_pressed("place_block") and in_asel:
+				_save_undo()
 				_move_dragging = true
 				_align_move_start = _get_aligned_snap(mg)
 				get_viewport().set_input_as_handled()
@@ -634,6 +691,7 @@ func _input(event: InputEvent) -> void:
 		if event.is_action_pressed("place_block"):
 			_place_aligned = true
 			_last_align_place = Vector2(-99999, -99999)
+			_save_undo()  # Save once at drag start
 		if event is InputEventMouseMotion and Input.is_action_pressed("place_block"):
 			_place_aligned = true
 		if _place_aligned:
@@ -651,7 +709,6 @@ func _input(event: InputEvent) -> void:
 						var isnap: Vector2 = _get_aligned_snap(interp)
 						if positions.is_empty() or positions[-1].distance_to(isnap) > 2.0:
 							positions.append(isnap)
-			var did_place: bool = false
 			for ppos in positions:
 				var exists: bool = false
 				for fb in WorldManager.free_blocks:
@@ -659,12 +716,11 @@ func _input(event: InputEvent) -> void:
 						exists = true
 						break
 				if not exists:
-					if not did_place:
-						_save_undo()
-						did_place = true
 					WorldManager.free_blocks.append({"pos": ppos, "id": GameState.selected_block_id, "rotation": _align_angle})
 			_last_align_place = snap_pos
 			queue_redraw()
+		if event.is_action_pressed("remove_block"):
+			_save_undo()  # Save once at start of erase drag
 		if event.is_action_pressed("remove_block") or (event is InputEventMouseMotion and Input.is_action_pressed("remove_block")):
 			var mouse: Vector2 = get_global_mouse_position()
 			var best_i: int = -1
@@ -676,7 +732,6 @@ func _input(event: InputEvent) -> void:
 					best_d = d
 					best_i = i
 			if best_i >= 0:
-				_save_undo()
 				WorldManager.free_blocks.remove_at(best_i)
 				queue_redraw()
 		if event is InputEventMouseMotion:
@@ -847,7 +902,7 @@ func _is_mouse_over_ui() -> bool:
 		if gf_rect.has_point(mouse):
 			return true
 	# Clear/Save buttons
-	for btn_name in ["ClearWorldBtn", "SaveWorldBtn"]:
+	for btn_name in ["ClearWorldBtn", "SaveWorldBtn", "HelpBtn"]:
 		var btn: Button = _ui_layer.get_node_or_null(btn_name) as Button
 		if btn and btn.visible:
 			var br: Rect2 = Rect2(btn.global_position, btn.size)
@@ -936,11 +991,9 @@ func _on_align_pressed() -> void:
 	_free_originals.clear()
 	_rot_dragging = false
 	_move_dragging = false
-	if _align_mode:
-		_align_mode = false
-		_align_btn.text = "Align Grid"
-		queue_redraw()
-		return
+	# Align mode is always on — just deselect
+	_deselect()
+	queue_redraw()
 	# Find rotation from free blocks in selection or any free blocks
 	var rot: float = 0.0
 	var origin: Vector2 = Vector2.ZERO
@@ -1032,6 +1085,16 @@ func _process(_delta: float) -> void:
 		save_btn.visible = GameState.is_edit_mode
 		save_btn.size = Vector2(90, 25)
 		save_btn.position = Vector2(vps4.x - 100, 320)
+	# Help button + label
+	var help_btn: Button = _ui_layer.get_node_or_null("HelpBtn") as Button
+	var help_label: Label = _ui_layer.get_node_or_null("HelpLabel") as Label
+	if help_btn:
+		var vps5: Vector2 = get_viewport().get_visible_rect().size
+		help_btn.visible = GameState.is_edit_mode
+		help_btn.size = Vector2(25, 25)
+		help_btn.position = Vector2(vps5.x - 230, 320)
+	if help_label:
+		help_label.position = Vector2(20, 80)
 	# Group filter position (bottom-right)
 	var gf_node: Control = _ui_layer.get_node_or_null("GroupFilter")
 	if gf_node:
@@ -1141,34 +1204,15 @@ func _draw() -> void:
 			draw_line(dc2, dc3, dsc, 1.5)
 			draw_line(dc3, dc0, dsc, 1.5)
 
-		# Selection box from stored block indices - always exact
-		var cur_angle: float = _align_angle + _align_drag_angle
-		var inv_r: float = deg_to_rad(-cur_angle)
-		var fwd_r: float = deg_to_rad(cur_angle)
-		var bmin: Vector2 = Vector2(INF, INF)
-		var bmax: Vector2 = Vector2(-INF, -INF)
-		var found_any: bool = false
+		# Selection box: highlight each selected block individually
 		for idx in _align_sel_indices:
 			if idx < WorldManager.free_blocks.size():
 				var fb: Dictionary = WorldManager.free_blocks[idx]
 				var fc: Vector2 = fb.pos + Vector2(8, 8)
-				var loc: Vector2 = (fc - _align_wheel_pos).rotated(inv_r)
-				bmin.x = minf(bmin.x, loc.x - 8); bmin.y = minf(bmin.y, loc.y - 8)
-				bmax.x = maxf(bmax.x, loc.x + 8); bmax.y = maxf(bmax.y, loc.y + 8)
-				found_any = true
-		var c0: Vector2; var c1: Vector2; var c2: Vector2; var c3: Vector2
-		if found_any:
-			c0 = _align_wheel_pos + Vector2(bmin.x, bmin.y).rotated(fwd_r)
-			c1 = _align_wheel_pos + Vector2(bmax.x, bmin.y).rotated(fwd_r)
-			c2 = _align_wheel_pos + Vector2(bmax.x, bmax.y).rotated(fwd_r)
-			c3 = _align_wheel_pos + Vector2(bmin.x, bmax.y).rotated(fwd_r)
-		else:
-			c0 = Vector2.ZERO; c1 = c0; c2 = c0; c3 = c0
-		var sel_col: Color = Color(0.3, 0.6, 1.0, 0.7)
-		draw_line(c0, c1, sel_col, 2.0)
-		draw_line(c1, c2, sel_col, 2.0)
-		draw_line(c2, c3, sel_col, 2.0)
-		draw_line(c3, c0, sel_col, 2.0)
+				draw_set_transform(fc, deg_to_rad(fb.rotation), Vector2.ONE)
+				draw_rect(Rect2(-8, -8, 16, 16), Color(0.3, 0.6, 1.0, 0.15), true)
+				draw_rect(Rect2(-8, -8, 16, 16), Color(0.3, 0.6, 1.0, 0.7), false, 1.5)
+				draw_set_transform(Vector2.ZERO, 0, Vector2.ONE)
 
 	# Hover highlight
 	if not _align_mode and _hover.x >= 0 and _hover.y >= 0:
@@ -1215,7 +1259,8 @@ func _draw() -> void:
 		for tick2 in range(4):
 			var a2: float = tick2 * PI / 2.0 + PI / 4.0
 			draw_line(awc + Vector2(cos(a2), sin(a2)) * (ROT_WHEEL_RADIUS - 3), awc + Vector2(cos(a2), sin(a2)) * (ROT_WHEEL_RADIUS + 3), Color(wc2, 0.3), 1.0)
-		var ha2: float = 0.0
+		# Handle shows current rotation angle
+		var ha2: float = deg_to_rad(_align_angle)
 		if _rot_dragging:
 			ha2 = (get_global_mouse_position() - awc).angle()
 		draw_circle(awc + Vector2(cos(ha2), sin(ha2)) * ROT_WHEEL_RADIUS, 5.0, Color(0.5, 0.8, 1.0, 0.9))
@@ -1264,13 +1309,11 @@ func _get_tile() -> Vector2i:
 func _place_at(t: Vector2i) -> void:
 	if t.x <= 0 or t.x >= WorldManager.world_width - 1: return
 	if t.y <= 0 or t.y >= WorldManager.world_height - 1: return
-	_save_undo()
 	WorldManager.set_tile(t.x, t.y, GameState.selected_block_id)
 
 func _erase_at(t: Vector2i) -> void:
 	if t.x <= 0 or t.x >= WorldManager.world_width - 1: return
 	if t.y <= 0 or t.y >= WorldManager.world_height - 1: return
-	_save_undo()
 	WorldManager.set_fg_tile(t.x, t.y, 0)
 	WorldManager.set_bg_tile(t.x, t.y, 0)
 
@@ -1487,23 +1530,14 @@ func _lift_aligned_to_free(center_pt: Vector2) -> void:
 	if _free_originals.size() > 0:
 		return
 	_free_center = center_pt
-	# Re-find blocks using same world-space bounding box as selection
-	var _ar2: float = deg_to_rad(_align_angle)
-	var _s_w: Vector2 = _align_origin + (_align_sel_start * 16.0).rotated(_ar2)
-	var _e_w: Vector2 = _align_origin + (_align_sel_end * 16.0).rotated(_ar2)
-	var _wmn: Vector2 = Vector2(minf(_s_w.x, _e_w.x) - 16, minf(_s_w.y, _e_w.y) - 16)
-	var _wmx: Vector2 = Vector2(maxf(_s_w.x, _e_w.x) + 16, maxf(_s_w.y, _e_w.y) + 16)
-	var _lift_mn: Vector2 = Vector2(minf(_align_sel_start.x, _align_sel_end.x), minf(_align_sel_start.y, _align_sel_end.y))
-	var _lift_mx: Vector2 = Vector2(maxf(_align_sel_start.x, _align_sel_end.x) + 1.0, maxf(_align_sel_start.y, _align_sel_end.y) + 1.0)
-	var _lift_inv: float = deg_to_rad(-_align_angle)
+	# Use existing selection indices — no re-finding needed
 	var to_remove: Array = []
-	for i in range(WorldManager.free_blocks.size()):
-		var fb: Dictionary = WorldManager.free_blocks[i]
-		var fc: Vector2 = fb.pos + Vector2(8, 8)
-		var floc: Vector2 = (fc - _align_origin).rotated(_lift_inv) / 16.0
-		if floc.x >= _lift_mn.x and floc.x <= _lift_mx.x and floc.y >= _lift_mn.y and floc.y <= _lift_mx.y:
+	for si in _align_sel_indices:
+		if si < WorldManager.free_blocks.size():
+			var fb: Dictionary = WorldManager.free_blocks[si]
 			_free_originals.append({"pos": fb.pos, "id": fb.id, "rot": fb.rotation})
-			to_remove.append(i)
+			to_remove.append(si)
+	to_remove.sort()
 	for i in range(to_remove.size() - 1, -1, -1):
 		WorldManager.free_blocks.remove_at(to_remove[i])
 	for orig in _free_originals:
