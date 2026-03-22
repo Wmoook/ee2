@@ -224,7 +224,7 @@ func tick(input_h: int, input_v: int, space_just: bool, space_held: bool) -> voi
 		if poly_result.hit:
 			var poly_vel: Vector2 = Vector2(_speedX, _speedY)
 			var vel_toward: float = poly_vel.dot(-poly_result.normal)
-			var _skip_poly: bool = vel_toward < -1.5 and poly_result.push.length() < 3.0
+			var _skip_poly: bool = vel_toward < -3.0 and poly_result.push.length() < 1.0
 			if not _skip_poly:
 				var poly_push: Vector2 = poly_result.push
 				var poly_grav_n: Vector2 = Vector2(mox, moy)
