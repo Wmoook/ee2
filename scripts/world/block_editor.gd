@@ -767,6 +767,8 @@ func _input(event: InputEvent) -> void:
 			if best_i >= 0:
 				WorldManager.free_blocks.remove_at(best_i)
 				queue_redraw()
+			# Also try to remove polylines near the click
+			WorldManager.remove_polyline_near(mouse, 16.0)
 		if event is InputEventMouseMotion:
 			queue_redraw()
 		return
