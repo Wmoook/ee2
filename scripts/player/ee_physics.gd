@@ -715,7 +715,12 @@ func _step_position() -> void:
 			ry = fmod(y, 1.0)
 			if ry < 0: ry += 1.0
 			if _collides_px(x, y):
-				y = oy; _speedY = 0; currentSY = osy; doney = true
+				# Snap to exact tile boundary (prevents sub-pixel visual clipping)
+				if osy > 0:  # Was moving down
+					y = floor(oy)
+				else:
+					y = oy
+				_speedY = 0; currentSY = osy; doney = true
 
 func _collides_px(px: float, py: float) -> bool:
 	if is_god_mode:
