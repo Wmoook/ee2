@@ -360,6 +360,11 @@ func _input(event: InputEvent) -> void:
 		if (event.keycode == KEY_DELETE or event.keycode == KEY_BACKSPACE) and (_has_selection or _align_has_sel):
 			if _align_has_sel:
 				_save_undo()
+				# Remove polylines near selected blocks
+				for del_si in _align_sel_indices:
+					if del_si < WorldManager.free_blocks.size():
+						var del_fb: Dictionary = WorldManager.free_blocks[del_si]
+						WorldManager.remove_polyline_near(del_fb.pos + Vector2(8, 8), 20.0)
 				_delete_aligned_selection()
 			else:
 				_clear_selection()
@@ -1697,6 +1702,8 @@ func _delete_aligned_selection() -> void:
 		var rel: Vector2 = fc - _align_origin
 		var local: Vector2 = rel.rotated(rad) / 16.0
 		if local.x >= min_x - 0.5 and local.x <= max_x + 0.5 and local.y >= min_y - 0.5 and local.y <= max_y + 0.5:
+			# Also remove polylines near deleted blocks
+			WorldManager.remove_polyline_near(fc, 20.0)
 			WorldManager.free_blocks.remove_at(i)
 		i -= 1
 	_align_has_sel = false

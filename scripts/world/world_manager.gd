@@ -159,10 +159,9 @@ func check_polyline_collision(px: float, py: float, pw: float, ph: float) -> Dic
 		# Effective radius: half-size of player box projected onto push direction
 		var push_dir: Vector2 = to_player.normalized() if dist_to_line > 0.01 else interp_normal
 		var eff_radius: float = (pw * 0.5) * absf(push_dir.x) + (ph * 0.5) * absf(push_dir.y)
-		# Penetration: player overlaps the line's effective width (8px each side = 16px total)
-		var line_half_width: float = 8.0
-		var penetration: float = (eff_radius + line_half_width) - dist_to_line
-		if penetration > 0 and dist_to_line < eff_radius + line_half_width + 4.0:
+		# Penetration: player overlaps the surface line
+		var penetration: float = eff_radius - dist_to_line
+		if penetration > 0 and dist_to_line < eff_radius + 4.0:
 			if penetration > best_pen:
 				best_pen = penetration
 				var push_vec: Vector2 = push_dir * penetration
