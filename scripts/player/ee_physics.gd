@@ -218,43 +218,36 @@ func tick(input_h: int, input_v: int, space_just: bool, space_held: bool) -> voi
 	# 7. Step position
 	_step_position()
 
-	# 7.15 Polyline collision (iterative — handles tight gaps + folds)
+	# 7.15 Polyline collision (single pass — avoid oscillation between surfaces)
 	if not is_god_mode:
-		for _poly_pass in range(3):  # Up to 3 iterations
-			var poly_result: Dictionary = WorldManager.check_polyline_collision(x, y, 16.0, 16.0)
-			if not poly_result.hit:
-				break
+		var poly_result: Dictionary = WorldManager.check_polyline_collision(x, y, 16.0, 16.0)
+		if poly_result.hit:
 			var poly_vel: Vector2 = Vector2(_speedX, _speedY)
 			var vel_toward: float = poly_vel.dot(-poly_result.normal)
-			var _skip_poly: bool = false
-			if vel_toward < -1.5 and poly_result.push.length() < 3.0:
-				_skip_poly = true
-			if _skip_poly:
-				break
-			# Apply this pass:
-			var poly_push: Vector2 = poly_result.push
-			var poly_grav_n: Vector2 = Vector2(mox, moy)
-			if poly_grav_n.length() < 0.01:
-				poly_grav_n = Vector2(0, 1)
-			poly_grav_n = poly_grav_n.normalized()
-			# No V-bottom dampening — let physics drag handle settling
-			x += poly_push.x
-			y += poly_push.y
-			on_rotated_block = true
-			_surface_normal = poly_result.normal
-			var poly_against: float = -poly_result.normal.dot(poly_grav_n)
-			if poly_against > 0.2:
-				is_grounded = true
-				var poly_tangent: Vector2 = poly_result.tangent
-				var poly_spd_along: float = Vector2(_speedX, _speedY).dot(poly_tangent)
-				_speedX = poly_tangent.x * poly_spd_along
-				_speedY = poly_tangent.y * poly_spd_along
-			else:
-				var poly_spd: Vector2 = Vector2(_speedX, _speedY)
-				var poly_into: float = poly_spd.dot(-poly_result.normal)
-				if poly_into > 0:
-					_speedX += poly_result.normal.x * poly_into
-					_speedY += poly_result.normal.y * poly_into
+			var _skip_poly: bool = vel_toward < -1.5 and poly_result.push.length() < 3.0
+			if not _skip_poly:
+				var poly_push: Vector2 = poly_result.push
+				var poly_grav_n: Vector2 = Vector2(mox, moy)
+				if poly_grav_n.length() < 0.01:
+					poly_grav_n = Vector2(0, 1)
+				poly_grav_n = poly_grav_n.normalized()
+				x += poly_push.x
+				y += poly_push.y
+				on_rotated_block = true
+				_surface_normal = poly_result.normal
+				var poly_against: float = -poly_result.normal.dot(poly_grav_n)
+				if poly_against > 0.2:
+					is_grounded = true
+					var poly_tangent: Vector2 = poly_result.tangent
+					var poly_spd_along: float = Vector2(_speedX, _speedY).dot(poly_tangent)
+					_speedX = poly_tangent.x * poly_spd_along
+					_speedY = poly_tangent.y * poly_spd_along
+				else:
+					var poly_spd: Vector2 = Vector2(_speedX, _speedY)
+					var poly_into: float = poly_spd.dot(-poly_result.normal)
+					if poly_into > 0:
+						_speedX += poly_result.normal.x * poly_into
+						_speedY += poly_result.normal.y * poly_into
 
 	# 7.5 Line collision
 	if not is_god_mode:
