@@ -88,7 +88,7 @@ func _draw() -> void:
 	for line in WorldManager.lines:
 		draw_line(line.start, line.end, line.color, line.width, true)
 
-	# Draw polyline curves: single textured polygon strip per curve
+	# Draw polyline curves: textured quads every 16px (no triangulation artifacts)
 	for poly in WorldManager.polylines:
 		var poly_pts: PackedVector2Array = poly.points
 		var poly_norms: Array = poly.normals
@@ -108,53 +108,37 @@ func _draw() -> void:
 			var ctex_key: String = "%s_%d" % [curve_atlas, curve_chunk]
 			if textures.has(ctex_key):
 				curve_tex = textures[ctex_key]
-			# Build single polygon strip: top forward + bottom reversed
-			var strip: PackedVector2Array = PackedVector2Array()
-			var strip_uvs: PackedVector2Array = PackedVector2Array()
-			# Cumulative distance for UV tiling
-			var cdist: Array = [0.0]
-			for pli in range(1, poly_pts.size()):
-				cdist.append(cdist[pli - 1] + poly_pts[pli].distance_to(poly_pts[pli - 1]))
-			# Atlas UV bounds
 			var aw: float = curve_tex.get_width() if curve_tex else 256.0
 			var ah: float = curve_tex.get_height() if curve_tex else 256.0
 			var curve_cols: int = int(aw) / TILE_SIZE
 			var csx: int = (curve_local % curve_cols) * TILE_SIZE
 			var csy: int = (curve_local / curve_cols) * TILE_SIZE
-			var uv_u0: float = float(csx) / aw
-			var uv_v0: float = float(csy) / ah
-			var uv_u1: float = float(csx + TILE_SIZE) / aw
-			var uv_v1: float = float(csy + TILE_SIZE) / ah
-			var uv_w: float = uv_u1 - uv_u0
-			# Top edge (forward)
-			for pli in range(poly_pts.size()):
-				var pn: Vector2 = poly_norms[pli] if pli < poly_norms.size() else Vector2(0, -1)
-				strip.append(poly_pts[pli] + pn * half_w)
-				var u_frac: float = fmod(cdist[pli] / 16.0, 1.0)
-				strip_uvs.append(Vector2(uv_u0 + u_frac * uv_w, uv_v0))
-			# Bottom edge (reversed)
-			for pli in range(poly_pts.size() - 1, -1, -1):
-				var pn: Vector2 = poly_norms[pli] if pli < poly_norms.size() else Vector2(0, -1)
-				strip.append(poly_pts[pli] - pn * half_w)
-				var u_frac: float = fmod(cdist[pli] / 16.0, 1.0)
-				strip_uvs.append(Vector2(uv_u0 + u_frac * uv_w, uv_v1))
-			if curve_tex:
-				draw_colored_polygon(strip, Color.WHITE, strip_uvs, curve_tex)
-			else:
-				draw_colored_polygon(strip, Color(0.5, 0.5, 0.52, 1.0))
-			# Edge lines (sampled for speed)
-			var top_e: PackedVector2Array = PackedVector2Array()
-			var bot_e: PackedVector2Array = PackedVector2Array()
-			var step: int = maxi(1, poly_pts.size() / 80)
-			for pli in range(0, poly_pts.size(), step):
-				var pn: Vector2 = poly_norms[pli] if pli < poly_norms.size() else Vector2(0, -1)
-				top_e.append(poly_pts[pli] + pn * half_w)
-				bot_e.append(poly_pts[pli] - pn * half_w)
-			var ln: Vector2 = poly_norms[-1] if poly_norms.size() > 0 else Vector2(0, -1)
-			top_e.append(poly_pts[-1] + ln * half_w)
-			bot_e.append(poly_pts[-1] - ln * half_w)
-			draw_polyline(top_e, Color(0.35, 0.35, 0.4, 0.8), 1.5, true)
-			draw_polyline(bot_e, Color(0.35, 0.35, 0.4, 0.8), 1.5, true)
+			var u0: float = float(csx) / aw
+			var v0: float = float(csy) / ah
+			var u1: float = float(csx + TILE_SIZE) / aw
+			var v1: float = float(csy + TILE_SIZE) / ah
+			# Draw quads every ~8px for smooth curves (convex = no artifacts)
+			var cum_d: float = 0.0
+			var last_d: float = 0.0
+			var pn0: Vector2 = poly_norms[0] if poly_norms.size() > 0 else Vector2(0, -1)
+			var prev_t: Vector2 = poly_pts[0] + pn0 * half_w
+			var prev_b: Vector2 = poly_pts[0] - pn0 * half_w
+			for pli in range(1, poly_pts.size()):
+				cum_d += poly_pts[pli].distance_to(poly_pts[pli - 1])
+				if cum_d - last_d >= 8.0 or pli == poly_pts.size() - 1:
+					var pn: Vector2 = poly_norms[pli] if pli < poly_norms.size() else Vector2(0, -1)
+					var cur_t: Vector2 = poly_pts[pli] + pn * half_w
+					var cur_b: Vector2 = poly_pts[pli] - pn * half_w
+					var qp: PackedVector2Array = PackedVector2Array([prev_t, cur_t, cur_b, prev_b])
+					if curve_tex:
+						var quv: PackedVector2Array = PackedVector2Array([
+							Vector2(u0, v0), Vector2(u1, v0), Vector2(u1, v1), Vector2(u0, v1)])
+						draw_colored_polygon(qp, Color.WHITE, quv, curve_tex)
+					else:
+						draw_colored_polygon(qp, Color(0.5, 0.5, 0.52, 1.0))
+					prev_t = cur_t
+					prev_b = cur_b
+					last_d = cum_d
 			if GameState.is_edit_mode:
 				draw_polyline(poly_pts, Color(0.2, 0.8, 1.0, 0.4), 1.0, true)
 
