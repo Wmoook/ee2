@@ -228,13 +228,7 @@ func tick(input_h: int, input_v: int, space_just: bool, space_held: bool) -> voi
 			var _skip_poly: bool = false
 			if vel_toward < -1.5 and poly_result.push.length() < 3.0:
 				_skip_poly = true  # Flying away
-			if not _skip_poly:
-				# Check if sandwiched between opposing polylines
-				var test_r: Dictionary = WorldManager.check_polyline_collision(x + poly_result.push.x, y + poly_result.push.y, 16.0, 16.0)
-				if test_r.hit and test_r.normal.dot(poly_result.normal) < -0.3:
-					_skip_poly = true  # Sandwiched — just stay
-					_speedX *= 0.5
-					_speedY *= 0.5
+			# No sandwich check — let collision resolve naturally
 			if not _skip_poly:
 				var poly_push: Vector2 = poly_result.push
 				var poly_grav_n: Vector2 = Vector2(mox, moy)
