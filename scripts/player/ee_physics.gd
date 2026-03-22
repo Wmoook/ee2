@@ -254,18 +254,14 @@ func tick(input_h: int, input_v: int, space_just: bool, space_held: bool) -> voi
 				push_warning("PC ag=%.2f sX=%.1f sY=%.1f gS=%.1f p=%.1f,%.1f" % [poly_against, _speedX, _speedY, _pre_tick_grav_speed, poly_push.x, poly_push.y])
 				if poly_against > 0.2 and _pre_tick_grav_speed >= 0:
 					is_grounded = true
+					# Simple tangent projection (no speed preservation tricks)
 					var poly_tangent: Vector2 = poly_result.tangent
-					var poly_spd: Vector2 = Vector2(_speedX, _speedY)
-					var poly_spd_mag: float = poly_spd.length()
-					var poly_spd_along: float = poly_spd.dot(poly_tangent)
-					# Preserve full speed on curves
-					if poly_spd_mag > 0.5:
-						var pdir: float = 1.0 if poly_spd_along >= 0 else -1.0
-						_speedX = poly_tangent.x * poly_spd_mag * pdir
-						_speedY = poly_tangent.y * poly_spd_mag * pdir
-					else:
-						_speedX = poly_tangent.x * poly_spd_along
-						_speedY = poly_tangent.y * poly_spd_along
+					var poly_spd_along: float = Vector2(_speedX, _speedY).dot(poly_tangent)
+					# Add gravity along tangent for slope acceleration
+					var poly_grav_tang: float = Vector2(mox, moy).dot(poly_tangent) * _get_grav_mult() / MULT * 0.5
+					poly_spd_along += poly_grav_tang
+					_speedX = poly_tangent.x * poly_spd_along
+					_speedY = poly_tangent.y * poly_spd_along
 				_prev_poly_normal = poly_result.normal
 
 	# 7.5 Line collision
