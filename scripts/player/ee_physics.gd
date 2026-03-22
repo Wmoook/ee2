@@ -218,18 +218,20 @@ func tick(input_h: int, input_v: int, space_just: bool, space_held: bool) -> voi
 	# 7. Step position
 	_step_position()
 
-	# 7.15 Polyline collision (all sides)
+	# 7.15 Polyline collision (iterative — handles tight gaps + folds)
 	if not is_god_mode:
-		var poly_result: Dictionary = WorldManager.check_polyline_collision(x, y, 16.0, 16.0)
-		if poly_result.hit:
-			# Skip if moving away from surface, or sandwiched between two curves
+		for _poly_pass in range(3):  # Up to 3 iterations
+			var poly_result: Dictionary = WorldManager.check_polyline_collision(x, y, 16.0, 16.0)
+			if not poly_result.hit:
+				break
 			var poly_vel: Vector2 = Vector2(_speedX, _speedY)
 			var vel_toward: float = poly_vel.dot(-poly_result.normal)
 			var _skip_poly: bool = false
 			if vel_toward < -1.5 and poly_result.push.length() < 3.0:
-				_skip_poly = true  # Flying away
-			# No sandwich check — let collision resolve naturally
-			if not _skip_poly:
+				_skip_poly = true
+			if _skip_poly:
+				break
+			# Apply this pass (re-check on next iteration catches second surface):
 				var poly_push: Vector2 = poly_result.push
 				var poly_grav_n: Vector2 = Vector2(mox, moy)
 				if poly_grav_n.length() < 0.01:
