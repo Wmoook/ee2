@@ -88,34 +88,55 @@ func _draw() -> void:
 	for line in WorldManager.lines:
 		draw_line(line.start, line.end, line.color, line.width, true)
 
-	# Draw polyline curves as filled polygon strips
+	# Draw polyline curves as textured polygon strips
 	for poly in WorldManager.polylines:
 		var poly_pts: PackedVector2Array = poly.points
 		var poly_norms: Array = poly.normals
 		if poly_pts.size() >= 2:
-			# Build polygon strip: two edges offset from center
-			var top_pts: PackedVector2Array = PackedVector2Array()
-			var bot_pts: PackedVector2Array = PackedVector2Array()
+			# Build strip: each segment = textured quad using the block atlas
+			var half_w: float = 8.0
+			for pli in range(poly_pts.size() - 1):
+				var pa: Vector2 = poly_pts[pli]
+				var pb: Vector2 = poly_pts[pli + 1]
+				var na: Vector2 = poly_norms[pli] if pli < poly_norms.size() else Vector2(0, -1)
+				var nb: Vector2 = poly_norms[pli + 1] if pli + 1 < poly_norms.size() else na
+				# Quad corners
+				var tl: Vector2 = pa + na * half_w
+				var bl: Vector2 = pa - na * half_w
+				var tr: Vector2 = pb + nb * half_w
+				var br: Vector2 = pb - nb * half_w
+				# Draw textured quad using block texture
+				var tex_key: String = "blocks_0"
+				if textures.has(tex_key):
+					var tex: Texture2D = textures[tex_key]
+					# Use first block sprite (16x16 at 0,0)
+					var src: Rect2 = Rect2(0, 0, TILE_SIZE, TILE_SIZE)
+					var pts_arr: PackedVector2Array = PackedVector2Array([tl, tr, br, bl])
+					var uvs: PackedVector2Array = PackedVector2Array([
+						Vector2(0, 0), Vector2(1, 0), Vector2(1, 1), Vector2(0, 1)
+					])
+					# Scale UVs to atlas
+					var atlas_w: float = tex.get_width()
+					var atlas_h: float = tex.get_height()
+					uvs[0] = Vector2(0.0 / atlas_w, 0.0 / atlas_h)
+					uvs[1] = Vector2(TILE_SIZE / atlas_w, 0.0 / atlas_h)
+					uvs[2] = Vector2(TILE_SIZE / atlas_w, TILE_SIZE / atlas_h)
+					uvs[3] = Vector2(0.0 / atlas_w, TILE_SIZE / atlas_h)
+					draw_colored_polygon(pts_arr, Color.WHITE, uvs, tex)
+				else:
+					# Fallback: solid color
+					var quad: PackedVector2Array = PackedVector2Array([tl, tr, br, bl])
+					draw_colored_polygon(quad, Color(0.45, 0.45, 0.48, 1.0))
+			# Edges for definition
 			for pli in range(poly_pts.size()):
 				var pn: Vector2 = poly_norms[pli] if pli < poly_norms.size() else Vector2(0, -1)
-				top_pts.append(poly_pts[pli] + pn * 8.0)
-				bot_pts.append(poly_pts[pli] - pn * 8.0)
-			# Create polygon from top edge + reversed bottom edge
-			var strip: PackedVector2Array = PackedVector2Array()
-			for pli in range(top_pts.size()):
-				strip.append(top_pts[pli])
-			for pli in range(bot_pts.size() - 1, -1, -1):
-				strip.append(bot_pts[pli])
-			# Draw filled polygon with block color
-			draw_colored_polygon(strip, Color(0.45, 0.45, 0.48, 1.0))
-			# Draw edges
-			for pli in range(top_pts.size() - 1):
-				draw_line(top_pts[pli], top_pts[pli + 1], Color(0.35, 0.35, 0.38, 1.0), 1.5, true)
-				draw_line(bot_pts[pli], bot_pts[pli + 1], Color(0.35, 0.35, 0.38, 1.0), 1.5, true)
+				if pli < poly_pts.size() - 1:
+					var pn2: Vector2 = poly_norms[pli + 1] if pli + 1 < poly_norms.size() else pn
+					draw_line(poly_pts[pli] + pn * half_w, poly_pts[pli + 1] + pn2 * half_w, Color(0.3, 0.3, 0.35, 0.6), 1.0, true)
+					draw_line(poly_pts[pli] - pn * half_w, poly_pts[pli + 1] - pn2 * half_w, Color(0.3, 0.3, 0.35, 0.6), 1.0, true)
 			if GameState.is_edit_mode:
-				# Center line
 				for pli in range(poly_pts.size() - 1):
-					draw_line(poly_pts[pli], poly_pts[pli + 1], Color(0.2, 0.8, 1.0, 0.5), 1.0, true)
+					draw_line(poly_pts[pli], poly_pts[pli + 1], Color(0.2, 0.8, 1.0, 0.4), 1.0, true)
 
 func draw_block(x: int, y: int, block_id: int, alpha: float) -> void:
 	var dest: Rect2 = Rect2(x * TILE_SIZE, y * TILE_SIZE, TILE_SIZE, TILE_SIZE)

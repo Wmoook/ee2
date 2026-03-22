@@ -1136,33 +1136,19 @@ func _process(_delta: float) -> void:
 						var cp2: Vector2 = vcp[cseg + 1]
 						var cp3: Vector2 = vcp[cseg + 2]
 						var cseg_len: float = cp1.distance_to(cp2)
-						var csteps: int = int(max(3, ceil(cseg_len / 8.0)))
+						var csteps: int = int(max(4, ceil(cseg_len / 2.0)))
 						for ci in range(csteps):
 							var ct: float = float(ci) / float(csteps)
 							var ctt: float = ct * ct
 							var cttt: float = ctt * ct
 							var spos: Vector2 = 0.5 * ((2.0 * cp1) + (-cp0 + cp2) * ct + (2.0 * cp0 - 5.0 * cp1 + 4.0 * cp2 - cp3) * ctt + (-cp0 + 3.0 * cp1 - 3.0 * cp2 + cp3) * cttt)
-							if spline_pts.size() == 0 or spline_pts[-1].distance_to(spos) > 4.0:
+							if spline_pts.size() == 0 or spline_pts[-1].distance_to(spos) > 2.0:
 								spline_pts.append(spos)
 					# Add final point
 					if spline_pts.size() > 0 and spline_pts[-1].distance_to(cpts[-1]) > 4.0:
 						spline_pts.append(cpts[-1])
 					if spline_pts.size() >= 2:
-						# Main curve polyline
 						WorldManager.add_polyline(spline_pts, "both")
-						# Add flat cap polylines at each endpoint (perpendicular walls)
-						var start_dir: Vector2 = (spline_pts[1] - spline_pts[0]).normalized()
-						var start_perp: Vector2 = Vector2(-start_dir.y, start_dir.x)
-						var cap_start: PackedVector2Array = PackedVector2Array()
-						cap_start.append(spline_pts[0] + start_perp * 10.0)
-						cap_start.append(spline_pts[0] - start_perp * 10.0)
-						WorldManager.add_polyline(cap_start, "both")
-						var end_dir: Vector2 = (spline_pts[-1] - spline_pts[-2]).normalized()
-						var end_perp: Vector2 = Vector2(-end_dir.y, end_dir.x)
-						var cap_end: PackedVector2Array = PackedVector2Array()
-						cap_end.append(spline_pts[-1] + end_perp * 10.0)
-						cap_end.append(spline_pts[-1] - end_perp * 10.0)
-						WorldManager.add_polyline(cap_end, "both")
 				_curve_points.clear()
 				_curve_preview.clear()
 				_curve_mode = false
