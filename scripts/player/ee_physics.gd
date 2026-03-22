@@ -237,6 +237,19 @@ func tick(input_h: int, input_v: int, space_just: bool, space_held: bool) -> voi
 			var poly_vel: Vector2 = Vector2(_speedX, _speedY)
 			var vel_toward: float = poly_vel.dot(-poly_result.normal)
 			var _skip_poly: bool = vel_toward < -3.0 and poly_result.push.length() < 1.0
+			# Detect oscillation: push flipped from last tick = trapped between surfaces
+			if not _skip_poly and _prev_push_normal.length() > 0.1:
+				if _prev_push_normal.dot(poly_result.normal) < -0.3 and poly_result.push.length() < 10.0:
+					# Trapped! Push along gravity direction to escape
+					var escape_dir: Vector2 = Vector2(mox, moy)
+					if escape_dir.length() < 0.01:
+						escape_dir = Vector2(0, 1)
+					escape_dir = escape_dir.normalized()
+					x += escape_dir.x * 2.0
+					y += escape_dir.y * 2.0
+					_speedX = 0
+					_speedY = 0
+					_skip_poly = true
 			if not _skip_poly:
 				var poly_push: Vector2 = poly_result.push
 				var poly_grav_n: Vector2 = Vector2(mox, moy)
