@@ -43,7 +43,7 @@ func _ready() -> void:
 	_smiley_sprite = Sprite2D.new()
 	_smiley_sprite.centered = true
 	_smiley_sprite.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
-	_smiley_sprite.position = Vector2(8, 7)  # Center of hitbox, offset up 1px
+	_smiley_sprite.position = Vector2(8, 7.5)  # Center of hitbox, offset up 0.5px
 	# Z between bg (-2) and fg overlay (2) so blocks cover smiley border
 	_smiley_sprite.z_as_relative = false
 	_smiley_sprite.z_index = 0
