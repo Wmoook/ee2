@@ -318,11 +318,10 @@ func _input(event: InputEvent) -> void:
 				_align_origin = _psfb.pos
 				_align_block_id = _psfb.id
 				queue_redraw()
-			# Start drag tracking only if no block was clicked
-			if _pfb_idx < 0:
-				_align_sel_start = _get_aligned_local(get_global_mouse_position())
-				_align_sel_end = _align_sel_start
-				_align_sel_dragging = true
+			# Always start drag tracking (extends to box select if dragged)
+			_align_sel_start = _get_aligned_local(get_global_mouse_position())
+			_align_sel_end = _align_sel_start
+			_align_sel_dragging = true
 			# Reset drag state (keep selection if block was found)
 			if _pfb_idx < 0:
 				_align_has_sel = false
@@ -347,7 +346,8 @@ func _input(event: InputEvent) -> void:
 					_deselect()
 				queue_redraw()
 				return
-			# Box select: find blocks in area
+			# Box select: clear single-block selection and find blocks in area
+			_deselect()
 			_align_sel_indices.clear()
 			# Use world-space: get actual start/end world positions from the drag
 			var _ws: Vector2 = _get_aligned_snap(get_global_mouse_position())
@@ -371,11 +371,16 @@ func _input(event: InputEvent) -> void:
 						WorldManager.free_blocks.append({"pos": _bpos, "id": _bid, "rotation": _brot})
 						WorldManager.set_fg_tile(_tx, _ty, 0)
 						WorldManager.set_rotation(_tx, _ty, 0)
-			# Select all free blocks in area
+			# Select free blocks in rotated local space (not world AABB)
+			var _sel_mn: Vector2 = Vector2(minf(_align_sel_start.x, _align_sel_end.x) - 0.5, minf(_align_sel_start.y, _align_sel_end.y) - 0.5)
+			var _sel_mx: Vector2 = Vector2(maxf(_align_sel_start.x, _align_sel_end.x) + 0.5, maxf(_align_sel_start.y, _align_sel_end.y) + 0.5)
+			var _inv_ar: float = deg_to_rad(-_align_angle)
 			for _fi in range(WorldManager.free_blocks.size()):
 				var _fb: Dictionary = WorldManager.free_blocks[_fi]
 				var _fc: Vector2 = _fb.pos + Vector2(8, 8)
-				if _fc.x >= _wmin.x and _fc.x <= _wmax.x and _fc.y >= _wmin.y and _fc.y <= _wmax.y:
+				# Transform block center to selection's local space
+				var _local_fc: Vector2 = (_fc - _align_origin).rotated(_inv_ar) / 16.0
+				if _local_fc.x >= _sel_mn.x and _local_fc.x <= _sel_mx.x and _local_fc.y >= _sel_mn.y and _local_fc.y <= _sel_mx.y:
 					_align_sel_indices.append(_fi)
 			# Store wheel center
 			var _bar: float = deg_to_rad(_align_angle)
@@ -750,17 +755,19 @@ func _draw() -> void:
 	for gy in range(sy, ey + 1):
 		draw_line(Vector2(sx * 16, gy * 16), Vector2(ex * 16, gy * 16), gc, 0.5)
 
-	# Aligned placement mode: show rotated grid cursor (hide during selection)
-	if _align_mode and not _align_has_sel:
-		var mouse: Vector2 = get_global_mouse_position()
-		var snap: Vector2 = _get_aligned_snap(mouse)
+	# Aligned placement mode: show rotated grid + cursor (cursor hidden during selection)
+	if _align_mode:
 		var rad: float = deg_to_rad(_align_angle)
-		var center: Vector2 = snap + Vector2(8, 8)
-		draw_set_transform(center, rad, Vector2.ONE)
-		draw_rect(Rect2(-8, -8, 16, 16), Color(0.3, 1.0, 0.3, 0.4), true)
-		draw_rect(Rect2(-8, -8, 16, 16), Color(0.3, 1.0, 0.3, 0.8), false, 1.5)
-		draw_set_transform(Vector2.ZERO, 0, Vector2.ONE)
-		# Draw rotated grid lines fixed to align origin
+		# Ghost cursor (only when not selecting)
+		if not _align_has_sel:
+			var mouse: Vector2 = get_global_mouse_position()
+			var snap: Vector2 = _get_aligned_snap(mouse)
+			var center: Vector2 = snap + Vector2(8, 8)
+			draw_set_transform(center, rad, Vector2.ONE)
+			draw_rect(Rect2(-8, -8, 16, 16), Color(0.3, 1.0, 0.3, 0.4), true)
+			draw_rect(Rect2(-8, -8, 16, 16), Color(0.3, 1.0, 0.3, 0.8), false, 1.5)
+			draw_set_transform(Vector2.ZERO, 0, Vector2.ONE)
+		# Draw rotated grid lines (always visible)
 		# Offset by (8,8) to match block center positioning
 		var grid_col: Color = Color(0.3, 1.0, 0.3, 0.08)
 		var go: Vector2 = _align_origin + Vector2(8, 8) - Vector2(8, 8).rotated(rad)
@@ -774,8 +781,8 @@ func _draw() -> void:
 		var e: Vector2 = _align_sel_end if not _align_sel_dragging else _get_aligned_local(get_global_mouse_position())
 		var mn: Vector2 = Vector2(minf(s.x, e.x), minf(s.y, e.y))
 		var mx2: Vector2 = Vector2(maxf(s.x, e.x) + 1, maxf(s.y, e.y) + 1)
-		# During drag: grid-based preview (only if no block already selected)
-		if _align_sel_dragging and not _align_has_sel:
+		# During drag: grid-based preview + highlight blocks in area
+		if _align_sel_dragging and (_align_sel_end - _align_sel_start).length() > 0.3:
 			var dar: float = deg_to_rad(_align_angle)
 			var dvgo: Vector2 = _align_origin + Vector2(8, 8) + Vector2(-8, -8).rotated(dar)
 			var dc0: Vector2 = dvgo + (mn * 16.0).rotated(dar)
@@ -785,6 +792,19 @@ func _draw() -> void:
 			var dsc: Color = Color(0.3, 0.6, 1.0, 0.5)
 			draw_line(dc0, dc1, dsc, 1.5)
 			draw_line(dc1, dc2, dsc, 1.5)
+			# Highlight blocks inside drag area
+			var _d_sel_mn: Vector2 = Vector2(mn.x - 0.5, mn.y - 0.5)
+			var _d_sel_mx: Vector2 = Vector2(mx2.x - 0.5, mx2.y - 0.5)
+			var _d_inv: float = deg_to_rad(-_align_angle)
+			for _dfi in range(WorldManager.free_blocks.size()):
+				var _dfb: Dictionary = WorldManager.free_blocks[_dfi]
+				var _dfc: Vector2 = _dfb.pos + Vector2(8, 8)
+				var _dloc: Vector2 = (_dfc - _align_origin).rotated(_d_inv) / 16.0
+				if _dloc.x >= _d_sel_mn.x and _dloc.x <= _d_sel_mx.x and _dloc.y >= _d_sel_mn.y and _dloc.y <= _d_sel_mx.y:
+					draw_set_transform(_dfc, deg_to_rad(_dfb.rotation), Vector2.ONE)
+					draw_rect(Rect2(-8, -8, 16, 16), Color(0.3, 0.6, 1.0, 0.3), true)
+					draw_rect(Rect2(-8, -8, 16, 16), Color(0.3, 0.6, 1.0, 0.8), false, 1.5)
+					draw_set_transform(Vector2.ZERO, 0, Vector2.ONE)
 			draw_line(dc2, dc3, dsc, 1.5)
 			draw_line(dc3, dc0, dsc, 1.5)
 

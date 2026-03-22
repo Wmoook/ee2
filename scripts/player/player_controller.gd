@@ -164,9 +164,10 @@ func _physics_process(delta: float) -> void:
 		# Exact EE camera: independent, offset += (target - offset) * 1/16
 		if _camera:
 			var player_center: Vector2 = Vector2(physics.get_pixel_x() + 8, physics.get_pixel_y() + 8)
+			var target: Vector2 = player_center + GameState.camera_offset
 			var cam: Vector2 = _camera.global_position
-			cam.x = cam.x + (player_center.x - cam.x) * 0.0625
-			cam.y = cam.y + (player_center.y - cam.y) * 0.0625
+			cam.x = cam.x + (target.x - cam.x) * 0.0625
+			cam.y = cam.y + (target.y - cam.y) * 0.0625
 			_camera.global_position = cam
 	_space_just = false
 	_cbf_consumed_jump = false  # Reset for next frame
@@ -326,7 +327,7 @@ func _run_cbf_tick() -> void:
 
 	# Update camera in sync with CBF tick
 	if _camera:
-		var pc: Vector2 = _phys_pos + Vector2(8, 8)
+		var pc: Vector2 = _phys_pos + Vector2(8, 8) + GameState.camera_offset
 		var cam: Vector2 = _camera.global_position
 		cam.x = cam.x + (pc.x - cam.x) * 0.0625
 		cam.y = cam.y + (pc.y - cam.y) * 0.0625
