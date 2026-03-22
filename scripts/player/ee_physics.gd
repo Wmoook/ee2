@@ -237,15 +237,7 @@ func tick(input_h: int, input_v: int, space_just: bool, space_held: bool) -> voi
 			if poly_grav_n.length() < 0.01:
 				poly_grav_n = Vector2(0, 1)
 			poly_grav_n = poly_grav_n.normalized()
-			var poly_spd_total: float = absf(_speedX) + absf(_speedY)
-			var push_mostly_horiz: bool = absf(poly_push.x) > absf(poly_push.y) * 1.5
-			if poly_push.length() < 4.0 and poly_spd_total < 0.5 and push_mostly_horiz:
-				poly_push.x = 0
-				_speedX = 0
-			elif poly_push.length() < 4.0:
-				if _prev_push_normal.length() > 0.1 and _prev_push_normal.x * poly_result.normal.x < -0.1:
-					poly_push.x = 0
-					_speedX = 0
+			# No V-bottom dampening — let physics drag handle settling
 			x += poly_push.x
 			y += poly_push.y
 			on_rotated_block = true
