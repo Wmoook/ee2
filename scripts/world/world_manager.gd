@@ -117,21 +117,35 @@ func add_polyline(points: PackedVector2Array, side: String = "top", block_id: in
 		mesh = ArrayMesh.new()
 		var verts: PackedVector2Array = PackedVector2Array()
 		var uvs: PackedVector2Array = PackedVector2Array()
-		var total_d: float = render_dists[-1] if render_dists.size() > 0 else 1.0
-		# Build triangle strip quads every 1px
+		# Get atlas UV coords for the block sprite
+		var binfo: Dictionary = GameState.get_block_info(block_id) if block_id > 0 else {}
+		var b_atlas: String = binfo.get("atlas", "blocks")
+		var b_artoff: int = binfo.get("artoffset", 0)
+		var b_chunk: int = 0
+		var b_local: int = b_artoff
+		# Estimate atlas size (will be corrected by renderer if needed)
+		var atlas_w: float = 2512.0  # Default atlas width
+		var atlas_h: float = 16.0
+		var b_cols: int = int(atlas_w) / 16
+		var b_sx: float = float((b_local % b_cols) * 16) / atlas_w
+		var b_sy: float = float((b_local / b_cols) * 16) / atlas_h
+		var b_sw: float = 16.0 / atlas_w
+		var b_sh: float = 16.0 / atlas_h
+		# Build quads
+		var last_qi_d: float = 0.0
 		for qi in range(1, points.size()):
-			if render_dists[qi] - (render_dists[qi - 1] if qi > 1 else 0.0) < 0.5 and qi < points.size() - 1:
+			if render_dists[qi] - last_qi_d < 1.0 and qi < points.size() - 1:
 				continue
 			var t0: Vector2 = render_top[qi - 1]
 			var t1: Vector2 = render_top[qi]
 			var b0: Vector2 = render_bot[qi - 1]
 			var b1: Vector2 = render_bot[qi]
-			# Two triangles per quad
 			verts.append(t0); verts.append(t1); verts.append(b1)
 			verts.append(t0); verts.append(b1); verts.append(b0)
-			# UVs (simple 0-1 mapping per quad)
-			uvs.append(Vector2(0, 0)); uvs.append(Vector2(1, 0)); uvs.append(Vector2(1, 1))
-			uvs.append(Vector2(0, 0)); uvs.append(Vector2(1, 1)); uvs.append(Vector2(0, 1))
+			# UV mapped to correct sprite region in atlas
+			uvs.append(Vector2(b_sx, b_sy)); uvs.append(Vector2(b_sx + b_sw, b_sy)); uvs.append(Vector2(b_sx + b_sw, b_sy + b_sh))
+			uvs.append(Vector2(b_sx, b_sy)); uvs.append(Vector2(b_sx + b_sw, b_sy + b_sh)); uvs.append(Vector2(b_sx, b_sy + b_sh))
+			last_qi_d = render_dists[qi]
 		if verts.size() >= 3:
 			var arrays: Array = []
 			arrays.resize(Mesh.ARRAY_MAX)
