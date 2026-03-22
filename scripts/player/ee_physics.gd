@@ -254,19 +254,18 @@ func tick(input_h: int, input_v: int, space_just: bool, space_held: bool) -> voi
 				push_warning("PC ag=%.2f sX=%.1f sY=%.1f gS=%.1f p=%.1f,%.1f" % [poly_against, _speedX, _speedY, _pre_tick_grav_speed, poly_push.x, poly_push.y])
 				if poly_against > 0.2 and _pre_tick_grav_speed >= 0:
 					is_grounded = true
-					# Only project speed if there's actual penetration (not just touching)
-					if poly_push.length() > 0.1:
-						var poly_tangent: Vector2 = poly_result.tangent
-						var poly_spd: Vector2 = Vector2(_speedX, _speedY)
-						var poly_spd_mag: float = poly_spd.length()
-						var poly_spd_along: float = poly_spd.dot(poly_tangent)
-						if poly_spd_mag > 0.5:
-							var pdir: float = 1.0 if poly_spd_along >= 0 else -1.0
-							_speedX = poly_tangent.x * poly_spd_mag * pdir
-							_speedY = poly_tangent.y * poly_spd_mag * pdir
-						else:
-							_speedX = poly_tangent.x * poly_spd_along
-							_speedY = poly_tangent.y * poly_spd_along
+					var poly_tangent: Vector2 = poly_result.tangent
+					var poly_spd: Vector2 = Vector2(_speedX, _speedY)
+					var poly_spd_mag: float = poly_spd.length()
+					var poly_spd_along: float = poly_spd.dot(poly_tangent)
+					# Preserve full speed on curves
+					if poly_spd_mag > 0.5:
+						var pdir: float = 1.0 if poly_spd_along >= 0 else -1.0
+						_speedX = poly_tangent.x * poly_spd_mag * pdir
+						_speedY = poly_tangent.y * poly_spd_mag * pdir
+					else:
+						_speedX = poly_tangent.x * poly_spd_along
+						_speedY = poly_tangent.y * poly_spd_along
 				_prev_poly_normal = poly_result.normal
 
 	# 7.5 Line collision
@@ -710,10 +709,6 @@ func _step_position() -> void:
 			if rx < 0: rx += 1.0
 			if _collides_px(x, y):
 				x = ox; _speedX = 0; currentSX = osx; donex = true
-			elif WorldManager.polylines.size() > 0 and not is_god_mode:
-				var pc: Dictionary = WorldManager.check_polyline_collision(x, y, 16.0, 16.0)
-				if pc.hit and pc.push.length() > 2.0:
-					x = ox; currentSX = 0; donex = true
 
 		# Step Y
 		if currentSY != 0 and not doney:
@@ -731,12 +726,6 @@ func _step_position() -> void:
 			if ry < 0: ry += 1.0
 			if _collides_px(x, y):
 				y = oy; _speedY = 0; currentSY = osy; doney = true
-			elif WorldManager.polylines.size() > 0 and not is_god_mode:
-				var pcy: Dictionary = WorldManager.check_polyline_collision(x, y, 16.0, 16.0)
-				if pcy.hit and pcy.push.length() > 2.0:
-					y = oy; currentSY = 0; doney = true
-					if osy > 0:
-						is_grounded = true
 
 func _collides_px(px: float, py: float) -> bool:
 	if is_god_mode:
