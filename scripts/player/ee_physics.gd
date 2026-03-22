@@ -407,9 +407,11 @@ func tick(input_h: int, input_v: int, space_just: bool, space_held: bool) -> voi
 					tangent_speed += grav.dot(tangent)
 					var new_spd: Vector2 = tangent * tangent_speed
 					var _falling_into_v: bool = _overlap_rots.size() >= 2 and absf(_pre_tick_speedY) > absf(_pre_tick_speedX) * 1.5
-					# Allow speed preservation when: on a slope OR approaching with horizontal speed
+					# Speed preservation: only at JUNCTIONS (surface angle changed significantly)
+					# Not on same surface (prev_n_dot > 0.9 = same surface, handled above)
 					var _has_horizontal: bool = absf(_pre_tick_speedX) > absf(_pre_tick_speedY) * 0.5
-					if spd_mag > 1.0 and new_spd.length() < spd_mag * 0.2 and not _falling_into_v and (_was_on_rotated or _has_horizontal):
+					var _at_junction: bool = prev_n_dot < 0.9  # Surface angle changed
+					if spd_mag > 1.0 and new_spd.length() < spd_mag * 0.2 and not _falling_into_v and _at_junction and (_was_on_rotated or _has_horizontal):
 						var dir: float = sign(_pre_tick_speedX)
 						if dir == 0: dir = 1.0
 						_speedX = tangent.x * spd_mag * dir
