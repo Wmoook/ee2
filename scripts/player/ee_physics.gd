@@ -238,12 +238,7 @@ func tick(input_h: int, input_v: int, space_just: bool, space_held: bool) -> voi
 			var poly_vel: Vector2 = Vector2(_speedX, _speedY)
 			var vel_toward: float = poly_vel.dot(-poly_result.normal)
 			var _skip_poly: bool = vel_toward < -3.0 and poly_result.push.length() < 1.0
-			# Detect oscillation: polyline push flipped from last tick = trapped
-			if not _skip_poly and _prev_poly_normal.length() > 0.1:
-				if _prev_poly_normal.dot(poly_result.normal) < -0.3:
-					# Trapped! Skip collision entirely — gravity will pull player out
-					_skip_poly = true
-					_prev_poly_normal = Vector2.ZERO  # Reset so next tick tries normally
+			# No flip-skip — was causing phase-through
 			if not _skip_poly:
 				var poly_push: Vector2 = poly_result.push
 				var poly_grav_n: Vector2 = Vector2(mox, moy)
