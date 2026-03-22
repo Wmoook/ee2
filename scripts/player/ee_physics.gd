@@ -216,11 +216,23 @@ func tick(input_h: int, input_v: int, space_just: bool, space_held: bool) -> voi
 		_speedX = 0
 
 	# 7. Step position
+	var _pre_step_x: float = x
+	var _pre_step_y: float = y
 	_step_position()
 
-	# 7.15 Polyline collision (single pass — avoid oscillation between surfaces)
-	if not is_god_mode:
+	# 7.15 Polyline collision — also check pre-step position for tunneling
+	if not is_god_mode and WorldManager.polylines.size() > 0:
 		var poly_result: Dictionary = WorldManager.check_polyline_collision(x, y, 16.0, 16.0)
+		# If no hit at current pos, check if we tunneled through (pre-step had hit)
+		if not poly_result.hit:
+			var pre_check: Dictionary = WorldManager.check_polyline_collision(_pre_step_x, _pre_step_y, 16.0, 16.0)
+			if pre_check.hit:
+				# Tunneled! Snap back to pre-step position
+				x = _pre_step_x
+				y = _pre_step_y
+				_speedX = 0
+				_speedY = 0
+				poly_result = pre_check
 		if poly_result.hit:
 			var poly_vel: Vector2 = Vector2(_speedX, _speedY)
 			var vel_toward: float = poly_vel.dot(-poly_result.normal)
