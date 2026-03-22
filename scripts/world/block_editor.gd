@@ -1135,13 +1135,13 @@ func _process(_delta: float) -> void:
 						var cp2: Vector2 = vcp[cseg + 1]
 						var cp3: Vector2 = vcp[cseg + 2]
 						var cseg_len: float = cp1.distance_to(cp2)
-						var csteps: int = int(max(6, ceil(cseg_len / 0.5)))
+						var csteps: int = int(max(10, ceil(cseg_len / 0.1)))
 						for ci in range(csteps):
 							var ct: float = float(ci) / float(csteps)
 							var ctt: float = ct * ct
 							var cttt: float = ctt * ct
 							var spos: Vector2 = 0.5 * ((2.0 * cp1) + (-cp0 + cp2) * ct + (2.0 * cp0 - 5.0 * cp1 + 4.0 * cp2 - cp3) * ctt + (-cp0 + 3.0 * cp1 - 3.0 * cp2 + cp3) * cttt)
-							if spline_pts.size() == 0 or spline_pts[-1].distance_to(spos) > 2.0:
+							if spline_pts.size() == 0 or spline_pts[-1].distance_to(spos) > 0.2:
 								spline_pts.append(spos)
 					# Add final point
 					if spline_pts.size() > 0 and spline_pts[-1].distance_to(cpts[-1]) > 4.0:

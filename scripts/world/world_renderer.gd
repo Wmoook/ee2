@@ -132,7 +132,7 @@ func _draw() -> void:
 			var prev_b: Vector2 = poly_pts[0] - pn0 * half_w
 			var prev_along: float = 0.0
 			for pli in range(1, poly_pts.size()):
-				if cdists[pli] - last_d >= 1.0 or pli == poly_pts.size() - 1:
+				if cdists[pli] - last_d >= 2.0 or pli == poly_pts.size() - 1:
 					var pn: Vector2 = poly_norms[pli] if pli < poly_norms.size() else Vector2(0, -1)
 					var cur_t: Vector2 = poly_pts[pli] + pn * half_w
 					var cur_b: Vector2 = poly_pts[pli] - pn * half_w
