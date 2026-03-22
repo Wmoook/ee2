@@ -219,7 +219,11 @@ func tick(input_h: int, input_v: int, space_just: bool, space_held: bool) -> voi
 	# 7. Step position
 	var _pre_step_x: float = x
 	var _pre_step_y: float = y
+	var _pre_step_sy: float = _speedY
 	_step_position()
+	# If landed on grid tile (speedY was positive, now zero), snap Y to pixel
+	if _pre_step_sy > 0.1 and _speedY == 0 and _check_grounded():
+		y = floor(y)
 
 	# 7.15 Polyline collision — also check pre-step position for tunneling
 	if not is_god_mode and WorldManager.polylines.size() > 0:
