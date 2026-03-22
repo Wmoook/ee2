@@ -429,8 +429,8 @@ func tick(input_h: int, input_v: int, space_just: bool, space_held: bool) -> voi
 				_jump_cooldown = 0  # Clear cooldown on rotated block contact
 				_coyote_ticks = 4
 
-	# Restore polyline state if no free block collision occurred
-	if not on_rotated_block and _poly_grounded:
+	# Restore polyline state only if no free block was hit at all
+	if not on_rotated_block and not _fb_hit and _poly_grounded:
 		on_rotated_block = true
 		_surface_normal = _poly_normal
 
