@@ -231,41 +231,38 @@ func tick(input_h: int, input_v: int, space_just: bool, space_held: bool) -> voi
 				_skip_poly = true
 			if _skip_poly:
 				break
-			# Apply this pass (re-check on next iteration catches second surface):
-				var poly_push: Vector2 = poly_result.push
-				var poly_grav_n: Vector2 = Vector2(mox, moy)
-				if poly_grav_n.length() < 0.01:
-					poly_grav_n = Vector2(0, 1)
-				poly_grav_n = poly_grav_n.normalized()
-				# Curve V-bottom: freeze only at actual bottom (push mostly horizontal + low speed)
-				var poly_spd_total: float = absf(_speedX) + absf(_speedY)
-				var push_mostly_horiz: bool = absf(poly_push.x) > absf(poly_push.y) * 1.5
-				if poly_push.length() < 4.0 and poly_spd_total < 0.5 and push_mostly_horiz:
+			# Apply this pass:
+			var poly_push: Vector2 = poly_result.push
+			var poly_grav_n: Vector2 = Vector2(mox, moy)
+			if poly_grav_n.length() < 0.01:
+				poly_grav_n = Vector2(0, 1)
+			poly_grav_n = poly_grav_n.normalized()
+			var poly_spd_total: float = absf(_speedX) + absf(_speedY)
+			var push_mostly_horiz: bool = absf(poly_push.x) > absf(poly_push.y) * 1.5
+			if poly_push.length() < 4.0 and poly_spd_total < 0.5 and push_mostly_horiz:
+				poly_push.x = 0
+				_speedX = 0
+			elif poly_push.length() < 4.0:
+				if _prev_push_normal.length() > 0.1 and _prev_push_normal.x * poly_result.normal.x < -0.1:
 					poly_push.x = 0
 					_speedX = 0
-				elif poly_push.length() < 4.0:
-					if _prev_push_normal.length() > 0.1 and _prev_push_normal.x * poly_result.normal.x < -0.1:
-						poly_push.x = 0
-						_speedX = 0
-				x += poly_push.x
-				y += poly_push.y
-				on_rotated_block = true
-				_surface_normal = poly_result.normal
-				var poly_against: float = -poly_result.normal.dot(poly_grav_n)
-				if poly_against > 0.2:
-					# Floor: ground player, project speed along tangent
-					is_grounded = true
-					var poly_tangent: Vector2 = poly_result.tangent
-					var poly_spd_along: float = Vector2(_speedX, _speedY).dot(poly_tangent)
-					_speedX = poly_tangent.x * poly_spd_along
-					_speedY = poly_tangent.y * poly_spd_along
-				else:
-					# Wall/ceiling: zero speed component going into the surface
-					var poly_spd: Vector2 = Vector2(_speedX, _speedY)
-					var poly_into: float = poly_spd.dot(-poly_result.normal)
-					if poly_into > 0:
-						_speedX += poly_result.normal.x * poly_into
-						_speedY += poly_result.normal.y * poly_into
+			x += poly_push.x
+			y += poly_push.y
+			on_rotated_block = true
+			_surface_normal = poly_result.normal
+			var poly_against: float = -poly_result.normal.dot(poly_grav_n)
+			if poly_against > 0.2:
+				is_grounded = true
+				var poly_tangent: Vector2 = poly_result.tangent
+				var poly_spd_along: float = Vector2(_speedX, _speedY).dot(poly_tangent)
+				_speedX = poly_tangent.x * poly_spd_along
+				_speedY = poly_tangent.y * poly_spd_along
+			else:
+				var poly_spd: Vector2 = Vector2(_speedX, _speedY)
+				var poly_into: float = poly_spd.dot(-poly_result.normal)
+				if poly_into > 0:
+					_speedX += poly_result.normal.x * poly_into
+					_speedY += poly_result.normal.y * poly_into
 
 	# 7.5 Line collision
 	if not is_god_mode:
