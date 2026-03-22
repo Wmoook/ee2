@@ -88,53 +88,58 @@ func _draw() -> void:
 	for line in WorldManager.lines:
 		draw_line(line.start, line.end, line.color, line.width, true)
 
-	# Draw polyline curves as textured polygon strip (single draw call)
+	# Draw polyline curves: textured quads every 16px along curve
 	for poly in WorldManager.polylines:
 		var poly_pts: PackedVector2Array = poly.points
 		var poly_norms: Array = poly.normals
 		if poly_pts.size() >= 2:
-			# Build single polygon strip + UVs
-			var top_edge: PackedVector2Array = PackedVector2Array()
-			var bot_edge: PackedVector2Array = PackedVector2Array()
 			var half_w: float = 8.0
-			for pli in range(poly_pts.size()):
-				var pn: Vector2 = poly_norms[pli] if pli < poly_norms.size() else Vector2(0, -1)
-				top_edge.append(poly_pts[pli] + pn * half_w)
-				bot_edge.append(poly_pts[pli] - pn * half_w)
-			# Polygon: top edge forward + bottom edge reversed
-			var strip_pts: PackedVector2Array = PackedVector2Array()
-			var strip_uvs: PackedVector2Array = PackedVector2Array()
-			# Compute cumulative distance for UV tiling
-			var cum_dist: float = 0.0
-			var dists: Array = [0.0]
+			# Find the block texture for curves
+			var curve_tex: Texture2D = null
+			var curve_src: Rect2 = Rect2(0, 0, TILE_SIZE, TILE_SIZE)
+			var ctex_key: String = "blocks_0"
+			if textures.has(ctex_key):
+				curve_tex = textures[ctex_key]
+			# Sample points every ~16px along the curve for textured quads
+			var cum_d: float = 0.0
+			var last_quad_d: float = 0.0
+			var prev_top: Vector2 = poly_pts[0] + poly_norms[0] * half_w
+			var prev_bot: Vector2 = poly_pts[0] - poly_norms[0] * half_w
 			for pli in range(1, poly_pts.size()):
-				cum_dist += poly_pts[pli].distance_to(poly_pts[pli - 1])
-				dists.append(cum_dist)
-			var total_dist: float = maxf(cum_dist, 1.0)
-			for pli in range(poly_pts.size()):
-				strip_pts.append(top_edge[pli])
-				var u: float = dists[pli] / 16.0  # Tile every 16px
-				strip_uvs.append(Vector2(u, 0.0))
-			for pli in range(poly_pts.size() - 1, -1, -1):
-				strip_pts.append(bot_edge[pli])
-				var u: float = dists[pli] / 16.0
-				strip_uvs.append(Vector2(u, 1.0))
-			# Single textured draw call
-			var tex_key: String = "blocks_0"
-			if textures.has(tex_key):
-				var tex: Texture2D = textures[tex_key]
-				var aw: float = tex.get_width()
-				var ah: float = tex.get_height()
-				# Scale UVs to atlas coords (first block sprite)
-				var scaled_uvs: PackedVector2Array = PackedVector2Array()
-				for uv in strip_uvs:
-					scaled_uvs.append(Vector2(fmod(uv.x, 1.0) * TILE_SIZE / aw, uv.y * TILE_SIZE / ah))
-				draw_colored_polygon(strip_pts, Color.WHITE, scaled_uvs, tex)
-			else:
-				draw_colored_polygon(strip_pts, Color(0.5, 0.5, 0.52, 1.0))
+				cum_d += poly_pts[pli].distance_to(poly_pts[pli - 1])
+				if cum_d - last_quad_d >= 16.0 or pli == poly_pts.size() - 1:
+					var pn: Vector2 = poly_norms[pli] if pli < poly_norms.size() else Vector2(0, -1)
+					var cur_top: Vector2 = poly_pts[pli] + pn * half_w
+					var cur_bot: Vector2 = poly_pts[pli] - pn * half_w
+					if curve_tex:
+						var aw: float = curve_tex.get_width()
+						var ah: float = curve_tex.get_height()
+						var quad_pts: PackedVector2Array = PackedVector2Array([prev_top, cur_top, cur_bot, prev_bot])
+						var quad_uvs: PackedVector2Array = PackedVector2Array([
+							Vector2(0, 0), Vector2(TILE_SIZE / aw, 0),
+							Vector2(TILE_SIZE / aw, TILE_SIZE / ah), Vector2(0, TILE_SIZE / ah)
+						])
+						draw_colored_polygon(quad_pts, Color.WHITE, quad_uvs, curve_tex)
+					else:
+						var quad_pts: PackedVector2Array = PackedVector2Array([prev_top, cur_top, cur_bot, prev_bot])
+						draw_colored_polygon(quad_pts, Color(0.5, 0.5, 0.52, 1.0))
+					prev_top = cur_top
+					prev_bot = cur_bot
+					last_quad_d = cum_d
 			# Edge lines
-			draw_polyline(top_edge, Color(0.35, 0.35, 0.4, 0.7), 1.0, true)
-			draw_polyline(bot_edge, Color(0.35, 0.35, 0.4, 0.7), 1.0, true)
+			var top_e: PackedVector2Array = PackedVector2Array()
+			var bot_e: PackedVector2Array = PackedVector2Array()
+			# Sample every 5th point for edge lines (fast)
+			for pli in range(0, poly_pts.size(), maxi(1, poly_pts.size() / 60)):
+				var pn: Vector2 = poly_norms[pli] if pli < poly_norms.size() else Vector2(0, -1)
+				top_e.append(poly_pts[pli] + pn * half_w)
+				bot_e.append(poly_pts[pli] - pn * half_w)
+			# Add last point
+			var ln: Vector2 = poly_norms[-1] if poly_norms.size() > 0 else Vector2(0, -1)
+			top_e.append(poly_pts[-1] + ln * half_w)
+			bot_e.append(poly_pts[-1] - ln * half_w)
+			draw_polyline(top_e, Color(0.35, 0.35, 0.4, 0.8), 1.5, true)
+			draw_polyline(bot_e, Color(0.35, 0.35, 0.4, 0.8), 1.5, true)
 			if GameState.is_edit_mode:
 				draw_polyline(poly_pts, Color(0.2, 0.8, 1.0, 0.4), 1.0, true)
 
