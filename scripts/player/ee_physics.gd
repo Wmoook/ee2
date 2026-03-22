@@ -704,7 +704,7 @@ func _step_position() -> void:
 				x = ox; _speedX = 0; currentSX = osx; donex = true
 			elif WorldManager.polylines.size() > 0 and not is_god_mode:
 				var pc: Dictionary = WorldManager.check_polyline_collision(x, y, 16.0, 16.0)
-				if pc.hit and pc.push.length() > 1.0:
+				if pc.hit and pc.push.length() > 4.0:
 					x = ox; _speedX = 0; currentSX = osx; donex = true
 
 		# Step Y
@@ -725,7 +725,7 @@ func _step_position() -> void:
 				y = oy; _speedY = 0; currentSY = osy; doney = true
 			elif WorldManager.polylines.size() > 0 and not is_god_mode:
 				var pcy: Dictionary = WorldManager.check_polyline_collision(x, y, 16.0, 16.0)
-				if pcy.hit and pcy.push.length() > 1.0:
+				if pcy.hit and pcy.push.length() > 4.0:
 					y = oy; _speedY = 0; currentSY = osy; doney = true
 
 func _collides_px(px: float, py: float) -> bool:
