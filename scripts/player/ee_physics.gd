@@ -257,9 +257,8 @@ func tick(input_h: int, input_v: int, space_just: bool, space_held: bool) -> voi
 					var poly_spd: Vector2 = Vector2(_speedX, _speedY)
 					var poly_spd_mag: float = poly_spd.length()
 					var poly_spd_along: float = poly_spd.dot(poly_tangent)
-					# Preserve speed magnitude on smooth curves (don't kill momentum)
-					if poly_spd_mag > 1.0 and absf(poly_spd_along) < poly_spd_mag * 0.3:
-						# Big speed loss — redirect full magnitude along tangent
+					# Always preserve full speed magnitude on polylines
+					if poly_spd_mag > 0.5:
 						var pdir: float = 1.0 if poly_spd_along >= 0 else -1.0
 						_speedX = poly_tangent.x * poly_spd_mag * pdir
 						_speedY = poly_tangent.y * poly_spd_mag * pdir
