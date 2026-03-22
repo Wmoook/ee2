@@ -599,6 +599,14 @@ func _handle_jump(space_just: bool, space_held: bool) -> void:
 	if not do_jump:
 		return
 	# performJump (EE exact)
+	# Also check polyline grounding for jump (sub-step may not set is_grounded)
+	if not is_grounded and WorldManager.polylines.size() > 0:
+		var jpc: Dictionary = WorldManager.check_polyline_collision(x, y, 16.0, 16.0)
+		if jpc.hit:
+			var jgn: Vector2 = Vector2(mox, moy)
+			if jgn.length() < 0.01: jgn = Vector2(0, 1)
+			if -jpc.normal.dot(jgn.normalized()) > 0.2:
+				is_grounded = true
 	if is_grounded:
 		jumpCount = 0
 	if jumpCount == 0 and not is_grounded:
