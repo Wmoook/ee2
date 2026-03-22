@@ -222,12 +222,20 @@ func tick(input_h: int, input_v: int, space_just: bool, space_held: bool) -> voi
 	if not is_god_mode:
 		var poly_result: Dictionary = WorldManager.check_polyline_collision(x, y, 16.0, 16.0)
 		if poly_result.hit:
-			# Skip collision if player is moving AWAY from surface (launching off ramp)
+			# Skip if moving away from surface, or sandwiched between two curves
 			var poly_vel: Vector2 = Vector2(_speedX, _speedY)
 			var vel_toward: float = poly_vel.dot(-poly_result.normal)
+			var _skip_poly: bool = false
 			if vel_toward < -1.5 and poly_result.push.length() < 3.0:
-				pass  # Flying away from surface — don't snap back
-			else:
+				_skip_poly = true  # Flying away
+			if not _skip_poly:
+				# Check if sandwiched between opposing polylines
+				var test_r: Dictionary = WorldManager.check_polyline_collision(x + poly_result.push.x, y + poly_result.push.y, 16.0, 16.0)
+				if test_r.hit and test_r.normal.dot(poly_result.normal) < -0.3:
+					_skip_poly = true  # Sandwiched — just stay
+					_speedX *= 0.5
+					_speedY *= 0.5
+			if not _skip_poly:
 				var poly_push: Vector2 = poly_result.push
 				var poly_grav_n: Vector2 = Vector2(mox, moy)
 				if poly_grav_n.length() < 0.01:
