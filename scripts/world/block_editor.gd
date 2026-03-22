@@ -1148,13 +1148,6 @@ func _process(_delta: float) -> void:
 						spline_pts.append(cpts[-1])
 					if spline_pts.size() >= 2:
 						WorldManager.add_polyline(spline_pts, "both", GameState.selected_block_id)
-						# Place real blocks at each endpoint as end caps
-						var start_tan: Vector2 = (spline_pts[1] - spline_pts[0]).normalized()
-						var start_rot: float = rad_to_deg(atan2(start_tan.y, start_tan.x))
-						WorldManager.free_blocks.append({"pos": spline_pts[0] - Vector2(8, 8), "id": GameState.selected_block_id, "rotation": start_rot})
-						var end_tan: Vector2 = (spline_pts[-1] - spline_pts[-2]).normalized()
-						var end_rot: float = rad_to_deg(atan2(end_tan.y, end_tan.x))
-						WorldManager.free_blocks.append({"pos": spline_pts[-1] - Vector2(8, 8), "id": GameState.selected_block_id, "rotation": end_rot})
 				_curve_points.clear()
 				_curve_preview.clear()
 				_curve_mode = false
