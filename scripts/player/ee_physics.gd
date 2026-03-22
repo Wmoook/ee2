@@ -257,11 +257,8 @@ func tick(input_h: int, input_v: int, space_just: bool, space_held: bool) -> voi
 					_speedX = poly_tangent.x * poly_spd_along
 					_speedY = poly_tangent.y * poly_spd_along
 				else:
-					var poly_spd: Vector2 = Vector2(_speedX, _speedY)
-					var poly_into: float = poly_spd.dot(-poly_result.normal)
-					if poly_into > 0:
-						_speedX += poly_result.normal.x * poly_into
-						_speedY += poly_result.normal.y * poly_into
+					# Wall/ceiling: only zero speed component into surface, don't trap
+					pass  # Push already applied, let player bounce off naturally
 				_prev_poly_normal = poly_result.normal
 
 	# 7.5 Line collision
