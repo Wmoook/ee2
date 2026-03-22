@@ -86,6 +86,11 @@ func _save_undo() -> void:
 			if bid != 0 or rot != 0:
 				tiles.append({"x": x, "y": y, "id": bid, "rot": rot})
 	state["tiles"] = tiles
+	# Snapshot polylines
+	var poly_copy: Array = []
+	for pl in WorldManager.polylines:
+		poly_copy.append(pl.duplicate(true))
+	state["polylines"] = poly_copy
 	state["align_angle"] = _align_angle
 	state["align_origin"] = _align_origin
 	state["sel_indices"] = _align_sel_indices.duplicate()
@@ -113,6 +118,11 @@ func _do_undo() -> void:
 	for t in state["tiles"]:
 		WorldManager.set_fg_tile(t.x, t.y, t.id)
 		WorldManager.set_rotation(t.x, t.y, t.rot)
+	# Restore polylines
+	if state.has("polylines"):
+		WorldManager.polylines.clear()
+		for pl in state["polylines"]:
+			WorldManager.polylines.append(pl.duplicate(true))
 	# Restore align state
 	if state.has("align_angle"):
 		_align_angle = state["align_angle"]
