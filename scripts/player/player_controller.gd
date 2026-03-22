@@ -216,7 +216,19 @@ func _physics_process(delta: float) -> void:
 			elif spd_total < 0.3:
 				_smiley_sprite.rotation = lerp_angle(_smiley_sprite.rotation, 0.0, 0.1)
 			else:
-				var target_angle: float = atan2(_smooth_normal.x, -_smooth_normal.y)
+				# Use velocity direction for rotation when moving (feels natural on curves)
+				var vel: Vector2 = Vector2(physics._speedX, physics._speedY)
+				var target_angle: float
+				if vel.length() > 0.5:
+					# Perpendicular to velocity = smiley "up" direction
+					var vel_n: Vector2 = vel.normalized()
+					var vel_up: Vector2 = Vector2(-vel_n.y, vel_n.x)
+					# Pick the "up" that's closer to the surface normal
+					if vel_up.dot(_smooth_normal) < 0:
+						vel_up = -vel_up
+					target_angle = atan2(vel_up.x, -vel_up.y)
+				else:
+					target_angle = atan2(_smooth_normal.x, -_smooth_normal.y)
 				_smiley_sprite.rotation = lerp_angle(_smiley_sprite.rotation, target_angle, 0.15)
 		elif physics.is_grounded:
 			_smiley_sprite.rotation = lerp_angle(_smiley_sprite.rotation, 0.0, 0.2)
