@@ -254,8 +254,7 @@ func tick(input_h: int, input_v: int, space_just: bool, space_held: bool) -> voi
 					y += poly_push.y
 					on_rotated_block = true
 					_surface_normal = poly_result.normal
-				# Floor: only ground when was falling/standing (not jumping up)
-				push_warning("PC ag=%.2f sX=%.1f sY=%.1f gS=%.1f p=%.1f,%.1f" % [poly_against, _speedX, _speedY, _pre_tick_grav_speed, poly_push.x, poly_push.y])
+					push_warning("PC ag=%.2f sX=%.1f sY=%.1f gS=%.1f p=%.1f,%.1f" % [poly_against, _speedX, _speedY, _pre_tick_grav_speed, poly_push.x, poly_push.y])
 					if poly_against > 0.2 and _pre_tick_grav_speed >= 0:
 						is_grounded = true
 						var poly_tangent: Vector2 = poly_result.tangent
@@ -264,7 +263,7 @@ func tick(input_h: int, input_v: int, space_just: bool, space_held: bool) -> voi
 						poly_spd_along += poly_grav_tang
 						_speedX = poly_tangent.x * poly_spd_along
 						_speedY = poly_tangent.y * poly_spd_along
-					_prev_poly_normal = poly_result.normal
+				_prev_poly_normal = poly_result.normal
 
 	# 7.5 Line collision
 	if not is_god_mode:
