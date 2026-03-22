@@ -59,7 +59,7 @@ func remove_group(gid: int) -> void:
 					fb["group"] = -1
 			break
 
-func add_polyline(points: PackedVector2Array, side: String = "top") -> void:
+func add_polyline(points: PackedVector2Array, side: String = "top", block_id: int = 9) -> void:
 	if points.size() < 2:
 		return
 	# Compute per-vertex normals by averaging adjacent segment normals
@@ -106,6 +106,7 @@ func add_polyline(points: PackedVector2Array, side: String = "top") -> void:
 		"points": points,
 		"normals": vert_normals,
 		"side": side,
+		"block_id": block_id,
 		"bbox_min": bb_min,
 		"bbox_max": bb_max
 	})

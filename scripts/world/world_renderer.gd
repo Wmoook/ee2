@@ -94,12 +94,23 @@ func _draw() -> void:
 		var poly_norms: Array = poly.normals
 		if poly_pts.size() >= 2:
 			var half_w: float = 8.0
-			# Find the block texture for curves
+			# Find the block texture for this curve
+			var curve_bid: int = poly.get("block_id", 9)
+			var curve_info: Dictionary = GameState.get_block_info(curve_bid)
 			var curve_tex: Texture2D = null
-			var curve_src: Rect2 = Rect2(0, 0, TILE_SIZE, TILE_SIZE)
-			var ctex_key: String = "blocks_0"
+			var curve_atlas: String = curve_info.get("atlas", "blocks")
+			var curve_artoff: int = curve_info.get("artoffset", 0)
+			var curve_chunk: int = 0
+			var curve_local: int = curve_artoff
+			if split_info.has(curve_atlas):
+				curve_chunk = curve_local / TILES_PER_CHUNK
+				curve_local = curve_local % TILES_PER_CHUNK
+			var ctex_key: String = "%s_%d" % [curve_atlas, curve_chunk]
 			if textures.has(ctex_key):
 				curve_tex = textures[ctex_key]
+			var curve_cols: int = curve_tex.get_width() / TILE_SIZE if curve_tex else 1
+			var curve_sx: int = (curve_local % curve_cols) * TILE_SIZE
+			var curve_sy: int = (curve_local / curve_cols) * TILE_SIZE
 			# Sample points every ~16px along the curve for textured quads
 			var cum_d: float = 0.0
 			var last_quad_d: float = 0.0
@@ -114,10 +125,14 @@ func _draw() -> void:
 					if curve_tex:
 						var aw: float = curve_tex.get_width()
 						var ah: float = curve_tex.get_height()
+						var u0: float = float(curve_sx) / aw
+						var v0: float = float(curve_sy) / ah
+						var u1: float = float(curve_sx + TILE_SIZE) / aw
+						var v1: float = float(curve_sy + TILE_SIZE) / ah
 						var quad_pts: PackedVector2Array = PackedVector2Array([prev_top, cur_top, cur_bot, prev_bot])
 						var quad_uvs: PackedVector2Array = PackedVector2Array([
-							Vector2(0, 0), Vector2(TILE_SIZE / aw, 0),
-							Vector2(TILE_SIZE / aw, TILE_SIZE / ah), Vector2(0, TILE_SIZE / ah)
+							Vector2(u0, v0), Vector2(u1, v0),
+							Vector2(u1, v1), Vector2(u0, v1)
 						])
 						draw_colored_polygon(quad_pts, Color.WHITE, quad_uvs, curve_tex)
 					else:
