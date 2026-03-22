@@ -193,9 +193,10 @@ func _physics_process(delta: float) -> void:
 			_smiley_sprite.rotation = 0.0
 			_valley_smiley_ticks = 10
 		elif not physics.on_rotated_block:
-			# In air or on grid: clear flip state
+			# In air or on grid: clear flip state and lerp back to upright
 			_last_normal = Vector2(0, -1)
 			_valley_smiley_ticks = 0
+			_smiley_sprite.rotation = lerp_angle(_smiley_sprite.rotation, 0.0, 0.3)
 		elif physics.on_rotated_block and physics.is_grounded:
 			var n: Vector2 = physics._surface_normal
 			# Flip detection: normal X flips = V-shape, smiley stays upright
