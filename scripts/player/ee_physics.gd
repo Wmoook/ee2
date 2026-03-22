@@ -237,8 +237,10 @@ func tick(input_h: int, input_v: int, space_just: bool, space_held: bool) -> voi
 					poly_grav_n = Vector2(0, 1)
 				poly_grav_n = poly_grav_n.normalized()
 				var poly_against: float = -poly_result.normal.dot(poly_grav_n)
-				# Skip ceiling hits entirely (don't stick to bottom of curves)
 				if poly_against < -0.3:
+					# Ceiling: push away but don't ground or project speed
+					x += poly_push.x
+					y += poly_push.y
 					_prev_poly_normal = poly_result.normal
 				else:
 					x += poly_push.x
