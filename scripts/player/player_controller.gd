@@ -113,28 +113,17 @@ func _physics_process(delta: float) -> void:
 	# Pre-tick: valley jump from smiley flip detection
 	# Don't clear valley_jump - physics manages it via oscillation detection
 
-	# Read raw input
-	var raw_h: int = 0
-	var raw_v: int = 0
-	if Input.is_action_pressed("move_left"): raw_h -= 1
-	if Input.is_action_pressed("move_right"): raw_h += 1
-	if Input.is_key_pressed(KEY_W) or Input.is_key_pressed(KEY_UP): raw_v -= 1
-	if Input.is_key_pressed(KEY_S) or Input.is_key_pressed(KEY_DOWN): raw_v += 1
-	# Rotate input based on gravity direction
-	# Down=(0,1): normal, Left=(-1,0): rotate CW, Up=(0,-1): flip, Right=(1,0): rotate CCW
-	var ix: int = raw_h
-	var iy: int = raw_v
-	if not physics.is_god_mode and not physics.on_dot:
-		var gx: float = physics.mox
-		var gy: float = physics.moy
-		if absf(gx) > absf(gy):
-			# Horizontal gravity (left or right)
-			if gx > 0:  # Right gravity
-				ix = -raw_v; iy = raw_h
-			else:  # Left gravity
-				ix = raw_v; iy = -raw_h
-		elif gy < 0:  # Up gravity
-			ix = -raw_h; iy = -raw_v
+	# Read input
+	var ix: int = 0
+	var iy: int = 0
+	if Input.is_action_pressed("move_left"): ix -= 1
+	if Input.is_action_pressed("move_right"): ix += 1
+	if physics.is_god_mode or physics.on_dot:
+		if Input.is_key_pressed(KEY_W) or Input.is_key_pressed(KEY_UP): iy -= 1
+		if Input.is_key_pressed(KEY_S) or Input.is_key_pressed(KEY_DOWN): iy += 1
+	else:
+		if Input.is_key_pressed(KEY_W) or Input.is_key_pressed(KEY_UP): iy -= 1
+		if Input.is_key_pressed(KEY_S) or Input.is_key_pressed(KEY_DOWN): iy += 1
 		# Space = jump (works in all modes)
 		if not physics.is_god_mode and not physics.on_dot:
 			_space_held = Input.is_key_pressed(KEY_SPACE)
