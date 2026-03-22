@@ -233,11 +233,16 @@ func tick(input_h: int, input_v: int, space_just: bool, space_held: bool) -> voi
 				if poly_grav_n.length() < 0.01:
 					poly_grav_n = Vector2(0, 1)
 				poly_grav_n = poly_grav_n.normalized()
-				# Curve V-bottom: if push direction flipped from last tick, zero horizontal
-				if _prev_push_normal.length() > 0.1 and poly_push.length() < 4.0:
-					if _prev_push_normal.x * poly_result.normal.x < -0.1:
+				# Curve V-bottom: if push is small and mostly horizontal, dampen
+				# (prevents left-right oscillation at U-curve center)
+				if poly_push.length() < 4.0:
+					if _prev_push_normal.length() > 0.1 and _prev_push_normal.x * poly_result.normal.x < -0.1:
 						poly_push.x = 0
 						_speedX = 0
+					elif absf(poly_push.x) > absf(poly_push.y) * 2.0 and absf(_speedX) < 1.0:
+						# Push is mostly horizontal with low speed = settling
+						poly_push.x *= 0.3
+						_speedX *= 0.5
 				x += poly_push.x
 				y += poly_push.y
 				on_rotated_block = true
