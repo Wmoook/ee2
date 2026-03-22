@@ -326,32 +326,48 @@ func tick(input_h: int, input_v: int, space_just: bool, space_held: bool) -> voi
 				elif not _collides_px(x, y + best_push.y):
 					y += best_push.y
 			var n: Vector2 = best_push.normalized() if best_push.length() > 0.01 else Vector2(0, -1)
+			# Check if push is wall-like or floor-like relative to gravity
+			var grav_dir2: Vector2 = Vector2(mox, moy)
+			if grav_dir2.length() < 0.01:
+				grav_dir2 = Vector2(0, 1)
+			else:
+				grav_dir2 = grav_dir2.normalized()
+			var against_grav2: float = absf(n.dot(grav_dir2))
 			if not valley_jump:
-				var tangent: Vector2 = Vector2(-n.y, n.x)
-				if tangent.x < 0:
-					tangent = -tangent
-				var spd: Vector2 = Vector2(_speedX, _speedY)
-				var spd_mag: float = spd.length()
-				var tangent_speed: float = spd.dot(tangent)
-				var grav: Vector2 = Vector2(mox, moy) * _get_grav_mult() / MULT * 0.5
-				tangent_speed += grav.dot(tangent)
-				var new_spd: Vector2 = tangent * tangent_speed
-				var _falling_into_v: bool = _overlap_rots.size() >= 2 and absf(_pre_tick_speedY) > absf(_pre_tick_speedX) * 1.5
-				# Speed preservation at slope junctions: redirect speed along new tangent
-				# Only when already on a slope (_was_on_rotated) or speed mostly parallel
-				# Skip for head-on impacts from air (not on slope, speed perpendicular)
-				var parallel_ratio: float = absf(tangent_speed) / maxf(spd_mag, 0.01)
-				var from_slope: bool = _was_on_rotated or parallel_ratio > 0.1
-				if spd_mag > 1.0 and new_spd.length() < spd_mag * 0.2 and not _falling_into_v and from_slope:
-					var dir: float = sign(_pre_tick_speedX)
-					if dir == 0: dir = 1.0
-					_speedX = tangent.x * spd_mag * dir
-					_speedY = tangent.y * spd_mag * dir
+				# Wall-like: push nearly perpendicular to gravity (< 0.2)
+				# Floor/slope: push has gravity component (> 0.2) - includes steep slopes
+				if against_grav2 < 0.2:
+					# Wall: just zero the speed component into the wall
+					var into_wall: float = Vector2(_speedX, _speedY).dot(n)
+					if into_wall < 0:  # Moving into the wall
+						_speedX -= n.x * into_wall
+						_speedY -= n.y * into_wall
 				else:
-					_speedX = new_spd.x
-					_speedY = new_spd.y
-			on_rotated_block = true
-			_surface_normal = n
+					# Floor/slope: tangent projection with speed preservation
+					var tangent: Vector2 = Vector2(-n.y, n.x)
+					if tangent.x < 0:
+						tangent = -tangent
+					var spd: Vector2 = Vector2(_speedX, _speedY)
+					var spd_mag: float = spd.length()
+					var tangent_speed: float = spd.dot(tangent)
+					var grav: Vector2 = Vector2(mox, moy) * _get_grav_mult() / MULT * 0.5
+					tangent_speed += grav.dot(tangent)
+					var new_spd: Vector2 = tangent * tangent_speed
+					var _falling_into_v: bool = _overlap_rots.size() >= 2 and absf(_pre_tick_speedY) > absf(_pre_tick_speedX) * 1.5
+					# Allow speed preservation when: on a slope OR approaching with horizontal speed
+					var _has_horizontal: bool = absf(_pre_tick_speedX) > absf(_pre_tick_speedY) * 0.5
+					if spd_mag > 1.0 and new_spd.length() < spd_mag * 0.2 and not _falling_into_v and (_was_on_rotated or _has_horizontal):
+						var dir: float = sign(_pre_tick_speedX)
+						if dir == 0: dir = 1.0
+						_speedX = tangent.x * spd_mag * dir
+						_speedY = tangent.y * spd_mag * dir
+					else:
+						_speedX = new_spd.x
+						_speedY = new_spd.y
+			# Only mark as "on rotated block" for floor/slope, not walls
+			if against_grav2 >= 0.2:
+				on_rotated_block = true
+				_surface_normal = n
 			var grav_dir: Vector2 = Vector2(mox, moy)
 			var grav_len2: float = grav_dir.length()
 			if grav_len2 > 0.01:

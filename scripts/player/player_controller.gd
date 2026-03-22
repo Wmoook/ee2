@@ -270,6 +270,14 @@ func _draw() -> void:
 func _input(event: InputEvent) -> void:
 	if not is_local:
 		return
+	# Ctrl+scroll = zoom
+	if event is InputEventMouseButton and Input.is_key_pressed(KEY_CTRL) and _camera:
+		if event.button_index == MOUSE_BUTTON_WHEEL_UP:
+			_camera.zoom = clampf(_camera.zoom.x + 0.5, 0.5, 10.0) * Vector2.ONE
+			get_viewport().set_input_as_handled()
+		elif event.button_index == MOUSE_BUTTON_WHEEL_DOWN:
+			_camera.zoom = clampf(_camera.zoom.x - 0.5, 0.5, 10.0) * Vector2.ONE
+			get_viewport().set_input_as_handled()
 	if event is InputEventKey and event.pressed and not event.echo:
 		if event.physical_keycode == KEY_G:
 			physics.is_god_mode = not physics.is_god_mode

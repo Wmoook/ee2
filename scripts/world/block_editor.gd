@@ -39,6 +39,10 @@ var _align_drag_angle: float = 0.0
 var _align_wheel_pos: Vector2 = Vector2.ZERO
 var _align_sel_indices: Array = []
 var _align_move_start: Vector2 = Vector2.ZERO
+var _last_align_place: Vector2 = Vector2(-99999, -99999)
+# Ctrl+drag line tool
+var _ctrl_line_start: Vector2 = Vector2.ZERO
+var _ctrl_line_active: bool = false
 
 var _spin_btn: Button
 var _spin_slider: HSlider
@@ -560,6 +564,32 @@ func _input(event: InputEvent) -> void:
 				_align_move_start = _get_aligned_snap(mg)
 				get_viewport().set_input_as_handled()
 				return
+		# Ctrl+drag line tool
+		if Input.is_key_pressed(KEY_CTRL):
+			if event.is_action_pressed("place_block"):
+				_ctrl_line_start = _get_aligned_snap(get_global_mouse_position())
+				_ctrl_line_active = true
+				queue_redraw()
+				return
+			if event is InputEventMouseMotion and _ctrl_line_active:
+				queue_redraw()
+				return
+			if event.is_action_released("place_block") and _ctrl_line_active:
+				_ctrl_line_active = false
+				var end_snap: Vector2 = _get_aligned_snap(get_global_mouse_position())
+				var line_positions: Array = _get_aligned_line(_ctrl_line_start, end_snap)
+				_save_undo()
+				for lpos in line_positions:
+					var exists: bool = false
+					for fb in WorldManager.free_blocks:
+						if fb.pos.distance_to(lpos) < 2.0:
+							exists = true
+							break
+					if not exists:
+						WorldManager.free_blocks.append({"pos": lpos, "id": GameState.selected_block_id, "rotation": _align_angle})
+				queue_redraw()
+				return
+
 		# Clear stale selection when placing (not holding shift)
 		if event.is_action_pressed("place_block") and not Input.is_key_pressed(KEY_SHIFT):
 			if _align_has_sel:
@@ -567,19 +597,37 @@ func _input(event: InputEvent) -> void:
 		var _place_aligned: bool = false
 		if event.is_action_pressed("place_block"):
 			_place_aligned = true
+			_last_align_place = Vector2(-99999, -99999)
 		if event is InputEventMouseMotion and Input.is_action_pressed("place_block"):
 			_place_aligned = true
 		if _place_aligned:
 			var snap_pos: Vector2 = _get_aligned_snap(get_global_mouse_position())
-			# Don't place if one already exists there
-			var exists: bool = false
-			for fb in WorldManager.free_blocks:
-				if fb.pos.distance_to(snap_pos) < 2.0:
-					exists = true
-					break
-			if not exists:
-				_save_undo()
-				WorldManager.free_blocks.append({"pos": snap_pos, "id": GameState.selected_block_id, "rotation": _align_angle})
+			# Fill line from last placed to current (prevents skipping at speed)
+			var positions: Array = [snap_pos]
+			if _last_align_place.x > -99000:
+				var dist: float = snap_pos.distance_to(_last_align_place)
+				if dist > 17.0:
+					var steps: int = int(ceil(dist / 16.0))
+					positions.clear()
+					for si in range(steps + 1):
+						var frac: float = float(si) / float(steps)
+						var interp: Vector2 = _last_align_place.lerp(snap_pos, frac)
+						var isnap: Vector2 = _get_aligned_snap(interp)
+						if positions.is_empty() or positions[-1].distance_to(isnap) > 2.0:
+							positions.append(isnap)
+			var did_place: bool = false
+			for ppos in positions:
+				var exists: bool = false
+				for fb in WorldManager.free_blocks:
+					if fb.pos.distance_to(ppos) < 2.0:
+						exists = true
+						break
+				if not exists:
+					if not did_place:
+						_save_undo()
+						did_place = true
+					WorldManager.free_blocks.append({"pos": ppos, "id": GameState.selected_block_id, "rotation": _align_angle})
+			_last_align_place = snap_pos
 			queue_redraw()
 		if event.is_action_pressed("remove_block") or (event is InputEventMouseMotion and Input.is_action_pressed("remove_block")):
 			var mouse: Vector2 = get_global_mouse_position()
@@ -998,6 +1046,18 @@ func _draw() -> void:
 			draw_line(go + Vector2(i * 16, -500).rotated(rad), go + Vector2(i * 16, 500).rotated(rad), grid_col, 0.5)
 			draw_line(go + Vector2(-500, i * 16).rotated(rad), go + Vector2(500, i * 16).rotated(rad), grid_col, 0.5)
 
+	# Ctrl+drag line preview
+	if _ctrl_line_active and _align_mode:
+		var line_rad: float = deg_to_rad(_align_angle)
+		var end_snap: Vector2 = _get_aligned_snap(get_global_mouse_position())
+		var preview_positions: Array = _get_aligned_line(_ctrl_line_start, end_snap)
+		for pp in preview_positions:
+			var pc: Vector2 = pp + Vector2(8, 8)
+			draw_set_transform(pc, line_rad, Vector2.ONE)
+			draw_rect(Rect2(-8, -8, 16, 16), Color(0.3, 1.0, 0.3, 0.35), true)
+			draw_rect(Rect2(-8, -8, 16, 16), Color(0.3, 1.0, 0.3, 0.7), false, 1.0)
+			draw_set_transform(Vector2.ZERO, 0, Vector2.ONE)
+
 	# Aligned selection: draw from actual block positions in rotated local space
 	if _align_mode and (_align_sel_dragging or _align_has_sel):
 		var s: Vector2 = _align_sel_start
@@ -1336,6 +1396,39 @@ func _get_aligned_snap(world_pos: Vector2) -> Vector2:
 	local.x = floor(local.x / 16.0) * 16.0
 	local.y = floor(local.y / 16.0) * 16.0
 	return _align_origin + local.rotated(-rad)
+
+func _get_aligned_line(start: Vector2, end: Vector2) -> Array:
+	## Returns array of snap positions along a line from start to end in aligned grid
+	var inv_r: float = deg_to_rad(-_align_angle)
+	var fwd_r: float = deg_to_rad(_align_angle)
+	var local_s: Vector2 = (start - _align_origin).rotated(inv_r) / 16.0
+	var local_e: Vector2 = (end - _align_origin).rotated(inv_r) / 16.0
+	# Bresenham in local grid space
+	var x0: int = int(floor(local_s.x))
+	var y0: int = int(floor(local_s.y))
+	var x1: int = int(floor(local_e.x))
+	var y1: int = int(floor(local_e.y))
+	var result: Array = []
+	var dx: int = absi(x1 - x0)
+	var dy: int = -absi(y1 - y0)
+	var sx: int = 1 if x0 < x1 else -1
+	var sy: int = 1 if y0 < y1 else -1
+	var err: int = dx + dy
+	var cx: int = x0
+	var cy: int = y0
+	for _guard in range(1000):
+		var world_pos: Vector2 = _align_origin + Vector2(cx * 16.0, cy * 16.0).rotated(fwd_r)
+		result.append(world_pos)
+		if cx == x1 and cy == y1:
+			break
+		var e2: int = 2 * err
+		if e2 >= dy:
+			err += dy
+			cx += sx
+		if e2 <= dx:
+			err += dx
+			cy += sy
+	return result
 
 var _free_originals: Array = []
 var _free_center: Vector2 = Vector2.ZERO
