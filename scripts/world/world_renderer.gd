@@ -117,16 +117,54 @@ func _draw() -> void:
 			var v0: float = float(csy) / ah
 			var u1: float = float(csx + TILE_SIZE) / aw
 			var v1: float = float(csy + TILE_SIZE) / ah
-			# Render: 3 draw calls total (thick fill + 2 edges)
-			var r_top: PackedVector2Array = poly.get("render_top", PackedVector2Array())
-			var r_bot: PackedVector2Array = poly.get("render_bot", PackedVector2Array())
-			if r_top.size() < 2:
-				continue
-			# Fill: thick polyline (ONE draw call, any length)
-			draw_polyline(poly_pts, Color(0.5, 0.5, 0.52, 1.0), 16.0, true)
-			# Edges: 2 draw calls
-			draw_polyline(r_top, Color(0.42, 0.42, 0.46, 0.9), 1.5, true)
-			draw_polyline(r_bot, Color(0.38, 0.38, 0.42, 0.9), 1.5, true)
+			# Build + cache mesh on first draw (has texture for correct UVs)
+			if not poly.has("_cached_mesh") and curve_tex:
+				var r_top: PackedVector2Array = poly.get("render_top", PackedVector2Array())
+				var r_bot: PackedVector2Array = poly.get("render_bot", PackedVector2Array())
+				var r_dists: Array = poly.get("render_dists", [])
+				if r_top.size() >= 2:
+					var cmesh: ArrayMesh = ArrayMesh.new()
+					var mverts: PackedVector2Array = PackedVector2Array()
+					var muvs: PackedVector2Array = PackedVector2Array()
+					var total_d: float = r_dists[-1] if r_dists.size() > 0 else 1.0
+					var cap_f: float = 2.0 / 16.0
+					var last_md: float = 0.0
+					var prev_mt: Vector2 = r_top[0]
+					var prev_mb: Vector2 = r_bot[0]
+					var prev_ma: float = 0.0
+					for mi in range(1, r_top.size()):
+						var md: float = r_dists[mi] if mi < r_dists.size() else total_d
+						if md - last_md >= 3.0 or mi == r_top.size() - 1:
+							var mt0f: float = prev_ma / maxf(total_d, 1.0)
+							var mt1f: float = md / maxf(total_d, 1.0)
+							var muv_l: float = _curve_uv(mt0f, cap_f, u0, u1)
+							var muv_r: float = _curve_uv(mt1f, cap_f, u0, u1)
+							# Two triangles
+							mverts.append(prev_mt); mverts.append(r_top[mi]); mverts.append(r_bot[mi])
+							mverts.append(prev_mt); mverts.append(r_bot[mi]); mverts.append(prev_mb)
+							muvs.append(Vector2(muv_l, v0)); muvs.append(Vector2(muv_r, v0)); muvs.append(Vector2(muv_r, v1))
+							muvs.append(Vector2(muv_l, v0)); muvs.append(Vector2(muv_r, v1)); muvs.append(Vector2(muv_l, v1))
+							prev_mt = r_top[mi]
+							prev_mb = r_bot[mi]
+							prev_ma = md
+							last_md = md
+					if mverts.size() >= 3:
+						var arrays: Array = []
+						arrays.resize(Mesh.ARRAY_MAX)
+						var v3: PackedVector3Array = PackedVector3Array()
+						for mv in mverts:
+							v3.append(Vector3(mv.x, mv.y, 0))
+						arrays[Mesh.ARRAY_VERTEX] = v3
+						arrays[Mesh.ARRAY_TEX_UV] = muvs
+						cmesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
+						poly["_cached_mesh"] = cmesh
+						poly["_cached_tex"] = curve_tex
+			# Render: ONE draw_mesh call (zero per-frame computation)
+			if poly.has("_cached_mesh"):
+				draw_mesh(poly["_cached_mesh"], poly["_cached_tex"], Transform2D.IDENTITY)
+			else:
+				# Fallback
+				draw_polyline(poly_pts, Color(0.5, 0.5, 0.52, 1.0), 16.0, true)
 			# End caps are real blocks (placed in block_editor on confirm)
 			if GameState.is_edit_mode:
 				draw_polyline(poly_pts, Color(0.2, 0.8, 1.0, 0.4), 1.0, true)
