@@ -102,13 +102,25 @@ func add_polyline(points: PackedVector2Array, side: String = "top", block_id: in
 	var pad: float = 24.0  # Padding for player half-size + some margin
 	bb_min -= Vector2(pad, pad)
 	bb_max += Vector2(pad, pad)
+	# Pre-compute render data (top/bottom edges for quads)
+	var render_top: PackedVector2Array = PackedVector2Array()
+	var render_bot: PackedVector2Array = PackedVector2Array()
+	var render_dists: Array = [0.0]
+	for ri in range(points.size()):
+		render_top.append(points[ri] + vert_normals[ri] * 8.0)
+		render_bot.append(points[ri] - vert_normals[ri] * 8.0)
+		if ri > 0:
+			render_dists.append(render_dists[ri - 1] + points[ri].distance_to(points[ri - 1]))
 	polylines.append({
 		"points": points,
 		"normals": vert_normals,
 		"side": side,
 		"block_id": block_id,
 		"bbox_min": bb_min,
-		"bbox_max": bb_max
+		"bbox_max": bb_max,
+		"render_top": render_top,
+		"render_bot": render_bot,
+		"render_dists": render_dists
 	})
 	polylines_changed.emit()
 
