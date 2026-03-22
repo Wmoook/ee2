@@ -131,7 +131,7 @@ func _draw() -> void:
 			var prev_ra: float = 0.0
 			for pli in range(1, r_top.size()):
 				var rd: float = r_dists[pli] if pli < r_dists.size() else total_len
-				if rd - last_rd >= 3.0 or pli == r_top.size() - 1:
+				if rd - last_rd >= 4.0 or pli == r_top.size() - 1:
 					if curve_tex:
 						var t0f: float = prev_ra / maxf(total_len, 1.0)
 						var t1f: float = rd / maxf(total_len, 1.0)
