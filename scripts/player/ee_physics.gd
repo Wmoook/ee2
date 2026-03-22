@@ -250,15 +250,14 @@ func tick(input_h: int, input_v: int, space_just: bool, space_held: bool) -> voi
 				on_rotated_block = true
 				_surface_normal = poly_result.normal
 				var poly_against: float = -poly_result.normal.dot(poly_grav_n)
-				if poly_against > 0.2:
+				push_warning("PCOL ag=%.2f preGS=%.1f sX=%.1f sY=%.1f push=%.1f,%.1f" % [poly_against, _pre_tick_grav_speed, _speedX, _speedY, poly_push.x, poly_push.y])
+				# Floor: only ground when was falling/standing (not jumping up)
+				if poly_against > 0.2 and _pre_tick_grav_speed >= 0:
 					is_grounded = true
 					var poly_tangent: Vector2 = poly_result.tangent
 					var poly_spd_along: float = Vector2(_speedX, _speedY).dot(poly_tangent)
 					_speedX = poly_tangent.x * poly_spd_along
 					_speedY = poly_tangent.y * poly_spd_along
-				else:
-					# Wall/ceiling: only zero speed component into surface, don't trap
-					pass  # Push already applied, let player bounce off naturally
 				_prev_poly_normal = poly_result.normal
 
 	# 7.5 Line collision
@@ -727,7 +726,9 @@ func _step_position() -> void:
 				var pcy: Dictionary = WorldManager.check_polyline_collision(x, y, 16.0, 16.0)
 				if pcy.hit and pcy.push.length() > 2.0:
 					y = oy; _speedY = 0; currentSY = osy; doney = true
-					is_grounded = true  # Stopped by polyline surface = grounded
+					# Only ground when falling (moving down), not jumping up
+					if currentSY > 0:
+						is_grounded = true
 
 func _collides_px(px: float, py: float) -> bool:
 	if is_god_mode:
