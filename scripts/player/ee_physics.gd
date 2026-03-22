@@ -251,20 +251,22 @@ func tick(input_h: int, input_v: int, space_just: bool, space_held: bool) -> voi
 				_surface_normal = poly_result.normal
 				var poly_against: float = -poly_result.normal.dot(poly_grav_n)
 				# Floor: only ground when was falling/standing (not jumping up)
+				push_warning("PC ag=%.2f sX=%.1f sY=%.1f gS=%.1f p=%.1f,%.1f" % [poly_against, _speedX, _speedY, _pre_tick_grav_speed, poly_push.x, poly_push.y])
 				if poly_against > 0.2 and _pre_tick_grav_speed >= 0:
 					is_grounded = true
-					var poly_tangent: Vector2 = poly_result.tangent
-					var poly_spd: Vector2 = Vector2(_speedX, _speedY)
-					var poly_spd_mag: float = poly_spd.length()
-					var poly_spd_along: float = poly_spd.dot(poly_tangent)
-					# Always preserve full speed magnitude on polylines
-					if poly_spd_mag > 0.5:
-						var pdir: float = 1.0 if poly_spd_along >= 0 else -1.0
-						_speedX = poly_tangent.x * poly_spd_mag * pdir
-						_speedY = poly_tangent.y * poly_spd_mag * pdir
-					else:
-						_speedX = poly_tangent.x * poly_spd_along
-						_speedY = poly_tangent.y * poly_spd_along
+					# Only project speed if there's actual penetration (not just touching)
+					if poly_push.length() > 0.1:
+						var poly_tangent: Vector2 = poly_result.tangent
+						var poly_spd: Vector2 = Vector2(_speedX, _speedY)
+						var poly_spd_mag: float = poly_spd.length()
+						var poly_spd_along: float = poly_spd.dot(poly_tangent)
+						if poly_spd_mag > 0.5:
+							var pdir: float = 1.0 if poly_spd_along >= 0 else -1.0
+							_speedX = poly_tangent.x * poly_spd_mag * pdir
+							_speedY = poly_tangent.y * poly_spd_mag * pdir
+						else:
+							_speedX = poly_tangent.x * poly_spd_along
+							_speedY = poly_tangent.y * poly_spd_along
 				_prev_poly_normal = poly_result.normal
 
 	# 7.5 Line collision
