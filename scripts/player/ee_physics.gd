@@ -248,62 +248,72 @@ func tick(input_h: int, input_v: int, space_just: bool, space_held: bool) -> voi
 		var best_depth: float = 0.0
 		var hit: bool = false
 		var _overlap_rots: Dictionary = {}
-		for fb in WorldManager.free_blocks:
-			if not GameState.is_solid(fb.id):
-				continue
-			var bpos: Vector2 = fb.pos
-			var rot_rad: float = deg_to_rad(fb.rotation)
-			var bcx: float = bpos.x + 8.0
-			var bcy: float = bpos.y + 8.0
-			var dx2: float = (x + 8.0) - bcx
-			var dy2: float = (y + 8.0) - bcy
-			var cos_r: float = cos(-rot_rad)
-			var sin_r: float = sin(-rot_rad)
-			var lx: float = dx2 * cos_r - dy2 * sin_r
-			var ly: float = dx2 * sin_r + dy2 * cos_r
-			var ox2: float = 16.0 - absf(lx)
-			var oy2: float = 16.0 - absf(ly)
-			if ox2 > 0 and oy2 > 0:
-				var push_lx: float = 0.0
-				var push_ly: float = 0.0
-				if oy2 < ox2:
-					push_ly = oy2 * sign(ly)
-				else:
-					push_lx = ox2 * sign(lx)
-				var cos_r2: float = cos(rot_rad)
-				var sin_r2: float = sin(rot_rad)
-				var wx: float = push_lx * cos_r2 - push_ly * sin_r2
-				var wy: float = push_lx * sin_r2 + push_ly * cos_r2
-				var depth: float = Vector2(wx, wy).length()
-				var rk: int = int(round(fb.rotation)) % 180  # 0°==180°, 90°==270° for rectangles
-				_overlap_rots[rk] = true
-				if depth > best_depth:
-					best_depth = depth
-					best_push = Vector2(wx, wy)
-					hit = true
-					_fb_hit = true
+		# Iterative collision: resolve overlaps multiple passes
+		for _pass in range(4):
+			var pass_push: Vector2 = Vector2.ZERO
+			var pass_depth: float = 0.0
+			for fb in WorldManager.free_blocks:
+				if not GameState.is_solid(fb.id):
+					continue
+				var bpos: Vector2 = fb.pos
+				var rot_rad: float = deg_to_rad(fb.rotation)
+				var bcx: float = bpos.x + 8.0
+				var bcy: float = bpos.y + 8.0
+				var dx2: float = (x + 8.0) - bcx
+				var dy2: float = (y + 8.0) - bcy
+				var cos_r: float = cos(-rot_rad)
+				var sin_r: float = sin(-rot_rad)
+				var lx: float = dx2 * cos_r - dy2 * sin_r
+				var ly: float = dx2 * sin_r + dy2 * cos_r
+				var ox2: float = 16.0 - absf(lx)
+				var oy2: float = 16.0 - absf(ly)
+				if ox2 > 0 and oy2 > 0:
+					var push_lx: float = 0.0
+					var push_ly: float = 0.0
+					if oy2 < ox2:
+						push_ly = oy2 * sign(ly)
+					else:
+						push_lx = ox2 * sign(lx)
+					var cos_r2: float = cos(rot_rad)
+					var sin_r2: float = sin(rot_rad)
+					var wx: float = push_lx * cos_r2 - push_ly * sin_r2
+					var wy: float = push_lx * sin_r2 + push_ly * cos_r2
+					var depth: float = Vector2(wx, wy).length()
+					var rk: int = int(round(fb.rotation)) % 180
+					_overlap_rots[rk] = true
+					if depth > pass_depth:
+						pass_depth = depth
+						pass_push = Vector2(wx, wy)
+						hit = true
+						_fb_hit = true
+			if pass_depth > 0.01:
+				# Apply this pass's push and re-check
+				if valley_jump:
+					pass_push.x = 0  # Keep V jump vertical
+				x += pass_push.x
+				y += pass_push.y
+				if pass_depth > best_depth:
+					best_depth = pass_depth
+					best_push = pass_push
+			else:
+				break  # No more overlaps
 		# Detect valley: only when actually overlapping 2+ different-rotation blocks
 		var _pre_total_spd: float = absf(_pre_tick_speedX) + absf(_pre_tick_speedY)
 		if hit and _overlap_rots.size() >= 2:
 			in_valley = true
 			is_grounded = true
 		if hit and best_depth > 0.01:
-			# Valley: zero all speed when overlapping 2+ different rotations
-			if in_valley:
-				best_push.x = 0
+			# Valley: zero speed only when settling (low speed), not when entering at speed
+			if in_valley and absf(_speedX) < 0.5 and absf(_speedY) < 0.5:
 				_speedX = 0
-			# Don't push into grid tiles - slide along them
-			if _collides_px(x + best_push.x, y + best_push.y):
+			# Check if iterative pushes put us into a grid tile — undo if so
+			if _collides_px(x, y):
+				x -= best_push.x
+				y -= best_push.y
 				if not _collides_px(x + best_push.x, y):
-					best_push.y = 0
+					x += best_push.x
 				elif not _collides_px(x, y + best_push.y):
-					best_push.x = 0
-				else:
-					best_push = Vector2.ZERO
-			if valley_jump:
-				best_push.x = 0
-			x += best_push.x
-			y += best_push.y
+					y += best_push.y
 			var n: Vector2 = best_push.normalized() if best_push.length() > 0.01 else Vector2(0, -1)
 			if not valley_jump:
 				var tangent: Vector2 = Vector2(-n.y, n.x)
@@ -386,8 +396,10 @@ func tick(input_h: int, input_v: int, space_just: bool, space_held: bool) -> voi
 	elif valley_jump:
 		# Stay locked as long as valley_jump is set
 		_speedX = 0
-		is_grounded = true
-		in_valley = true
+		# Only grounded when at valley floor, not mid-air
+		if _valley_center.y >= 0 and y >= _valley_center.y - 2.0:
+			is_grounded = true
+			in_valley = true
 	# Only clear valley_jump when player has walked away (on ground, no overlap)
 	# Don't count during jumps (player is above valley, will return)
 	if not _fb_hit and y >= _valley_center.y - 2.0 and _jump_cooldown == 0:

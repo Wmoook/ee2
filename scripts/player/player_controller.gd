@@ -25,6 +25,7 @@ var _smiley_textures: Array = []
 var _space_just: bool = false
 var _space_held: bool = false
 var _cbf_consumed_jump: bool = false  # Prevents re-latch after CBF
+var _show_hitboxes: bool = false
 
 # Smooth visual position
 var _visual_pos: Vector2 = Vector2.ZERO
@@ -228,8 +229,41 @@ func _physics_process(delta: float) -> void:
 func _process(delta: float) -> void:
 	if _is_dead:
 		return
-	# Fixed-timestep interpolation: blend between pre-tick and post-tick positions
-	# based on how far through the current tick we are.
+	if _show_hitboxes:
+		queue_redraw()
+
+func _draw() -> void:
+	if not _show_hitboxes:
+		return
+	# Player hitbox (16x16 square - this IS the EE collision shape)
+	draw_rect(Rect2(0, 0, 16, 16), Color(0, 1, 0, 0.3), true)
+	draw_rect(Rect2(0, 0, 16, 16), Color(0, 1, 0, 0.8), false)
+	# Draw grid tile hitboxes nearby
+	var ptx: int = int(floor(physics.x)) / 16
+	var pty: int = int(floor(physics.y)) / 16
+	for ty in range(pty - 5, pty + 6):
+		for tx in range(ptx - 8, ptx + 9):
+			if WorldManager.is_solid_at(tx, ty):
+				var tile_pos: Vector2 = Vector2(tx * 16, ty * 16) - position
+				draw_rect(Rect2(tile_pos, Vector2(16, 16)), Color(0, 0.5, 1, 0.2), true)
+				draw_rect(Rect2(tile_pos, Vector2(16, 16)), Color(0, 0.5, 1, 0.6), false)
+	# Draw free block hitboxes relative to player
+	for fb in WorldManager.free_blocks:
+		if not GameState.is_solid(fb.id):
+			continue
+		var bpos: Vector2 = fb.pos - position
+		var rot_rad: float = deg_to_rad(fb.rotation)
+		var center: Vector2 = bpos + Vector2(8, 8)
+		# Draw rotated rectangle (block collision shape)
+		var corners: Array = []
+		for c in [Vector2(-8, -8), Vector2(8, -8), Vector2(8, 8), Vector2(-8, 8)]:
+			var rx: float = c.x * cos(rot_rad) - c.y * sin(rot_rad)
+			var ry: float = c.x * sin(rot_rad) + c.y * cos(rot_rad)
+			corners.append(center + Vector2(rx, ry))
+		draw_colored_polygon(PackedVector2Array(corners), Color(1, 0, 0, 0.3))
+		for i in range(4):
+			draw_line(corners[i], corners[(i + 1) % 4], Color(1, 0, 0, 0.8), 1.0)
+
 func _input(event: InputEvent) -> void:
 	if not is_local:
 		return
@@ -242,6 +276,9 @@ func _input(event: InputEvent) -> void:
 			_name_label.z_index = 11 if physics.is_god_mode else 5
 		elif event.physical_keycode == KEY_N:
 			_name_label.visible = not _name_label.visible
+		elif event.physical_keycode == KEY_B:
+			_show_hitboxes = not _show_hitboxes
+			queue_redraw()
 
 	# CBF - disabled in arrow fields to prevent extra ticks on key press
 	if not is_local or _is_dead or physics._active_arrow_dir >= 0:

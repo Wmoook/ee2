@@ -188,30 +188,69 @@ func _input(event: InputEvent) -> void:
 		# Click inside selection (not on wheel ring) = start dragging to move
 		var tile: Vector2i = _get_tile()
 		var in_sel: bool = tile.x >= _selection.position.x and tile.x < _selection.position.x + _selection.size.x and tile.y >= _selection.position.y and tile.y < _selection.position.y + _selection.size.y
+		# Also check if clicking on a selected free block
+		var in_fb_sel: bool = false
+		if _align_has_sel:
+			var mg2: Vector2 = get_global_mouse_position()
+			for si2 in _align_sel_indices:
+				if si2 < WorldManager.free_blocks.size():
+					var sfb2: Dictionary = WorldManager.free_blocks[si2]
+					if mg2.distance_to(sfb2.pos + Vector2(8, 8)) < 16.0:
+						in_fb_sel = true
+						break
 
 		if _move_dragging:
 			if event is InputEventMouseMotion:
-				var cur: Vector2i = _get_tile()
-				var dx: int = cur.x - _move_start.x
-				var dy: int = cur.y - _move_start.y
-				if dx != 0 or dy != 0:
-					_apply_move(dx, dy)
-					_move_start = cur
+				if _align_has_sel:
+					if Input.is_key_pressed(KEY_CTRL):
+						# Free placement (pixel-perfect)
+						var cur_world: Vector2 = get_global_mouse_position()
+						var offset: Vector2 = cur_world - _align_move_start
+						if offset.length() > 0.5:
+							for si3 in _align_sel_indices:
+								if si3 < WorldManager.free_blocks.size():
+									WorldManager.free_blocks[si3].pos += offset
+							_align_wheel_pos += offset
+							_align_origin += offset
+							_align_move_start = cur_world
+					else:
+						# Aligned grid snap
+						var cur_snap: Vector2 = _get_aligned_snap(get_global_mouse_position())
+						var offset: Vector2 = cur_snap - _align_move_start
+						if offset.length() > 0.5:
+							for si3 in _align_sel_indices:
+								if si3 < WorldManager.free_blocks.size():
+									WorldManager.free_blocks[si3].pos += offset
+							_align_wheel_pos += offset
+							_align_origin += offset
+							_align_move_start = cur_snap
+				else:
+					var cur: Vector2i = _get_tile()
+					var dx: int = cur.x - _move_start.x
+					var dy: int = cur.y - _move_start.y
+					if dx != 0 or dy != 0:
+						_apply_move(dx, dy)
+						_move_start = cur
 				queue_redraw()
 			if event.is_action_released("place_block"):
 				_move_dragging = false
 			return
 
-		if event.is_action_pressed("place_block") and in_sel:
+		if event.is_action_pressed("place_block") and (in_sel or in_fb_sel):
 			_move_dragging = true
-			_move_start = tile
-			# Store blocks for moving
-			_move_blocks.clear()
-			for my in range(_selection.position.y, _selection.position.y + _selection.size.y):
-				for mx in range(_selection.position.x, _selection.position.x + _selection.size.x):
-					var bid: int = WorldManager.get_tile(mx, my)
-					if bid != 0:
-						_move_blocks.append({"rx": mx - _selection.position.x, "ry": my - _selection.position.y, "id": bid, "rot": WorldManager.get_rotation(mx, my)})
+			if _align_has_sel and in_fb_sel:
+				if Input.is_key_pressed(KEY_CTRL):
+					_align_move_start = get_global_mouse_position()
+				else:
+					_align_move_start = _get_aligned_snap(get_global_mouse_position())
+			else:
+				_move_start = tile
+				_move_blocks.clear()
+				for my in range(_selection.position.y, _selection.position.y + _selection.size.y):
+					for mx in range(_selection.position.x, _selection.position.x + _selection.size.x):
+						var bid: int = WorldManager.get_tile(mx, my)
+						if bid != 0:
+							_move_blocks.append({"rx": mx - _selection.position.x, "ry": my - _selection.position.y, "id": bid, "rot": WorldManager.get_rotation(mx, my)})
 			get_viewport().set_input_as_handled()
 			return
 
@@ -373,9 +412,32 @@ func _input(event: InputEvent) -> void:
 	if event.is_action_pressed("place_block"):
 		var t: Vector2i = _get_tile()
 		if shift:
-			if _has_selection:
+			if _has_selection or _align_has_sel:
 				_deselect()
 				_rot_dragging = false
+				queue_redraw()
+				return
+			# Check if clicking on a free block — auto-select it
+			var mg: Vector2 = get_global_mouse_position()
+			var _clicked_fb: int = -1
+			for fi in range(WorldManager.free_blocks.size()):
+				var fb: Dictionary = WorldManager.free_blocks[fi]
+				if mg.distance_to(fb.pos + Vector2(8, 8)) < 14.0:
+					_clicked_fb = fi
+					break
+			if _clicked_fb >= 0:
+				# Auto-select this free block and activate align mode
+				_align_sel_indices = [_clicked_fb]
+				_align_has_sel = true
+				_has_selection = true
+				_align_mode = true
+				var cfb: Dictionary = WorldManager.free_blocks[_clicked_fb]
+				_align_wheel_pos = cfb.pos + Vector2(8, 8)
+				_align_angle = cfb.rotation
+				_align_origin = cfb.pos
+				_align_block_id = cfb.id
+				if _align_btn:
+					_align_btn.button_pressed = true
 				queue_redraw()
 				return
 			# Shift+drag = box select
@@ -400,6 +462,17 @@ func _input(event: InputEvent) -> void:
 			_selection = Rect2i(x0, y0, x1 - x0 + 1, y1 - y0 + 1)
 			_has_selection = true
 			_sel_dragging = false
+			# Also select free blocks within the selection area
+			_align_sel_indices.clear()
+			var _wmin: Vector2 = Vector2(x0 * 16.0, y0 * 16.0)
+			var _wmax: Vector2 = Vector2((x1 + 1) * 16.0, (y1 + 1) * 16.0)
+			for _fi in range(WorldManager.free_blocks.size()):
+				var _fb: Dictionary = WorldManager.free_blocks[_fi]
+				var _fc: Vector2 = _fb.pos + Vector2(8, 8)
+				if _fc.x >= _wmin.x and _fc.x <= _wmax.x and _fc.y >= _wmin.y and _fc.y <= _wmax.y:
+					_align_sel_indices.append(_fi)
+			if _align_sel_indices.size() > 0:
+				_align_has_sel = true
 		if _shift_dragging and _drag_start.x >= 0:
 			var t: Vector2i = _get_tile()
 			_fill_line(_drag_start, t, GameState.selected_block_id)
@@ -1125,4 +1198,6 @@ func _snap_aligned_to_grid() -> void:
 
 func _deselect() -> void:
 	_has_selection = false
+	_align_has_sel = false
+	_align_sel_indices.clear()
 	_free_originals.clear()
