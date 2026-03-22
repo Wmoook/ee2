@@ -1112,25 +1112,25 @@ func _process(_delta: float) -> void:
 					if not cexists:
 						var cb: Dictionary = {"pos": cbp.pos, "id": GameState.selected_block_id, "rotation": cbp.rot, "curve_visual": true}
 						WorldManager.free_blocks.append(cb)
-				# Add smooth collision lines along the curve surface
-				# Use longer segments (every 3rd block) for fewer junctions
+				# Build polyline spline collider from curve preview positions
 				if _curve_preview.size() >= 2:
-					var step: int = maxi(1, _curve_preview.size() / 20)  # ~20 segments max
-					var prev_surf: Vector2 = Vector2.ZERO
-					for cli in range(0, _curve_preview.size(), step):
-						var end_i: int = mini(cli + step, _curve_preview.size() - 1)
-						var ca: Vector2 = _curve_preview[cli].pos + Vector2(8, 8)
-						var cb2: Vector2 = _curve_preview[end_i].pos + Vector2(8, 8)
-						var seg_dir: Vector2 = (cb2 - ca).normalized()
-						var seg_normal: Vector2 = Vector2(-seg_dir.y, seg_dir.x)
-						if seg_normal.y > 0:
-							seg_normal = -seg_normal
-						var la: Vector2 = ca + seg_normal * 8.0
-						var lb: Vector2 = cb2 + seg_normal * 8.0
-						if prev_surf != Vector2.ZERO:
-							la = prev_surf  # Connect seamlessly to previous segment
-						WorldManager.add_line(la, lb, Color(0.5, 0.5, 0.5, 0.0), 3.0)
-						prev_surf = lb
+					var surface_pts: PackedVector2Array = PackedVector2Array()
+					for cpi in range(_curve_preview.size()):
+						var cp_center: Vector2 = _curve_preview[cpi].pos + Vector2(8, 8)
+						# Compute outward normal from tangent at this point
+						var cp_tangent: Vector2 = Vector2.ZERO
+						if cpi == 0:
+							cp_tangent = (_curve_preview[1].pos - _curve_preview[0].pos).normalized()
+						elif cpi == _curve_preview.size() - 1:
+							cp_tangent = (_curve_preview[cpi].pos - _curve_preview[cpi - 1].pos).normalized()
+						else:
+							cp_tangent = (_curve_preview[cpi + 1].pos - _curve_preview[cpi - 1].pos).normalized()
+						var cp_normal: Vector2 = Vector2(-cp_tangent.y, cp_tangent.x)
+						# Normal should point outward (upward for top surfaces)
+						if cp_normal.y > 0:
+							cp_normal = -cp_normal
+						surface_pts.append(cp_center + cp_normal * 8.0)
+					WorldManager.add_polyline(surface_pts, "top")
 				_curve_points.clear()
 				_curve_preview.clear()
 				_curve_mode = false

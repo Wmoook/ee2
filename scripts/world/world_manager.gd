@@ -29,6 +29,12 @@ var block_groups: Array = []
 var _next_group_id: int = 1
 var active_group_filter: int = 0  # 0 = All, >0 = specific group ID
 
+# Polyline spline colliders: smooth curves with interpolated normals
+# Each: {points: PackedVector2Array, normals: Array[Vector2], side: String,
+#         bbox_min: Vector2, bbox_max: Vector2}
+var polylines: Array = []
+signal polylines_changed()
+
 func create_group(name: String = "") -> int:
 	var gid: int = _next_group_id
 	_next_group_id += 1
@@ -52,6 +58,123 @@ func remove_group(gid: int) -> void:
 				if fb.get("group", -1) == gid:
 					fb["group"] = -1
 			break
+
+func add_polyline(points: PackedVector2Array, side: String = "top") -> void:
+	if points.size() < 2:
+		return
+	# Compute per-vertex normals by averaging adjacent segment normals
+	var vert_normals: Array = []
+	var seg_count: int = points.size() - 1
+	var seg_normals: Array = []
+	for si in range(seg_count):
+		var seg_dir: Vector2 = (points[si + 1] - points[si]).normalized()
+		# Normal perpendicular to segment: rotate 90 degrees CCW
+		var seg_n: Vector2 = Vector2(-seg_dir.y, seg_dir.x)
+		# For "top" side, normal should point "outward" (usually upward for a floor)
+		# For "bottom" side, flip
+		if side == "bottom":
+			seg_n = -seg_n
+		elif side == "top":
+			# Default: if normal points downward (y>0), flip it upward
+			if seg_n.y > 0:
+				seg_n = -seg_n
+		seg_normals.append(seg_n)
+	# First vertex: use first segment normal
+	vert_normals.append(seg_normals[0])
+	# Interior vertices: average of adjacent segment normals
+	for vi in range(1, points.size() - 1):
+		var avg_n: Vector2 = (seg_normals[vi - 1] + seg_normals[vi]).normalized()
+		if avg_n.length() < 0.01:
+			avg_n = seg_normals[vi]
+		vert_normals.append(avg_n)
+	# Last vertex: use last segment normal
+	vert_normals.append(seg_normals[seg_count - 1])
+	# Compute bounding box with padding
+	var bb_min: Vector2 = points[0]
+	var bb_max: Vector2 = points[0]
+	for pi in range(1, points.size()):
+		bb_min.x = minf(bb_min.x, points[pi].x)
+		bb_min.y = minf(bb_min.y, points[pi].y)
+		bb_max.x = maxf(bb_max.x, points[pi].x)
+		bb_max.y = maxf(bb_max.y, points[pi].y)
+	var pad: float = 24.0  # Padding for player half-size + some margin
+	bb_min -= Vector2(pad, pad)
+	bb_max += Vector2(pad, pad)
+	polylines.append({
+		"points": points,
+		"normals": vert_normals,
+		"side": side,
+		"bbox_min": bb_min,
+		"bbox_max": bb_max
+	})
+	polylines_changed.emit()
+
+func check_polyline_collision(px: float, py: float, pw: float, ph: float) -> Dictionary:
+	## Check if axis-aligned box (px,py,pw,ph) collides with any polyline.
+	## Returns {hit, push, normal, tangent} with interpolated normal at closest point.
+	var result: Dictionary = {"hit": false, "push": Vector2.ZERO, "normal": Vector2(0, -1), "tangent": Vector2(1, 0)}
+	var pcx: float = px + pw * 0.5
+	var pcy: float = py + ph * 0.5
+	var best_pen: float = -999.0  # Most positive = deepest penetration
+	for poly in polylines:
+		# AABB broad phase
+		var bb_min: Vector2 = poly.bbox_min
+		var bb_max: Vector2 = poly.bbox_max
+		if px + pw < bb_min.x or px > bb_max.x or py + ph < bb_min.y or py > bb_max.y:
+			continue
+		var pts: PackedVector2Array = poly.points
+		var norms: Array = poly.normals
+		# Find nearest segment to player center
+		var closest_dist: float = 999999.0
+		var closest_seg: int = -1
+		var closest_t: float = 0.0
+		for si in range(pts.size() - 1):
+			var sa: Vector2 = pts[si]
+			var sb: Vector2 = pts[si + 1]
+			var ab: Vector2 = sb - sa
+			var ap: Vector2 = Vector2(pcx, pcy) - sa
+			var ab_dot: float = ab.dot(ab)
+			var seg_t: float = clampf(ap.dot(ab) / maxf(ab_dot, 0.001), 0.0, 1.0)
+			var closest_pt: Vector2 = sa + ab * seg_t
+			var dist: float = Vector2(pcx, pcy).distance_to(closest_pt)
+			if dist < closest_dist:
+				closest_dist = dist
+				closest_seg = si
+				closest_t = seg_t
+		if closest_seg < 0:
+			continue
+		# Interpolate normal at closest point on segment
+		var interp_normal: Vector2 = (norms[closest_seg] * (1.0 - closest_t) + norms[closest_seg + 1] * closest_t).normalized()
+		if interp_normal.length() < 0.01:
+			interp_normal = norms[closest_seg]
+		# Compute closest point on segment
+		var seg_a: Vector2 = pts[closest_seg]
+		var seg_b: Vector2 = pts[closest_seg + 1]
+		var on_seg: Vector2 = seg_a + (seg_b - seg_a) * closest_t
+		# Signed distance from player center to surface along normal
+		var to_player: Vector2 = Vector2(pcx, pcy) - on_seg
+		var signed_dist: float = to_player.dot(interp_normal)
+		# Effective radius: half-size of player box projected onto normal direction
+		var eff_radius: float = (pw * 0.5) * absf(interp_normal.x) + (ph * 0.5) * absf(interp_normal.y)
+		# Penetration: how far inside the surface the player is
+		var penetration: float = eff_radius - signed_dist
+		if penetration > 0 and penetration < eff_radius * 2.0:
+			if penetration > best_pen:
+				best_pen = penetration
+				var push_vec: Vector2 = interp_normal * penetration
+				var seg_tangent: Vector2 = (seg_b - seg_a).normalized()
+				result = {"hit": true, "push": push_vec, "normal": interp_normal, "tangent": seg_tangent}
+	return result
+
+func remove_polyline_near(pos: Vector2, radius: float = 16.0) -> void:
+	for i in range(polylines.size() - 1, -1, -1):
+		var poly: Dictionary = polylines[i]
+		var pts: PackedVector2Array = poly.points
+		for pi in range(pts.size()):
+			if pts[pi].distance_to(pos) < radius:
+				polylines.remove_at(i)
+				polylines_changed.emit()
+				return
 
 func _ready() -> void:
 	pass
@@ -191,10 +314,16 @@ func serialize_world() -> Dictionary:
 	var groups_data: Array = []
 	for g in block_groups:
 		groups_data.append({"id": g.id, "name": g.name})
+	var poly_data: Array = []
+	for poly in polylines:
+		var pts_arr: Array = []
+		for pt in poly.points:
+			pts_arr.append([pt.x, pt.y])
+		poly_data.append({"points": pts_arr, "side": poly.side})
 	return {"width": world_width, "height": world_height, "fg": fg_data, "bg": bg_data,
 		"rotations": rot_data, "free_blocks": free_data, "lines": line_data,
 		"spawn_points": spawn_points.map(func(v): return [v.x, v.y]),
-		"groups": groups_data}
+		"groups": groups_data, "polylines": poly_data}
 
 func deserialize_world(data: Dictionary) -> void:
 	world_width = data.get("width", 50)
@@ -239,6 +368,14 @@ func deserialize_world(data: Dictionary) -> void:
 	for g in data.get("groups", []):
 		block_groups.append({"id": int(g.id), "name": str(g.name)})
 		_next_group_id = maxi(_next_group_id, int(g.id) + 1)
+	polylines.clear()
+	for pd in data.get("polylines", []):
+		var packed_pts: PackedVector2Array = PackedVector2Array()
+		for pt in pd.get("points", []):
+			if pt.size() >= 2:
+				packed_pts.append(Vector2(float(pt[0]), float(pt[1])))
+		var poly_side: String = str(pd.get("side", "top"))
+		add_polyline(packed_pts, poly_side)
 	world_loaded.emit()
 
 func add_line(start: Vector2, end: Vector2, color: Color, width: float = 3.0) -> void:

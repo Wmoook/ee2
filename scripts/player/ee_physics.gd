@@ -218,6 +218,34 @@ func tick(input_h: int, input_v: int, space_just: bool, space_held: bool) -> voi
 	# 7. Step position
 	_step_position()
 
+	# 7.15 Polyline collision
+	if not is_god_mode:
+		var poly_result: Dictionary = WorldManager.check_polyline_collision(x, y, 16.0, 16.0)
+		if poly_result.hit:
+			x += poly_result.push.x
+			y += poly_result.push.y
+			# Check if floor (normal opposes gravity)
+			var poly_grav_n: Vector2 = Vector2(mox, moy)
+			if poly_grav_n.length() < 0.01:
+				poly_grav_n = Vector2(0, 1)
+			poly_grav_n = poly_grav_n.normalized()
+			var poly_against: float = -poly_result.normal.dot(poly_grav_n)
+			if poly_against > 0.3 and _pre_tick_grav_speed >= 0:
+				is_grounded = true
+				on_rotated_block = true
+				_surface_normal = poly_result.normal
+				# Project speed onto tangent
+				var poly_tangent: Vector2 = poly_result.tangent
+				var poly_spd_along: float = Vector2(_speedX, _speedY).dot(poly_tangent)
+				_speedX = poly_tangent.x * poly_spd_along
+				_speedY = poly_tangent.y * poly_spd_along
+			elif poly_against < -0.3:
+				# Ceiling hit - zero speed toward ceiling
+				var poly_into: float = Vector2(_speedX, _speedY).dot(poly_result.normal)
+				if poly_into < 0:
+					_speedX -= poly_result.normal.x * poly_into
+					_speedY -= poly_result.normal.y * poly_into
+
 	# 7.5 Line collision
 	if not is_god_mode:
 		var snap_y: float = WorldManager.check_line_collision(x, y + 2, 16.0, 16.0)
