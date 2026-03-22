@@ -113,23 +113,21 @@ func _physics_process(delta: float) -> void:
 	# Pre-tick: valley jump from smiley flip detection
 	# Don't clear valley_jump - physics manages it via oscillation detection
 
-	# Read input
-	var ix: int = 0
-	var iy: int = 0
-	if Input.is_action_pressed("move_left"): ix -= 1
-	if Input.is_action_pressed("move_right"): ix += 1
-	if physics.is_god_mode or physics.on_dot:
-		if Input.is_key_pressed(KEY_W) or Input.is_key_pressed(KEY_UP): iy -= 1
-		if Input.is_key_pressed(KEY_S) or Input.is_key_pressed(KEY_DOWN): iy += 1
-	else:
-		if Input.is_key_pressed(KEY_W) or Input.is_key_pressed(KEY_UP): iy -= 1
-		if Input.is_key_pressed(KEY_S) or Input.is_key_pressed(KEY_DOWN): iy += 1
-		# Space = jump (works in all modes)
-		if not physics.is_god_mode and not physics.on_dot:
-			_space_held = Input.is_key_pressed(KEY_SPACE)
-			# Only latch if CBF hasn't already consumed the jump this frame
-			if not _cbf_consumed_jump and Input.is_action_just_pressed("jump") and Input.is_key_pressed(KEY_SPACE):
-				_space_just = true
+	# Read raw input (WASD + Arrow keys both work)
+	var raw_h: int = 0
+	var raw_v: int = 0
+	if Input.is_action_pressed("move_left") or Input.is_key_pressed(KEY_LEFT): raw_h -= 1
+	if Input.is_action_pressed("move_right") or Input.is_key_pressed(KEY_RIGHT): raw_h += 1
+	if Input.is_key_pressed(KEY_W) or Input.is_key_pressed(KEY_UP): raw_v -= 1
+	if Input.is_key_pressed(KEY_S) or Input.is_key_pressed(KEY_DOWN): raw_v += 1
+	var ix: int = raw_h
+	var iy: int = raw_v
+	# Space = jump (works in all modes)
+	if not physics.is_god_mode and not physics.on_dot:
+		_space_held = Input.is_key_pressed(KEY_SPACE)
+		# Only latch if CBF hasn't already consumed the jump this frame
+		if not _cbf_consumed_jump and Input.is_action_just_pressed("jump") and Input.is_key_pressed(KEY_SPACE):
+			_space_just = true
 
 	# Save pre-tick position for interpolation
 	_prev_pos = Vector2(physics.get_pixel_x(), physics.get_pixel_y())

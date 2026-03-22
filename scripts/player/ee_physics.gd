@@ -150,15 +150,9 @@ func tick(input_h: int, input_v: int, space_just: bool, space_held: bool) -> voi
 			inH *= 0.6
 			inV *= 0.6
 	else:
-		# Diagonal arrow gravity: left/right moves along slope (perpendicular to gravity)
+		# In arrow fields: allow both axes (raw world-space input)
 		if _active_arrow_dir >= 0 and absf(mox) > 0.01 and absf(moy) > 0.01:
-			var grav_n: Vector2 = Vector2(mox, moy).normalized()
-			var perp: Vector2 = Vector2(grav_n.y, -grav_n.x)
-			# Ensure "right" has positive X component
-			if perp.x < 0:
-				perp = -perp
-			inH = perp.x * float(input_h)
-			inV = perp.y * float(input_h)
+			pass  # Keep both inH and inV — raw directional input
 		elif absf(moy) > 0:
 			inV = 0
 		elif absf(mox) > 0:
