@@ -295,7 +295,9 @@ func init_empty_world(w: int = 50, h: int = 30) -> void:
 	# Place border walls
 	for x in range(world_width):
 		fg_tiles[0][x] = 9
+		fg_tiles[1][x] = 9  # Double top border
 		fg_tiles[world_height - 1][x] = 9
+		fg_tiles[world_height - 2][x] = 9  # Double bottom border
 	for y in range(world_height):
 		fg_tiles[y][0] = 9
 		fg_tiles[y][world_width - 1] = 9
