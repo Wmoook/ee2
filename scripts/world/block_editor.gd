@@ -357,7 +357,11 @@ func _input(event: InputEvent) -> void:
 			var _e_world: Vector2 = _align_origin + (_align_sel_end * 16.0).rotated(_ar2)
 			var _wmin: Vector2 = Vector2(minf(_s_world.x, _e_world.x) - 16, minf(_s_world.y, _e_world.y) - 16)
 			var _wmax: Vector2 = Vector2(maxf(_s_world.x, _e_world.x) + 16, maxf(_s_world.y, _e_world.y) + 16)
-			# Also lift any grid blocks in the selection area to free blocks
+			# Selection bounds in rotated local space
+			var _sel_mn: Vector2 = Vector2(minf(_align_sel_start.x, _align_sel_end.x), minf(_align_sel_start.y, _align_sel_end.y))
+			var _sel_mx: Vector2 = Vector2(maxf(_align_sel_start.x, _align_sel_end.x) + 1.0, maxf(_align_sel_start.y, _align_sel_end.y) + 1.0)
+			# Lift grid blocks that fall within the rotated selection area
+			var _lift_inv: float = deg_to_rad(-_align_angle)
 			var _tx0: int = maxi(1, int(floor(_wmin.x / 16.0)))
 			var _ty0: int = maxi(1, int(floor(_wmin.y / 16.0)))
 			var _tx1: int = mini(WorldManager.world_width - 1, int(ceil(_wmax.x / 16.0)))
@@ -367,13 +371,14 @@ func _input(event: InputEvent) -> void:
 					var _bid: int = WorldManager.get_tile(_tx, _ty)
 					if _bid != 0:
 						var _bpos: Vector2 = Vector2(_tx * 16.0, _ty * 16.0)
-						var _brot: float = float(WorldManager.get_rotation(_tx, _ty))
-						WorldManager.free_blocks.append({"pos": _bpos, "id": _bid, "rotation": _brot})
-						WorldManager.set_fg_tile(_tx, _ty, 0)
-						WorldManager.set_rotation(_tx, _ty, 0)
-			# Select free blocks in rotated local space (not world AABB)
-			var _sel_mn: Vector2 = Vector2(minf(_align_sel_start.x, _align_sel_end.x) - 0.5, minf(_align_sel_start.y, _align_sel_end.y) - 0.5)
-			var _sel_mx: Vector2 = Vector2(maxf(_align_sel_start.x, _align_sel_end.x) + 0.5, maxf(_align_sel_start.y, _align_sel_end.y) + 0.5)
+						var _bcenter: Vector2 = _bpos + Vector2(8, 8)
+						# Check in rotated local space
+						var _bloc: Vector2 = (_bcenter - _align_origin).rotated(_lift_inv) / 16.0
+						if _bloc.x >= _sel_mn.x and _bloc.x <= _sel_mx.x and _bloc.y >= _sel_mn.y and _bloc.y <= _sel_mx.y:
+							var _brot: float = float(WorldManager.get_rotation(_tx, _ty))
+							WorldManager.free_blocks.append({"pos": _bpos, "id": _bid, "rotation": _brot})
+							WorldManager.set_fg_tile(_tx, _ty, 0)
+							WorldManager.set_rotation(_tx, _ty, 0)
 			var _inv_ar: float = deg_to_rad(-_align_angle)
 			for _fi in range(WorldManager.free_blocks.size()):
 				var _fb: Dictionary = WorldManager.free_blocks[_fi]
@@ -793,8 +798,8 @@ func _draw() -> void:
 			draw_line(dc0, dc1, dsc, 1.5)
 			draw_line(dc1, dc2, dsc, 1.5)
 			# Highlight blocks inside drag area
-			var _d_sel_mn: Vector2 = Vector2(mn.x - 0.5, mn.y - 0.5)
-			var _d_sel_mx: Vector2 = Vector2(mx2.x - 0.5, mx2.y - 0.5)
+			var _d_sel_mn: Vector2 = Vector2(mn.x, mn.y)
+			var _d_sel_mx: Vector2 = Vector2(mx2.x, mx2.y)
 			var _d_inv: float = deg_to_rad(-_align_angle)
 			for _dfi in range(WorldManager.free_blocks.size()):
 				var _dfb: Dictionary = WorldManager.free_blocks[_dfi]
@@ -1078,7 +1083,7 @@ func _get_aligned_local(world_pos: Vector2) -> Vector2:
 	var rad: float = deg_to_rad(-_align_angle)
 	var rel: Vector2 = world_pos - _align_origin
 	var local: Vector2 = rel.rotated(rad)
-	return Vector2(round(local.x / 16.0), round(local.y / 16.0))
+	return Vector2(floor(local.x / 16.0), floor(local.y / 16.0))
 
 func _aligned_local_to_world(local_grid: Vector2) -> Vector2:
 	# Convert rotated grid coords back to world position
@@ -1124,11 +1129,15 @@ func _lift_aligned_to_free(center_pt: Vector2) -> void:
 	var _e_w: Vector2 = _align_origin + (_align_sel_end * 16.0).rotated(_ar2)
 	var _wmn: Vector2 = Vector2(minf(_s_w.x, _e_w.x) - 16, minf(_s_w.y, _e_w.y) - 16)
 	var _wmx: Vector2 = Vector2(maxf(_s_w.x, _e_w.x) + 16, maxf(_s_w.y, _e_w.y) + 16)
+	var _lift_mn: Vector2 = Vector2(minf(_align_sel_start.x, _align_sel_end.x), minf(_align_sel_start.y, _align_sel_end.y))
+	var _lift_mx: Vector2 = Vector2(maxf(_align_sel_start.x, _align_sel_end.x) + 1.0, maxf(_align_sel_start.y, _align_sel_end.y) + 1.0)
+	var _lift_inv: float = deg_to_rad(-_align_angle)
 	var to_remove: Array = []
 	for i in range(WorldManager.free_blocks.size()):
 		var fb: Dictionary = WorldManager.free_blocks[i]
 		var fc: Vector2 = fb.pos + Vector2(8, 8)
-		if fc.x >= _wmn.x and fc.x <= _wmx.x and fc.y >= _wmn.y and fc.y <= _wmx.y:
+		var floc: Vector2 = (fc - _align_origin).rotated(_lift_inv) / 16.0
+		if floc.x >= _lift_mn.x and floc.x <= _lift_mx.x and floc.y >= _lift_mn.y and floc.y <= _lift_mx.y:
 			_free_originals.append({"pos": fb.pos, "id": fb.id, "rot": fb.rotation})
 			to_remove.append(i)
 	for i in range(to_remove.size() - 1, -1, -1):

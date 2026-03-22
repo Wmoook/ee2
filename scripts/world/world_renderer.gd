@@ -200,12 +200,7 @@ func _draw_free_block(fb: Dictionary) -> void:
 	var sy: int = (local_off / cols) * TILE_SIZE
 	var center: Vector2 = pos + Vector2(8, 8)
 	draw_set_transform(center, deg_to_rad(rot), Vector2.ONE)
-	# Oversize only when rotated at non-axis-aligned angles (closes sub-pixel gaps)
-	var rot_mod: float = fmod(absf(rot), 90.0)
-	if rot_mod > 1.0 and rot_mod < 89.0:
-		draw_texture_rect_region(tex, Rect2(-8.5, -8.5, 17, 17), Rect2(sx, sy, TILE_SIZE, TILE_SIZE))
-	else:
-		draw_texture_rect_region(tex, Rect2(-8, -8, TILE_SIZE, TILE_SIZE), Rect2(sx, sy, TILE_SIZE, TILE_SIZE))
+	draw_texture_rect_region(tex, Rect2(-8, -8, TILE_SIZE, TILE_SIZE), Rect2(sx, sy, TILE_SIZE, TILE_SIZE))
 	draw_set_transform(Vector2.ZERO, 0, Vector2.ONE)
 
 func _get_visual_id(block_id: int) -> int:
