@@ -1100,8 +1100,9 @@ func _process(_delta: float) -> void:
 		var c_now: bool = Input.is_physical_key_pressed(KEY_C)
 		if c_now and not _c_was_pressed and not Input.is_key_pressed(KEY_CTRL):
 			if _curve_mode and _curve_points.size() >= 2:
-				# Confirm: place curve blocks
+				# Confirm: place curve blocks (only up to last clicked point)
 				_save_undo()
+				_curve_preview = _compute_spline_blocks(_curve_points, _curve_points[-1])
 				# Place visual blocks (non-solid, just for rendering)
 				for cbp in _curve_preview:
 					var cexists: bool = false
@@ -1117,7 +1118,6 @@ func _process(_delta: float) -> void:
 					var spline_pts: PackedVector2Array = PackedVector2Array()
 					# Recompute spline at high resolution for smooth polyline
 					var cpts: Array = _curve_points.duplicate()
-					cpts.append(get_global_mouse_position())  # Include final mouse pos
 					var vcp: Array = [cpts[0] - (cpts[1] - cpts[0])]
 					vcp.append_array(cpts)
 					vcp.append(cpts[-1] + (cpts[-1] - cpts[-2]))
@@ -1582,7 +1582,9 @@ func _compute_spline_blocks(points: Array, mouse_pos: Vector2) -> Array:
 	var pts: Array = points.duplicate()
 	if pts.size() == 0:
 		return []
-	pts.append(mouse_pos)
+	# Only append mouse if it's different from last point (avoid duplicate on confirm)
+	if pts.size() == 0 or pts[-1].distance_to(mouse_pos) > 8.0:
+		pts.append(mouse_pos)
 	if pts.size() == 1:
 		return [{"pos": pts[0] - Vector2(8, 8), "rot": 0.0, "curve": true}]
 	if pts.size() == 2:
