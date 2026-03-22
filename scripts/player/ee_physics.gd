@@ -433,13 +433,10 @@ func tick(input_h: int, input_v: int, space_just: bool, space_held: bool) -> voi
 				_coyote_ticks = 4
 
 
-	# Restore polyline visual state (rotation) if no free block overrode it
-	# Re-check polyline proximity to avoid restoring when player left the curve
-	if not on_rotated_block and _on_polyline:
-		var recheck: Dictionary = WorldManager.check_polyline_collision(x, y, 16.0, 16.0)
-		if recheck.hit:
-			on_rotated_block = true
-			_surface_normal = recheck.normal
+	# Restore polyline state if no free block collision occurred
+	if not on_rotated_block and _on_polyline and not _fb_hit:
+		on_rotated_block = true
+		_surface_normal = _polyline_normal
 
 	# Fast V-shape detection: push normal X flips + low speed = settling into valley
 	# Only for FLOOR V's (normal points against gravity), not ceiling V's
