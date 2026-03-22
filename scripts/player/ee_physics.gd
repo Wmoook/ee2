@@ -233,13 +233,12 @@ func tick(input_h: int, input_v: int, space_just: bool, space_held: bool) -> voi
 				if poly_grav_n.length() < 0.01:
 					poly_grav_n = Vector2(0, 1)
 				poly_grav_n = poly_grav_n.normalized()
-				# Curve V-bottom: when nearly still, snap to center and freeze
+				# Curve V-bottom: freeze only at actual bottom (push mostly horizontal + low speed)
 				var poly_spd_total: float = absf(_speedX) + absf(_speedY)
-				if poly_push.length() < 4.0 and poly_spd_total < 0.8:
-					# Nearly still at curve bottom — snap X to nearest polyline point
+				var push_mostly_horiz: bool = absf(poly_push.x) > absf(poly_push.y) * 1.5
+				if poly_push.length() < 4.0 and poly_spd_total < 0.5 and push_mostly_horiz:
 					poly_push.x = 0
 					_speedX = 0
-					_speedY = 0
 				elif poly_push.length() < 4.0:
 					if _prev_push_normal.length() > 0.1 and _prev_push_normal.x * poly_result.normal.x < -0.1:
 						poly_push.x = 0
