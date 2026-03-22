@@ -586,8 +586,11 @@ func _handle_jump(space_just: bool, space_held: bool) -> void:
 		do_jump = true
 		mod = -1
 	elif space_held:
-		# Hold-repeat: works in all gravity directions
-		if lastJumpMs < 0:
+		# Hold-repeat: jump immediately when grounded, delayed in air
+		if is_grounded:
+			do_jump = true
+			mod = 1
+		elif lastJumpMs < 0:
 			if _now_ms + lastJumpMs > 750:
 				do_jump = true
 				mod = 1
