@@ -228,15 +228,16 @@ func tick(input_h: int, input_v: int, space_just: bool, space_held: bool) -> voi
 			if vel_toward < -1.5 and poly_result.push.length() < 3.0:
 				pass  # Flying away from surface — don't snap back
 			else:
-				# At curve V-bottoms: only push along gravity (down), not sideways
 				var poly_push: Vector2 = poly_result.push
 				var poly_grav_n: Vector2 = Vector2(mox, moy)
 				if poly_grav_n.length() < 0.01:
 					poly_grav_n = Vector2(0, 1)
 				poly_grav_n = poly_grav_n.normalized()
-				# If push is mostly horizontal and penetration is small, dampen horizontal
-				if poly_push.length() < 2.0 and absf(poly_vel.x) < 0.5 and absf(poly_vel.y) < 0.5:
-					poly_push.x *= 0.1  # Dampen horizontal oscillation at V bottom
+				# Curve V-bottom: if push direction flipped from last tick, zero horizontal
+				if _prev_push_normal.length() > 0.1 and poly_push.length() < 4.0:
+					if _prev_push_normal.x * poly_result.normal.x < -0.1:
+						poly_push.x = 0
+						_speedX = 0
 				x += poly_push.x
 				y += poly_push.y
 				on_rotated_block = true
