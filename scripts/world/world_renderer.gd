@@ -155,31 +155,7 @@ func _draw() -> void:
 					prev_b = cur_b
 					prev_along = cdists[pli]
 					last_d = cdists[pli]
-			# End caps: flat perpendicular rectangles at each end
-			if curve_tex and poly_pts.size() >= 2:
-				# Start cap
-				var sd: Vector2 = (poly_pts[1] - poly_pts[0]).normalized()
-				var sp: Vector2 = Vector2(-sd.y, sd.x)
-				var sn0: Vector2 = poly_norms[0] if poly_norms.size() > 0 else Vector2(0, -1)
-				var sc: Vector2 = poly_pts[0]
-				var cap_s: PackedVector2Array = PackedVector2Array([
-					sc + sn0 * half_w - sd * 2.0, sc + sn0 * half_w,
-					sc - sn0 * half_w, sc - sn0 * half_w - sd * 2.0])
-				var cap_s_uv: PackedVector2Array = PackedVector2Array([
-					Vector2(u0, v0), Vector2(u0 + (u1 - u0) * 0.125, v0),
-					Vector2(u0 + (u1 - u0) * 0.125, v1), Vector2(u0, v1)])
-				draw_colored_polygon(cap_s, Color.WHITE, cap_s_uv, curve_tex)
-				# End cap
-				var ed: Vector2 = (poly_pts[-1] - poly_pts[-2]).normalized()
-				var en: Vector2 = poly_norms[-1] if poly_norms.size() > 0 else Vector2(0, -1)
-				var ec: Vector2 = poly_pts[-1]
-				var cap_e: PackedVector2Array = PackedVector2Array([
-					ec + en * half_w, ec + en * half_w + ed * 2.0,
-					ec - en * half_w + ed * 2.0, ec - en * half_w])
-				var cap_e_uv: PackedVector2Array = PackedVector2Array([
-					Vector2(u1 - (u1 - u0) * 0.125, v0), Vector2(u1, v0),
-					Vector2(u1, v1), Vector2(u1 - (u1 - u0) * 0.125, v1)])
-				draw_colored_polygon(cap_e, Color.WHITE, cap_e_uv, curve_tex)
+			# End caps are real blocks (placed in block_editor on confirm)
 			if GameState.is_edit_mode:
 				draw_polyline(poly_pts, Color(0.2, 0.8, 1.0, 0.4), 1.0, true)
 
