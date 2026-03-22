@@ -306,13 +306,24 @@ func tick(input_h: int, input_v: int, space_just: bool, space_held: bool) -> voi
 				if pass_depth > best_depth:
 					best_depth = pass_depth
 					best_push = pass_push
+				# Stop iterating if overlapping 2+ rotations in ceiling config
+				if _overlap_rots.size() >= 2:
+					var _gcheck: Vector2 = Vector2(mox, moy)
+					if _gcheck.length() < 0.01: _gcheck = Vector2(0, 1)
+					if -pass_push.normalized().dot(_gcheck.normalized()) <= 0:
+						break  # Ceiling V - stop, let gravity handle it
 			else:
 				break  # No more overlaps
 		# Detect valley: only when actually overlapping 2+ different-rotation blocks
 		var _pre_total_spd: float = absf(_pre_tick_speedX) + absf(_pre_tick_speedY)
+		# Valley detection: only for floor V's (push against gravity)
 		if hit and _overlap_rots.size() >= 2:
-			in_valley = true
-			is_grounded = true
+			var _gd3: Vector2 = Vector2(mox, moy)
+			if _gd3.length() < 0.01: _gd3 = Vector2(0, 1)
+			var _bp_against: float = -best_push.normalized().dot(_gd3.normalized())
+			if _bp_against > 0.0:  # Push is against gravity = floor V
+				in_valley = true
+				is_grounded = true
 		if hit and best_depth > 0.01:
 			# Valley: zero speed only when settling (low speed), not when entering at speed
 			if in_valley and absf(_speedX) < 0.5 and absf(_speedY) < 0.5:
@@ -332,7 +343,7 @@ func tick(input_h: int, input_v: int, space_just: bool, space_held: bool) -> voi
 				grav_dir2 = Vector2(0, 1)
 			else:
 				grav_dir2 = grav_dir2.normalized()
-			var against_grav2: float = absf(n.dot(grav_dir2))
+			var against_grav2: float = -n.dot(grav_dir2)  # Positive = floor, negative = ceiling
 			if not valley_jump:
 				# Wall-like: push nearly perpendicular to gravity (< 0.2)
 				# Floor/slope: push has gravity component (> 0.2) - includes steep slopes
@@ -381,8 +392,13 @@ func tick(input_h: int, input_v: int, space_just: bool, space_held: bool) -> voi
 				_coyote_ticks = 4
 
 	# Fast V-shape detection: push normal X flips + low speed = settling into valley
-	# Only when falling (pre_tick_speedY >= 0), not jumping up into a V
-	if on_rotated_block and not valley_jump and _prev_push_normal.length() > 0.1 and _pre_tick_speedY >= -0.5:
+	# Only for FLOOR V's (normal points against gravity), not ceiling V's
+	var _is_floor_v: bool = false
+	if on_rotated_block and _surface_normal.length() > 0.1:
+		var _gd: Vector2 = Vector2(mox, moy)
+		if _gd.length() < 0.01: _gd = Vector2(0, 1)
+		_is_floor_v = -_surface_normal.dot(_gd.normalized()) > 0.2
+	if on_rotated_block and not valley_jump and _prev_push_normal.length() > 0.1 and _is_floor_v:
 		if _prev_push_normal.x * _surface_normal.x < -0.1 and absf(_surface_normal.x) > 0.3 and absf(_speedX) < 0.5:
 			in_valley = true
 			valley_jump = true
@@ -411,7 +427,7 @@ func tick(input_h: int, input_v: int, space_just: bool, space_held: bool) -> voi
 	_pos_history.append(x)
 	if _pos_history.size() > 4:
 		_pos_history.pop_front()
-	if _pos_history.size() == 4 and on_rotated_block and _pre_tick_speedY >= -0.5:
+	if _pos_history.size() == 4 and on_rotated_block and _is_floor_v:
 		# Check A-B-A-B pattern (position alternating)
 		var d01: float = absf(_pos_history[0] - _pos_history[1])
 		var d02: float = absf(_pos_history[0] - _pos_history[2])
