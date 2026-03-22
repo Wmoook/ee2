@@ -117,41 +117,16 @@ func _draw() -> void:
 			var v0: float = float(csy) / ah
 			var u1: float = float(csx + TILE_SIZE) / aw
 			var v1: float = float(csy + TILE_SIZE) / ah
-			# Use pre-cached render data
-			var r_top: PackedVector2Array = poly.get("render_top", PackedVector2Array())
-			var r_bot: PackedVector2Array = poly.get("render_bot", PackedVector2Array())
-			var r_dists: Array = poly.get("render_dists", [])
-			if r_top.size() < 2:
-				continue
-			var total_len: float = r_dists[-1] if r_dists.size() > 0 else 1.0
-			var cap_frac: float = 2.0 / 16.0
-			var last_d: float = 0.0
-			var prev_t: Vector2 = r_top[0]
-			var prev_b: Vector2 = r_bot[0]
-			var prev_along: float = 0.0
-			# Render quads every 3px
-			for pli in range(1, r_top.size()):
-				var rd: float = r_dists[pli] if pli < r_dists.size() else total_len
-				if rd - last_d >= 3.0 or pli == r_top.size() - 1:
-					var cur_t: Vector2 = r_top[pli]
-					var cur_b: Vector2 = r_bot[pli]
-					if curve_tex:
-						var t0f: float = prev_along / maxf(total_len, 1.0)
-						var t1f: float = rd / maxf(total_len, 1.0)
-						var uv_l: float = _curve_uv(t0f, cap_frac, u0, u1)
-						var uv_r: float = _curve_uv(t1f, cap_frac, u0, u1)
-						draw_colored_polygon(
-							PackedVector2Array([prev_t, cur_t, cur_b, prev_b]), Color.WHITE,
-							PackedVector2Array([Vector2(uv_l, v0), Vector2(uv_r, v0), Vector2(uv_r, v1), Vector2(uv_l, v1)]),
-							curve_tex)
-					else:
-						draw_colored_polygon(
-							PackedVector2Array([prev_t, cur_t, cur_b, prev_b]),
-							Color(0.5, 0.5, 0.52, 1.0))
-					prev_t = cur_t
-					prev_b = cur_b
-					prev_along = rd
-					last_d = rd
+			# Render using pre-built mesh (ONE draw call, zero computation)
+			var cmesh: ArrayMesh = poly.get("mesh") as ArrayMesh
+			if cmesh and curve_tex:
+				var mat: CanvasItemMaterial = CanvasItemMaterial.new()
+				draw_mesh(cmesh, curve_tex, Transform2D.IDENTITY)
+			elif cmesh:
+				draw_mesh(cmesh, null, Transform2D.IDENTITY, Color(0.5, 0.5, 0.52, 1.0))
+			else:
+				# Fallback: thick polyline
+				draw_polyline(poly_pts, Color(0.5, 0.5, 0.52, 1.0), 16.0, true)
 			# End caps are real blocks (placed in block_editor on confirm)
 			if GameState.is_edit_mode:
 				draw_polyline(poly_pts, Color(0.2, 0.8, 1.0, 0.4), 1.0, true)

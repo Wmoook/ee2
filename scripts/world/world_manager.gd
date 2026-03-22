@@ -102,7 +102,7 @@ func add_polyline(points: PackedVector2Array, side: String = "top", block_id: in
 	var pad: float = 24.0  # Padding for player half-size + some margin
 	bb_min -= Vector2(pad, pad)
 	bb_max += Vector2(pad, pad)
-	# Pre-compute render data (top/bottom edges for quads)
+	# Pre-compute render data
 	var render_top: PackedVector2Array = PackedVector2Array()
 	var render_bot: PackedVector2Array = PackedVector2Array()
 	var render_dists: Array = [0.0]
@@ -111,6 +111,36 @@ func add_polyline(points: PackedVector2Array, side: String = "top", block_id: in
 		render_bot.append(points[ri] - vert_normals[ri] * 8.0)
 		if ri > 0:
 			render_dists.append(render_dists[ri - 1] + points[ri].distance_to(points[ri - 1]))
+	# Pre-build mesh for instant rendering (zero per-frame cost)
+	var mesh: ArrayMesh = null
+	if points.size() >= 2:
+		mesh = ArrayMesh.new()
+		var verts: PackedVector2Array = PackedVector2Array()
+		var uvs: PackedVector2Array = PackedVector2Array()
+		var total_d: float = render_dists[-1] if render_dists.size() > 0 else 1.0
+		# Build triangle strip quads every 1px
+		for qi in range(1, points.size()):
+			if render_dists[qi] - (render_dists[qi - 1] if qi > 1 else 0.0) < 0.5 and qi < points.size() - 1:
+				continue
+			var t0: Vector2 = render_top[qi - 1]
+			var t1: Vector2 = render_top[qi]
+			var b0: Vector2 = render_bot[qi - 1]
+			var b1: Vector2 = render_bot[qi]
+			# Two triangles per quad
+			verts.append(t0); verts.append(t1); verts.append(b1)
+			verts.append(t0); verts.append(b1); verts.append(b0)
+			# UVs (simple 0-1 mapping per quad)
+			uvs.append(Vector2(0, 0)); uvs.append(Vector2(1, 0)); uvs.append(Vector2(1, 1))
+			uvs.append(Vector2(0, 0)); uvs.append(Vector2(1, 1)); uvs.append(Vector2(0, 1))
+		if verts.size() >= 3:
+			var arrays: Array = []
+			arrays.resize(Mesh.ARRAY_MAX)
+			var v3: PackedVector3Array = PackedVector3Array()
+			for v in verts:
+				v3.append(Vector3(v.x, v.y, 0))
+			arrays[Mesh.ARRAY_VERTEX] = v3
+			arrays[Mesh.ARRAY_TEX_UV] = uvs
+			mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
 	polylines.append({
 		"points": points,
 		"normals": vert_normals,
@@ -120,7 +150,8 @@ func add_polyline(points: PackedVector2Array, side: String = "top", block_id: in
 		"bbox_max": bb_max,
 		"render_top": render_top,
 		"render_bot": render_bot,
-		"render_dists": render_dists
+		"render_dists": render_dists,
+		"mesh": mesh
 	})
 	polylines_changed.emit()
 
