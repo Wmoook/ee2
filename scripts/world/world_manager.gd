@@ -19,9 +19,39 @@ var lines: Array = []
 signal lines_changed()
 
 # Free blocks: rotated/off-grid blocks, not bound to tile array
-# Each: {pos: Vector2 (pixels), id: int, rotation: float (degrees)}
+# Each: {pos: Vector2 (pixels), id: int, rotation: float (degrees), group: int (-1=none)}
 var free_blocks: Array = []
 signal free_blocks_changed()
+
+# Groups: block groups with properties
+# Each: {id: int, name: String}
+var block_groups: Array = []
+var _next_group_id: int = 1
+var active_group_filter: int = 0  # 0 = All, >0 = specific group ID
+
+func create_group(name: String = "") -> int:
+	var gid: int = _next_group_id
+	_next_group_id += 1
+	if name.is_empty():
+		name = "Group %d" % gid
+	block_groups.append({"id": gid, "name": name})
+	return gid
+
+func get_group(gid: int) -> Dictionary:
+	for g in block_groups:
+		if g.id == gid:
+			return g
+	return {}
+
+func remove_group(gid: int) -> void:
+	for i in range(block_groups.size()):
+		if block_groups[i].id == gid:
+			block_groups.remove_at(i)
+			# Unassign blocks from this group
+			for fb in free_blocks:
+				if fb.get("group", -1) == gid:
+					fb["group"] = -1
+			break
 
 func _ready() -> void:
 	pass
@@ -143,15 +173,21 @@ func serialize_world() -> Dictionary:
 			fd["spin"] = fb.spin
 			fd["px"] = fb.pivot.x
 			fd["py"] = fb.pivot.y
+		if fb.get("group", -1) >= 0:
+			fd["group"] = fb.group
 		free_data.append(fd)
 	var line_data: Array = []
 	for ln in lines:
 		if not ln.has("_free"):
 			line_data.append({"sx": ln.start.x, "sy": ln.start.y, "ex": ln.end.x, "ey": ln.end.y,
 				"r": ln.color.r, "g": ln.color.g, "b": ln.color.b, "a": ln.color.a, "w": ln.width})
+	var groups_data: Array = []
+	for g in block_groups:
+		groups_data.append({"id": g.id, "name": g.name})
 	return {"width": world_width, "height": world_height, "fg": fg_data, "bg": bg_data,
 		"rotations": rot_data, "free_blocks": free_data, "lines": line_data,
-		"spawn_points": spawn_points.map(func(v): return [v.x, v.y])}
+		"spawn_points": spawn_points.map(func(v): return [v.x, v.y]),
+		"groups": groups_data}
 
 func deserialize_world(data: Dictionary) -> void:
 	world_width = data.get("width", 50)
@@ -178,6 +214,8 @@ func deserialize_world(data: Dictionary) -> void:
 		if fb.has("spin"):
 			fbd["spin"] = float(fb.spin)
 			fbd["pivot"] = Vector2(float(fb.get("px", fb.x + 8)), float(fb.get("py", fb.y + 8)))
+		if fb.has("group"):
+			fbd["group"] = int(fb.group)
 		free_blocks.append(fbd)
 	lines.clear()
 	for ln in data.get("lines", []):
@@ -189,6 +227,11 @@ func deserialize_world(data: Dictionary) -> void:
 			spawn_points.append(Vector2(sp[0], sp[1]))
 	if spawn_points.is_empty():
 		spawn_points = [Vector2(3, 3)]
+	block_groups.clear()
+	_next_group_id = 1
+	for g in data.get("groups", []):
+		block_groups.append({"id": int(g.id), "name": str(g.name)})
+		_next_group_id = maxi(_next_group_id, int(g.id) + 1)
 	world_loaded.emit()
 
 func add_line(start: Vector2, end: Vector2, color: Color, width: float = 3.0) -> void:

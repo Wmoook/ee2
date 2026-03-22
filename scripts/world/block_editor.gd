@@ -50,6 +50,58 @@ var _angle_spin: SpinBox
 var _ui_layer: CanvasLayer
 var _spin_speed_val: float = 45.0
 
+# Group system
+var _group_btn: Button
+var _group_panel: VBoxContainer
+var _group_name_edit: LineEdit
+var _selected_group_id: int = -1
+# Group filter stored on WorldManager.active_group_filter
+
+# Undo system
+var _undo_stack: Array = []
+const MAX_UNDO: int = 50
+
+func _save_undo() -> void:
+	var state: Dictionary = {}
+	# Snapshot free blocks
+	var fb_copy: Array = []
+	for fb in WorldManager.free_blocks:
+		fb_copy.append(fb.duplicate())
+	state["free_blocks"] = fb_copy
+	# Snapshot grid tiles (only non-zero)
+	var tiles: Array = []
+	for y in range(WorldManager.world_height):
+		for x in range(WorldManager.world_width):
+			var bid: int = WorldManager.get_tile(x, y)
+			var rot: int = WorldManager.get_rotation(x, y)
+			if bid != 0 or rot != 0:
+				tiles.append({"x": x, "y": y, "id": bid, "rot": rot})
+	state["tiles"] = tiles
+	_undo_stack.append(state)
+	if _undo_stack.size() > MAX_UNDO:
+		_undo_stack.pop_front()
+
+func _do_undo() -> void:
+	if _undo_stack.is_empty():
+		return
+	var state: Dictionary = _undo_stack.pop_back()
+	# Restore free blocks
+	WorldManager.free_blocks.clear()
+	for fb in state["free_blocks"]:
+		WorldManager.free_blocks.append(fb.duplicate())
+	# Clear all grid tiles first
+	for y in range(WorldManager.world_height):
+		for x in range(1, WorldManager.world_width - 1):
+			if y > 0 and y < WorldManager.world_height - 1:
+				WorldManager.set_fg_tile(x, y, 0)
+				WorldManager.set_rotation(x, y, 0)
+	# Restore saved tiles
+	for t in state["tiles"]:
+		WorldManager.set_fg_tile(t.x, t.y, t.id)
+		WorldManager.set_rotation(t.x, t.y, t.rot)
+	_deselect()
+	queue_redraw()
+
 func _ready() -> void:
 	z_index = 5
 	GameState.edit_mode_changed.connect(func(_e: bool): queue_redraw())
@@ -115,6 +167,30 @@ func _ready() -> void:
 	)
 	angle_row.add_child(_angle_spin)
 
+	# Group row: number + add button
+	var group_row: HBoxContainer = HBoxContainer.new()
+	_spin_panel.add_child(group_row)
+	var _group_id_spin: SpinBox = SpinBox.new()
+	_group_id_spin.name = "GroupIdSpin"
+	_group_id_spin.min_value = 1
+	_group_id_spin.max_value = 99
+	_group_id_spin.step = 1
+	_group_id_spin.value = 1
+	_group_id_spin.custom_minimum_size = Vector2(55, 24)
+	_group_id_spin.add_theme_font_size_override("font_size", 10)
+	group_row.add_child(_group_id_spin)
+	_group_btn = Button.new()
+	_group_btn.text = "Add to Group"
+	_group_btn.custom_minimum_size = Vector2(85, 24)
+	_group_btn.add_theme_font_size_override("font_size", 10)
+	_group_btn.pressed.connect(_on_group_pressed)
+	group_row.add_child(_group_btn)
+
+	# Group properties panel (placeholder - properties added later)
+	_group_panel = VBoxContainer.new()
+	_group_panel.visible = false
+	_spin_panel.add_child(_group_panel)
+
 	# Reset grid button - always visible in edit mode (separate from panel)
 	_reset_btn = Button.new()
 	_reset_btn.text = "Reset Grid"
@@ -128,10 +204,39 @@ func _ready() -> void:
 		_deselect()
 		queue_redraw())
 	_ui_layer.add_child(_reset_btn)
+
+	# Group filter dropdown (bottom-right)
+	var _gf_container: HBoxContainer = HBoxContainer.new()
+	_gf_container.name = "GroupFilter"
+	_ui_layer.add_child(_gf_container)
+	var gf_label: Label = Label.new()
+	gf_label.text = "Show Group:"
+	gf_label.add_theme_font_size_override("font_size", 11)
+	gf_label.add_theme_color_override("font_color", Color.WHITE)
+	_gf_container.add_child(gf_label)
+	var gf_option: OptionButton = OptionButton.new()
+	gf_option.name = "GroupFilterOption"
+	gf_option.add_item("All", 0)
+	gf_option.custom_minimum_size = Vector2(100, 24)
+	gf_option.add_theme_font_size_override("font_size", 11)
+	gf_option.item_selected.connect(_on_group_filter_changed)
+	_gf_container.add_child(gf_option)
 	# Position will be set in _process
+
+func _has_ui_focus() -> bool:
+	var focused: Control = get_viewport().gui_get_focus_owner()
+	return focused != null and (focused is LineEdit or focused is SpinBox or focused is TextEdit)
 
 func _input(event: InputEvent) -> void:
 	if not GameState.is_edit_mode:
+		return
+	# Release UI focus when clicking on game area
+	if event is InputEventMouseButton and event.pressed and not _is_mouse_over_ui():
+		var focused: Control = get_viewport().gui_get_focus_owner()
+		if focused:
+			focused.release_focus()
+	# Don't handle game input when typing in UI
+	if _has_ui_focus() and event is InputEventKey:
 		return
 	if event.is_action_pressed("block_next"):
 		GameState.cycle_block(true)
@@ -280,8 +385,12 @@ func _input(event: InputEvent) -> void:
 			get_viewport().set_input_as_handled()
 			return
 
-	# Ctrl+R = reset grid angle to 0°
+	# Ctrl+Z = undo, Ctrl+R = reset grid
 	if event is InputEventKey and event.pressed and not event.echo:
+		if event.physical_keycode == KEY_Z and Input.is_key_pressed(KEY_CTRL):
+			_do_undo()
+			get_viewport().set_input_as_handled()
+			return
 		if event.physical_keycode == KEY_R and Input.is_key_pressed(KEY_CTRL):
 			_align_angle = 0.0
 			_angle_spin.set_value_no_signal(0.0)
@@ -302,6 +411,8 @@ func _input(event: InputEvent) -> void:
 			var _pfb_idx: int = -1
 			for _pfi in range(WorldManager.free_blocks.size()):
 				var _pfb: Dictionary = WorldManager.free_blocks[_pfi]
+				if not _is_block_in_active_group(_pfb):
+					continue
 				if _pmg.distance_to(_pfb.pos + Vector2(8, 8)) < 14.0:
 					_pfb_idx = _pfi
 					break
@@ -393,6 +504,8 @@ func _input(event: InputEvent) -> void:
 			var _inv_ar: float = deg_to_rad(-_align_angle)
 			for _fi in range(WorldManager.free_blocks.size()):
 				var _fb: Dictionary = WorldManager.free_blocks[_fi]
+				if not _is_block_in_active_group(_fb):
+					continue
 				var _fc: Vector2 = _fb.pos + Vector2(8, 8)
 				# Transform block center to selection's local space
 				var _local_fc: Vector2 = (_fc - _align_origin).rotated(_inv_ar) / 16.0
@@ -465,6 +578,7 @@ func _input(event: InputEvent) -> void:
 					exists = true
 					break
 			if not exists:
+				_save_undo()
 				WorldManager.free_blocks.append({"pos": snap_pos, "id": GameState.selected_block_id, "rotation": _align_angle})
 			queue_redraw()
 		if event.is_action_pressed("remove_block") or (event is InputEventMouseMotion and Input.is_action_pressed("remove_block")):
@@ -478,6 +592,7 @@ func _input(event: InputEvent) -> void:
 					best_d = d
 					best_i = i
 			if best_i >= 0:
+				_save_undo()
 				WorldManager.free_blocks.remove_at(best_i)
 				queue_redraw()
 		if event is InputEventMouseMotion:
@@ -636,10 +751,91 @@ func _is_mouse_over_ui() -> bool:
 	# Camera pad on left
 	if mouse.x < 140 and mouse.y > vp_size.y / 2 - 70 and mouse.y < vp_size.y / 2 + 70:
 		return true
-	# Spin panel on right
-	if _spin_panel and _spin_panel.visible and mouse.x > vp_size.x - 170 and mouse.y > vp_size.y / 2 - 50 and mouse.y < vp_size.y / 2 + 50:
-		return true
+	# Spin panel on right (extended for group panel)
+	if _spin_panel and _spin_panel.visible:
+		var panel_rect: Rect2 = Rect2(_spin_panel.global_position, _spin_panel.size)
+		if panel_rect.has_point(mouse):
+			return true
+	# Group filter bottom-right
+	var gf: Control = _ui_layer.get_node_or_null("GroupFilter")
+	if gf and gf.visible:
+		var gf_rect: Rect2 = Rect2(gf.global_position, gf.size)
+		if gf_rect.has_point(mouse):
+			return true
 	return false
+
+func _on_group_pressed() -> void:
+	if not _align_has_sel or _align_sel_indices.is_empty():
+		return
+	_save_undo()
+	# Get group number from spinbox
+	var id_spin: SpinBox = _spin_panel.get_node_or_null("HBoxContainer/GroupIdSpin")
+	if not id_spin:
+		for c in _spin_panel.get_children():
+			var s: SpinBox = c.get_node_or_null("GroupIdSpin") as SpinBox
+			if s:
+				id_spin = s
+				break
+	var gid: int = int(id_spin.value) if id_spin else 1
+	# Create group if it doesn't exist
+	var g: Dictionary = WorldManager.get_group(gid)
+	if g.is_empty():
+		WorldManager._next_group_id = maxi(WorldManager._next_group_id, gid + 1)
+		WorldManager.block_groups.append({
+			"id": gid, "name": "Group %d" % gid,
+			"move_dir": Vector2(1, 0), "move_speed": 32.0, "move_dist": 64.0,
+			"move_type": "ping_pong", "_phase": 0.0, "_dir_sign": 1.0, "_origin": Vector2.ZERO
+		})
+		g = WorldManager.get_group(gid)
+	# Set origin from first block
+	if _align_sel_indices[0] < WorldManager.free_blocks.size():
+		g["_origin"] = WorldManager.free_blocks[_align_sel_indices[0]].pos
+	# Assign selected blocks to group
+	for si in _align_sel_indices:
+		if si < WorldManager.free_blocks.size():
+			WorldManager.free_blocks[si]["group"] = gid
+	_selected_group_id = gid
+	_group_panel.visible = true
+	_group_name_edit.text = g.name
+	_group_btn.text = "Group: %s" % g.name
+	_update_group_filter()
+	queue_redraw()
+
+func _show_group_props(gid: int) -> void:
+	var g: Dictionary = WorldManager.get_group(gid)
+	if g.is_empty():
+		_group_panel.visible = false
+		return
+	_selected_group_id = gid
+	_group_panel.visible = true
+	_group_name_edit.text = g.name
+	_group_btn.text = "Group: %s" % g.name
+
+func _update_group_filter() -> void:
+	var gf: OptionButton = _ui_layer.get_node_or_null("GroupFilter/GroupFilterOption")
+	if not gf: return
+	var prev: int = WorldManager.active_group_filter
+	gf.clear()
+	gf.add_item("All", 0)
+	for g in WorldManager.block_groups:
+		gf.add_item(g.name, g.id)
+	# Restore selection
+	for i in range(gf.item_count):
+		if gf.get_item_id(i) == prev:
+			gf.selected = i
+			return
+	gf.selected = 0
+	WorldManager.active_group_filter = 0
+
+func _on_group_filter_changed(idx: int) -> void:
+	var gf: OptionButton = _ui_layer.get_node_or_null("GroupFilter/GroupFilterOption")
+	if gf:
+		WorldManager.active_group_filter = gf.get_item_id(idx)
+	queue_redraw()
+
+func _is_block_in_active_group(fb: Dictionary) -> bool:
+	if WorldManager.active_group_filter == 0: return true
+	return fb.get("group", -1) == WorldManager.active_group_filter
 
 func _on_align_pressed() -> void:
 	# Reset align-specific state (preserve _has_selection for origin finding)
@@ -731,12 +927,22 @@ func _process(_delta: float) -> void:
 	if _spin_panel:
 		var vp_size: Vector2 = get_viewport().get_visible_rect().size
 		_spin_panel.visible = (_has_selection or _align_mode) and GameState.is_edit_mode
-		_spin_panel.position = Vector2(vp_size.x - 160, vp_size.y / 2 - 40)
+		var panel_y: float = maxf(8, minf(vp_size.y / 2 - _spin_panel.size.y / 2, vp_size.y - _spin_panel.size.y - 40))
+		_spin_panel.position = Vector2(vp_size.x - _spin_panel.size.x - 8, panel_y)
 	# Reset button always visible in edit mode
 	if _reset_btn:
 		var vp_size2: Vector2 = get_viewport().get_visible_rect().size
 		_reset_btn.visible = GameState.is_edit_mode
 		_reset_btn.position = Vector2(vp_size2.x - 110, 8)
+	# Group filter position (bottom-right)
+	var gf_node: Control = _ui_layer.get_node_or_null("GroupFilter")
+	if gf_node:
+		var vps: Vector2 = get_viewport().get_visible_rect().size
+		gf_node.visible = GameState.is_edit_mode
+		gf_node.position = Vector2(vps.x - 220, vps.y - 35)
+	# Group button visibility
+	if _group_btn:
+		_group_btn.visible = _align_has_sel
 	# Rotate spinning free blocks (rigid body from base positions)
 	if WorldManager.free_blocks.size() > 0:
 		for fb in WorldManager.free_blocks:
@@ -948,15 +1154,18 @@ func _get_tile() -> Vector2i:
 func _place_at(t: Vector2i) -> void:
 	if t.x <= 0 or t.x >= WorldManager.world_width - 1: return
 	if t.y <= 0 or t.y >= WorldManager.world_height - 1: return
+	_save_undo()
 	WorldManager.set_tile(t.x, t.y, GameState.selected_block_id)
 
 func _erase_at(t: Vector2i) -> void:
 	if t.x <= 0 or t.x >= WorldManager.world_width - 1: return
 	if t.y <= 0 or t.y >= WorldManager.world_height - 1: return
+	_save_undo()
 	WorldManager.set_fg_tile(t.x, t.y, 0)
 	WorldManager.set_bg_tile(t.x, t.y, 0)
 
 func _fill_line(from: Vector2i, to: Vector2i, block_id: int) -> void:
+	_save_undo()
 	var points: Array = _get_line_points(from, to)
 	for p in points:
 		if p.x <= 0 or p.x >= WorldManager.world_width - 1: continue
@@ -1342,3 +1551,8 @@ func _deselect() -> void:
 	_align_has_sel = false
 	_align_sel_indices.clear()
 	_free_originals.clear()
+	_selected_group_id = -1
+	if _group_panel:
+		_group_panel.visible = false
+	if _group_btn:
+		_group_btn.text = "Add to Group"

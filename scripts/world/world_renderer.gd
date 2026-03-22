@@ -200,7 +200,16 @@ func _draw_free_block(fb: Dictionary) -> void:
 	var sy: int = (local_off / cols) * TILE_SIZE
 	var center: Vector2 = pos + Vector2(8, 8)
 	draw_set_transform(center, deg_to_rad(rot), Vector2.ONE)
-	draw_texture_rect_region(tex, Rect2(-8, -8, TILE_SIZE, TILE_SIZE), Rect2(sx, sy, TILE_SIZE, TILE_SIZE))
+	# Dim blocks not in active group filter (edit mode only)
+	var filter: int = WorldManager.active_group_filter
+	if filter > 0 and GameState.is_edit_mode:
+		var block_group: int = fb.get("group", -1)
+		if block_group != filter:
+			draw_texture_rect_region(tex, Rect2(-8, -8, TILE_SIZE, TILE_SIZE), Rect2(sx, sy, TILE_SIZE, TILE_SIZE), Color(1, 1, 1, 0.25))
+		else:
+			draw_texture_rect_region(tex, Rect2(-8, -8, TILE_SIZE, TILE_SIZE), Rect2(sx, sy, TILE_SIZE, TILE_SIZE))
+	else:
+		draw_texture_rect_region(tex, Rect2(-8, -8, TILE_SIZE, TILE_SIZE), Rect2(sx, sy, TILE_SIZE, TILE_SIZE))
 	draw_set_transform(Vector2.ZERO, 0, Vector2.ONE)
 
 func _get_visual_id(block_id: int) -> int:
