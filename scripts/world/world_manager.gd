@@ -165,9 +165,27 @@ func add_polyline(points: PackedVector2Array, side: String = "top", block_id: in
 		"render_top": render_top,
 		"render_bot": render_bot,
 		"render_dists": render_dists,
-		"mesh": mesh
+		"mesh": mesh,
+		"spatial_hash": _build_spatial_hash(points, 32)
 	})
 	polylines_changed.emit()
+
+func _build_spatial_hash(pts: PackedVector2Array, cell_size: int) -> Dictionary:
+	## Bucket segment indices into grid cells for O(1) lookup
+	var hash: Dictionary = {}
+	for si in range(pts.size() - 1):
+		var ax: int = int(floor(pts[si].x / cell_size))
+		var ay: int = int(floor(pts[si].y / cell_size))
+		var bx: int = int(floor(pts[si + 1].x / cell_size))
+		var by: int = int(floor(pts[si + 1].y / cell_size))
+		for gx in range(mini(ax, bx), maxi(ax, bx) + 1):
+			for gy in range(mini(ay, by), maxi(ay, by) + 1):
+				var key: int = gx * 10000 + gy
+				if not hash.has(key):
+					hash[key] = []
+				hash[key].append(si)
+	hash["cell_size"] = cell_size
+	return hash
 
 func check_polyline_collision(px: float, py: float, pw: float, ph: float) -> Dictionary:
 	## Check if axis-aligned box (px,py,pw,ph) collides with any polyline.
@@ -184,18 +202,26 @@ func check_polyline_collision(px: float, py: float, pw: float, ph: float) -> Dic
 			continue
 		var pts: PackedVector2Array = poly.points
 		var norms: Array = poly.normals
-		# Find nearest segment to player center
+		# Find nearest segment using spatial hash (O(1) lookup)
 		var closest_dist: float = 999999.0
 		var closest_seg: int = -1
 		var closest_t: float = 0.0
-		for si in range(pts.size() - 1):
-			var sa: Vector2 = pts[si]
-			# Quick reject: skip segments far from player (>32px away on either axis)
-			if absf(sa.x - pcx) > 32.0 and absf(pts[si + 1].x - pcx) > 32.0:
-				continue
-			if absf(sa.y - pcy) > 32.0 and absf(pts[si + 1].y - pcy) > 32.0:
-				continue
-			var sb: Vector2 = pts[si + 1]
+		var shash: Dictionary = poly.get("spatial_hash", {})
+		var cs: int = shash.get("cell_size", 32)
+		var gx: int = int(floor(pcx / cs))
+		var gy: int = int(floor(pcy / cs))
+		var checked: Dictionary = {}
+		for dx in range(-1, 2):
+			for dy in range(-1, 2):
+				var key: int = (gx + dx) * 10000 + (gy + dy)
+				if not shash.has(key):
+					continue
+				for si in shash[key]:
+					if checked.has(si):
+						continue
+					checked[si] = true
+					var sb: Vector2 = pts[si + 1]
+					var sa: Vector2 = pts[si]
 			var ab: Vector2 = sb - sa
 			var ap: Vector2 = Vector2(pcx, pcy) - sa
 			var ab_dot: float = ab.dot(ab)
