@@ -1151,7 +1151,7 @@ func _process(_delta: float) -> void:
 						# End cap blocks: placed just OUTSIDE the curve ends
 						var s_dir: Vector2 = (spline_pts[1] - spline_pts[0]).normalized()
 						# End cap blocks: real blocks placed just past each endpoint
-						var s_pos: Vector2 = spline_pts[0] - s_dir * 12.0 - Vector2(8, 8)
+						var s_pos: Vector2 = spline_pts[0] - s_dir * 4.0 - Vector2(8, 8)
 						var s_rot: float = rad_to_deg(atan2(s_dir.y, s_dir.x))
 						WorldManager.free_blocks.append({"pos": s_pos, "id": GameState.selected_block_id, "rotation": s_rot})
 						var e_dir: Vector2 = (spline_pts[-1] - spline_pts[-2]).normalized()
