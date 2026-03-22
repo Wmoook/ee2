@@ -133,6 +133,11 @@ func check_polyline_collision(px: float, py: float, pw: float, ph: float) -> Dic
 		var closest_t: float = 0.0
 		for si in range(pts.size() - 1):
 			var sa: Vector2 = pts[si]
+			# Quick reject: skip segments far from player (>32px away on either axis)
+			if absf(sa.x - pcx) > 32.0 and absf(pts[si + 1].x - pcx) > 32.0:
+				continue
+			if absf(sa.y - pcy) > 32.0 and absf(pts[si + 1].y - pcy) > 32.0:
+				continue
 			var sb: Vector2 = pts[si + 1]
 			var ab: Vector2 = sb - sa
 			var ap: Vector2 = Vector2(pcx, pcy) - sa

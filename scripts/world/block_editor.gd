@@ -1125,7 +1125,7 @@ func _process(_delta: float) -> void:
 						var cp2: Vector2 = vcp[cseg + 1]
 						var cp3: Vector2 = vcp[cseg + 2]
 						var cseg_len: float = cp1.distance_to(cp2)
-						var csteps: int = int(max(4, ceil(cseg_len / 2.0)))
+						var csteps: int = int(max(6, ceil(cseg_len / 0.5)))
 						for ci in range(csteps):
 							var ct: float = float(ci) / float(csteps)
 							var ctt: float = ct * ct
