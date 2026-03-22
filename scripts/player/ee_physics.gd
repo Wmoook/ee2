@@ -40,7 +40,8 @@ var is_grounded: bool = false
 var on_rotated_block: bool = false
 var in_valley: bool = false
 var valley_jump: bool = false
-var _pos_history: Array = []  # Last 4 x positions for oscillation detection
+var _pos_history: Array = []
+var _valley_center: Vector2 = Vector2(-1, -1)  # Locked position in V
 var _surface_normal: Vector2 = Vector2(0, -1)
 var _prev_push_normal: Vector2 = Vector2.ZERO
 var _valley_ticks: int = 0
@@ -66,6 +67,7 @@ var _current_action_rot: int = 0
 var _delayed_action_rot: int = 0
 var _now_ms: float = 0.0
 var _last_input_h: float = 0.0  # Stored for slope input projection
+var _fb_hit: bool = false
 
 var _collides_fn: Callable = Callable()
 
@@ -125,9 +127,15 @@ func tick(input_h: int, input_v: int, space_just: bool, space_held: bool) -> voi
 		slow_dot = false
 
 	if valley_jump:
-		input_h = 0
-		input_v = 0
-		_speedX = 0
+		if input_h != 0:
+			# Player wants to exit the valley
+			valley_jump = false
+			_valley_center = Vector2(-1, -1)
+			_pos_history.clear()
+			_prev_push_normal = Vector2.ZERO
+		else:
+			input_v = 0
+			_speedX = 0
 	_last_input_h = float(input_h)
 
 	# 1. Gravity
@@ -209,10 +217,6 @@ func tick(input_h: int, input_v: int, space_just: bool, space_held: bool) -> voi
 				_speedX = new_spd.x
 				_speedY = new_spd.y
 
-	# Valley: zero X speed after ALL modifiers (gravity can add X in arrow fields)
-	if valley_jump:
-		_speedX = 0
-
 	# 7. Step position
 	_step_position()
 
@@ -238,6 +242,7 @@ func tick(input_h: int, input_v: int, space_just: bool, space_held: bool) -> voi
 	on_rotated_block = false
 	in_valley = false
 	var on_tile: bool = _check_grounded() and _pre_tick_grav_speed >= 0
+	_fb_hit = false
 	if not is_god_mode and WorldManager.free_blocks.size() > 0:
 		var best_push: Vector2 = Vector2.ZERO
 		var best_depth: float = 0.0
@@ -276,6 +281,7 @@ func tick(input_h: int, input_v: int, space_just: bool, space_held: bool) -> voi
 					best_depth = depth
 					best_push = Vector2(wx, wy)
 					hit = true
+					_fb_hit = true
 		# Detect valley: only when actually overlapping 2+ different-rotation blocks
 		var _pre_total_spd: float = absf(_pre_tick_speedX) + absf(_pre_tick_speedY)
 		if hit and _overlap_rots.size() >= 2:
@@ -332,6 +338,32 @@ func tick(input_h: int, input_v: int, space_just: bool, space_held: bool) -> voi
 				_jump_cooldown = 0  # Clear cooldown on rotated block contact
 				_coyote_ticks = 4
 
+	# Fast V-shape detection: push normal X flips + low speed = settling into valley
+	if on_rotated_block and not valley_jump and _prev_push_normal.length() > 0.1:
+		if _prev_push_normal.x * _surface_normal.x < -0.1 and absf(_surface_normal.x) > 0.3 and absf(_speedX) < 0.5:
+			in_valley = true
+			valley_jump = true
+			is_grounded = true
+			_speedX = 0
+			_speedY = 0
+			_valley_center = Vector2((x + _pos_history[-1]) / 2.0 if _pos_history.size() > 0 else x, y)
+			x = _valley_center.x
+			_pos_history = [_valley_center.x, _valley_center.x, _valley_center.x, _valley_center.x]
+	_prev_push_normal = _surface_normal if on_rotated_block else Vector2.ZERO
+
+	# Valley: snap back to locked center AFTER collision resolves
+	# Only lock when player has fallen back to valley floor (y >= center)
+	if valley_jump and _valley_center.x >= 0 and _jump_cooldown == 0 and y >= _valley_center.y - 2.0:
+		x = _valley_center.x
+		y = _valley_center.y
+		_speedX = 0
+		_speedY = 0
+		in_valley = true
+		is_grounded = true
+		on_rotated_block = true
+		_fb_hit = true  # Force fb_hit so stuck_ticks doesn't clear valley
+		_surface_normal = Vector2(0, -1)
+
 	# Position oscillation detection for V-shapes
 	_pos_history.append(x)
 	if _pos_history.size() > 4:
@@ -347,17 +379,25 @@ func tick(input_h: int, input_v: int, space_just: bool, space_held: bool) -> voi
 			is_grounded = true
 			_speedX = 0
 			_speedY = 0
-			# Snap to exact center and lock there
-			var _center_x: float = (_pos_history[0] + _pos_history[1]) / 2.0
-			x = _center_x
-			_pos_history = [_center_x, _center_x, _center_x, _center_x]
-	elif valley_jump and on_rotated_block:
-		# Stay locked while still on rotated blocks
+			# Lock position at center of oscillation
+			_valley_center = Vector2((_pos_history[0] + _pos_history[1]) / 2.0, y)
+			x = _valley_center.x
+			_pos_history = [_valley_center.x, _valley_center.x, _valley_center.x, _valley_center.x]
+	elif valley_jump:
+		# Stay locked as long as valley_jump is set
 		_speedX = 0
 		is_grounded = true
-	if not on_rotated_block and _jump_cooldown == 0:
-		_pos_history.clear()
-		valley_jump = false
+		in_valley = true
+	# Only clear valley_jump when player has walked away (on ground, no overlap)
+	# Don't count during jumps (player is above valley, will return)
+	if not _fb_hit and y >= _valley_center.y - 2.0 and _jump_cooldown == 0:
+		_stuck_ticks += 1
+		if _stuck_ticks > 10:
+			_pos_history.clear()
+			valley_jump = false
+			_valley_center = Vector2(-1, -1)
+	else:
+		_stuck_ticks = 0
 
 	# Coyote time: count down when not grounded on rotated block
 	if on_rotated_block and is_grounded:
@@ -367,7 +407,6 @@ func tick(input_h: int, input_v: int, space_just: bool, space_held: bool) -> voi
 		# Allow grounded state for a few ticks after leaving rotated block surface
 		if _jump_cooldown == 0:
 			is_grounded = true
-
 
 
 	# 8. Grounded - ONLY when falling or stationary, never during upward jump
@@ -446,13 +485,14 @@ func _handle_jump(space_just: bool, space_held: bool) -> void:
 
 	var did_jump: bool = false
 
-	if in_valley:
+	if in_valley or valley_jump:
 		# Valley: jump straight up like normal gravity
 		if jumpCount < maxJumps:
 			if maxJumps < 1000: jumpCount += 1
 			var jump_mag: float = _gravity * _jump_height * _get_jump_mult() * 0.995 * TICK_SCALE / MULT
 			_speedY = -jump_mag
 			_jump_cooldown = 5
+			# Don't clear center - resume lock on landing
 			did_jump = true
 	elif _active_arrow_dir >= 0:
 		# Arrow field: jump opposite to gravity, PRESERVE tangent speed

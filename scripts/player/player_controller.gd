@@ -84,6 +84,7 @@ func _setup_camera() -> void:
 
 	get_parent().add_child(_camera)
 	_camera.global_position = Vector2(physics.get_pixel_x() + 8, physics.get_pixel_y() + 8)
+	_camera.make_current()
 
 func _set_smiley(id: int) -> void:
 	if _smiley_textures.is_empty():
@@ -109,7 +110,7 @@ func _physics_process(delta: float) -> void:
 		return
 
 	# Pre-tick: valley jump from smiley flip detection
-	physics.valley_jump = false
+	# Don't clear valley_jump - physics manages it via oscillation detection
 
 	# Read input
 	var ix: int = 0
