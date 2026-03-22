@@ -208,7 +208,7 @@ func _physics_process(delta: float) -> void:
 				_smiley_sprite.rotation = 0.0
 			else:
 				var target_angle: float = atan2(n.x, -n.y)
-				_smiley_sprite.rotation = lerp_angle(_smiley_sprite.rotation, target_angle, 0.3)
+				_smiley_sprite.rotation = lerp_angle(_smiley_sprite.rotation, target_angle, 0.15)
 		elif physics.is_grounded:
 			_smiley_sprite.rotation = lerp_angle(_smiley_sprite.rotation, 0.0, 0.2)
 
