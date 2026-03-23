@@ -48,6 +48,11 @@ var _last_align_place: Vector2 = Vector2(-99999, -99999)
 # Ctrl+drag line tool
 var _ctrl_line_start: Vector2 = Vector2.ZERO
 var _ctrl_line_active: bool = false
+# Gravity zone tool
+var _grav_zone_mode: bool = false
+var _grav_zone_dragging: bool = false
+var _grav_zone_center: Vector2 = Vector2.ZERO
+var _grav_zone_btn: Button
 
 var _spin_btn: Button
 var _spin_slider: HSlider
@@ -91,6 +96,7 @@ func _save_undo() -> void:
 	for pl in WorldManager.polylines:
 		poly_copy.append(pl.duplicate(true))
 	state["polylines"] = poly_copy
+	state["gravity_zones"] = WorldManager.gravity_zones.duplicate_zones()
 	state["align_angle"] = _align_angle
 	state["align_origin"] = _align_origin
 	state["sel_indices"] = _align_sel_indices.duplicate()
@@ -123,6 +129,9 @@ func _do_undo() -> void:
 		WorldManager.polylines.clear()
 		for pl in state["polylines"]:
 			WorldManager.polylines.append(pl.duplicate(true))
+	# Restore gravity zones
+	if state.has("gravity_zones"):
+		WorldManager.gravity_zones.restore_zones(state["gravity_zones"])
 	# Restore align state
 	if state.has("align_angle"):
 		_align_angle = state["align_angle"]
@@ -278,6 +287,21 @@ func _ready() -> void:
 			hlp.visible = not hlp.visible
 	)
 	_ui_layer.add_child(_help_btn)
+
+	# Gravity Zone button
+	_grav_zone_btn = Button.new()
+	_grav_zone_btn.name = "GravZoneBtn"
+	_grav_zone_btn.text = "Gravity Zone"
+	_grav_zone_btn.size = Vector2(100, 25)
+	_grav_zone_btn.add_theme_font_size_override("font_size", 10)
+	_grav_zone_btn.pressed.connect(func():
+		_grav_zone_mode = not _grav_zone_mode
+		_curve_mode = false
+		_line_mode = false
+		_deselect()
+		queue_redraw()
+	)
+	_ui_layer.add_child(_grav_zone_btn)
 
 	# Help label (hidden by default)
 	var _help_label: Label = Label.new()
@@ -570,6 +594,30 @@ func _input(event: InputEvent) -> void:
 
 	if _is_mouse_over_ui():
 		return
+
+	# Gravity zone mode: click+drag to create circle
+	if _grav_zone_mode:
+		if event.is_action_pressed("place_block"):
+			_grav_zone_center = get_global_mouse_position()
+			_grav_zone_dragging = true
+			queue_redraw()
+			return
+		if event.is_action_released("place_block") and _grav_zone_dragging:
+			var r: float = _grav_zone_center.distance_to(get_global_mouse_position())
+			if r > 8:
+				_save_undo()
+				WorldManager.gravity_zones.add_zone(_grav_zone_center, r)
+			_grav_zone_dragging = false
+			queue_redraw()
+			return
+		if event.is_action_pressed("remove_block"):
+			_save_undo()
+			WorldManager.gravity_zones.remove_zone_near(get_global_mouse_position())
+			queue_redraw()
+			return
+		if event is InputEventMouseMotion and _grav_zone_dragging:
+			queue_redraw()
+			return
 
 	# Curve mode (before align/selection so it gets clicks)
 	if _curve_mode:
@@ -995,7 +1043,7 @@ func _is_mouse_over_ui() -> bool:
 		if gf_rect.has_point(mouse):
 			return true
 	# Clear/Save buttons
-	for btn_name in ["ClearWorldBtn", "SaveWorldBtn", "HelpBtn"]:
+	for btn_name in ["ClearWorldBtn", "SaveWorldBtn", "HelpBtn", "GravZoneBtn"]:
 		var btn: Button = _ui_layer.get_node_or_null(btn_name) as Button
 		if btn and btn.visible:
 			var br: Rect2 = Rect2(btn.global_position, btn.size)
@@ -1288,6 +1336,15 @@ func _process(_delta: float) -> void:
 		help_btn.position = Vector2(vps5.x - 230, 320)
 	if help_label:
 		help_label.position = Vector2(20, 80)
+	# Gravity Zone button position
+	if _grav_zone_btn:
+		_grav_zone_btn.visible = GameState.is_edit_mode
+		var vps_gz: Vector2 = get_viewport().get_visible_rect().size
+		_grav_zone_btn.position = Vector2(vps_gz.x - 330, 320)
+		if _grav_zone_mode:
+			_grav_zone_btn.modulate = Color(0.8, 0.3, 1.0)  # Purple when active
+		else:
+			_grav_zone_btn.modulate = Color.WHITE
 	# Group filter position (bottom-right)
 	var gf_node: Control = _ui_layer.get_node_or_null("GroupFilter")
 	if gf_node:
@@ -1517,6 +1574,21 @@ func _draw() -> void:
 			handle_angle = (mw - wc).angle()
 		var handle_pos: Vector2 = wc + Vector2(cos(handle_angle), sin(handle_angle)) * ROT_WHEEL_RADIUS
 		draw_circle(handle_pos, 5.0, Color(0.5, 0.8, 1.0, 0.9))
+
+	# Gravity zones
+	for gz in WorldManager.gravity_zones.zones:
+		draw_arc(gz.center, gz.radius, 0, TAU, 64, Color(0.8, 0.2, 1.0, 0.5), 2.0)
+		draw_circle(gz.center, 4.0, Color(0.8, 0.2, 1.0, 0.8))
+	# Gravity zone drag preview
+	if _grav_zone_mode and _grav_zone_dragging:
+		var preview_r: float = _grav_zone_center.distance_to(get_global_mouse_position())
+		draw_arc(_grav_zone_center, preview_r, 0, TAU, 64, Color(0.8, 0.2, 1.0, 0.4), 1.5)
+		draw_circle(_grav_zone_center, 4.0, Color(0.8, 0.2, 1.0, 0.7))
+	# Mode indicator
+	if _grav_zone_mode:
+		var ct2: Transform2D = get_viewport().get_canvas_transform()
+		var screen_pos: Vector2 = ct2.affine_inverse() * Vector2(20, 60)
+		draw_circle(screen_pos, 6.0, Color(0.8, 0.2, 1.0, 0.8))
 
 func _get_selection_center_world() -> Vector2:
 	var cx: float = (_selection.position.x + _selection.size.x / 2.0) * 16.0

@@ -596,6 +596,14 @@ func _compute_gravity() -> void:
 	mox = del_vec.x
 	moy = del_vec.y
 
+	# Gravity zone override: pull toward zone center
+	var gz_result: Dictionary = WorldManager.gravity_zones.get_gravity_at(x + 8.0, y + 8.0)
+	if gz_result.in_zone:
+		morx = gz_result.direction.x
+		mory = gz_result.direction.y
+		mox = gz_result.direction.x
+		moy = gz_result.direction.y
+
 func _handle_jump(space_just: bool, space_held: bool) -> void:
 	var do_jump: bool = false
 	var mod: int = 1

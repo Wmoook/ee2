@@ -35,6 +35,9 @@ var active_group_filter: int = 0  # 0 = All, >0 = specific group ID
 var polylines: Array = []
 signal polylines_changed()
 
+# Gravity zones (circular areas with inward gravity)
+var gravity_zones: GravityZoneManager = GravityZoneManager.new()
+
 func create_group(name: String = "") -> int:
 	var gid: int = _next_group_id
 	_next_group_id += 1
@@ -500,7 +503,8 @@ func serialize_world() -> Dictionary:
 	return {"width": world_width, "height": world_height, "fg": fg_data, "bg": bg_data,
 		"rotations": rot_data, "free_blocks": free_data, "lines": line_data,
 		"spawn_points": spawn_points.map(func(v): return [v.x, v.y]),
-		"groups": groups_data, "polylines": poly_data}
+		"groups": groups_data, "polylines": poly_data,
+		"gravity_zones": gravity_zones.serialize()}
 
 func deserialize_world(data: Dictionary) -> void:
 	world_width = data.get("width", 50)
@@ -553,6 +557,8 @@ func deserialize_world(data: Dictionary) -> void:
 				packed_pts.append(Vector2(float(pt[0]), float(pt[1])))
 		var poly_side: String = str(pd.get("side", "top"))
 		add_polyline(packed_pts, poly_side)
+	# Gravity zones
+	gravity_zones.deserialize(data.get("gravity_zones", []))
 	world_loaded.emit()
 
 func add_line(start: Vector2, end: Vector2, color: Color, width: float = 3.0) -> void:
