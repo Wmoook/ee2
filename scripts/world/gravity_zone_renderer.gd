@@ -52,15 +52,16 @@ func _draw() -> void:
 		var glow_pulse: float = 0.5 + 0.3 * sin(time * 2.0)
 		var edit_mult: float = 1.0 if GameState.is_edit_mode else 0.7
 
-		# Event horizon — ALL PIXELS, no smooth circles
-		# Draw void core as filled pixel grid
+		# Event horizon — pixel circle using centered coordinates
+		var cx: int = int(round(center.x))
+		var cy: int = int(round(center.y))
 		var core_r: int = 6
 		for px in range(-core_r, core_r + 1):
 			for py in range(-core_r, core_r + 1):
-				var dist: float = Vector2(px, py).length()
-				if dist <= float(core_r):
-					var alpha: float = 1.0 if dist < 4.0 else lerpf(1.0, 0.3, (dist - 4.0) / 3.0)
-					draw_rect(Rect2(floor(center.x) + px, floor(center.y) + py, 1, 1), Color(0.0, 0.0, 0.0, alpha * edit_mult))
+				if px * px + py * py <= core_r * core_r:
+					var dist: float = sqrt(float(px * px + py * py))
+					var alpha: float = 1.0 if dist < 4.0 else lerpf(1.0, 0.4, (dist - 4.0) / 3.0)
+					draw_rect(Rect2(cx + px, cy + py, 1, 1), Color(0.0, 0.0, 0.0, alpha * edit_mult))
 
 		# Event horizon glow ring — individual pixels around the edge
 		var eh_r: float = 8.0
@@ -83,11 +84,11 @@ func _draw() -> void:
 			var col: Color = Color(1.0, 0.6 * a_bright, 0.1 * a_bright, 0.9 * a_bright * edit_mult)
 			draw_rect(Rect2(floor(a_pos.x), floor(a_pos.y), 1, 1), col)
 
-		# Redraw void core ON TOP of accretion disk (pixel grid)
+		# Redraw void core ON TOP of accretion disk (pixel circle)
 		for px in range(-5, 6):
 			for py in range(-5, 6):
-				if Vector2(px, py).length() <= 5.0:
-					draw_rect(Rect2(floor(center.x) + px, floor(center.y) + py, 1, 1), Color(0.0, 0.0, 0.0, 1.0))
+				if px * px + py * py <= 25:
+					draw_rect(Rect2(cx + px, cy + py, 1, 1), Color(0.0, 0.0, 0.0, 1.0))
 
 		# Sucking-in spiral streams — 1px rects like fire trail
 		for si in range(16):
