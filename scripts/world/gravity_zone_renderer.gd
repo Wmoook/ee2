@@ -50,43 +50,48 @@ func _draw() -> void:
 
 		# Helper: draw accretion ring pixels for a given angle range
 		# back_half = true means top half (behind hole), false = bottom (in front)
+		# Accretion disk as SOLID FILLED ELLIPTICAL RING — zero gaps
+		var ring_thick: int = maxi(6, void_r / 2)
+		var outer_r: int = void_r + ring_thick + 2
+		var squash: float = 0.4  # Vertical squash for 3D perspective
 		for pass_idx in range(3):  # 0=back ring, 1=void+glow, 2=front ring
 			if pass_idx == 0 or pass_idx == 2:
-				# Accretion disk — layers scale with size
-				var num_layers: int = mini(12, 6 + void_r / 8)
-				for layer in range(num_layers):
-					var layer_t: float = float(layer) / float(maxi(num_layers - 1, 1))
-					var layer_r: float = float(void_r) + 2.0 + layer_t * maxf(8.0, float(void_r) * 0.8)
-					var layer_count: int = mini(150, 40 + int(float(void_r) * 3.0))  # More pixels for bigger holes
-					var speed: float = 2.5 - layer_t * 1.0  # Inner spins faster
-					for ai in range(layer_count):
-						var a_angle: float = TAU * float(ai) / float(layer_count) + time * speed + float(layer) * 0.5
-						var wobble: float = sin(a_angle * 3.0 + time * 2.5 + float(layer)) * (1.0 + layer_t)
-						var a_r: float = layer_r + wobble
-						var a_pos: Vector2 = center + Vector2(cos(a_angle) * a_r, sin(a_angle) * a_r * 0.4)
-						if pass_idx == 0 and a_pos.y > center.y:
+				var front_boost: float = 1.3 if pass_idx == 2 else 1.0
+				for py in range(-outer_r, outer_r + 1):
+					# Back = above center, Front = below center
+					if pass_idx == 0 and py > 0:
+						continue
+					if pass_idx == 2 and py <= 0:
+						continue
+					# Elliptical: actual y in ellipse space
+					var ey: float = float(py) / squash
+					for layer in range(3):
+						var lr: int = void_r + 1 + layer * maxi(2, ring_thick / 3)
+						var lr_outer: int = lr + maxi(2, ring_thick / 3)
+						# Row width at this y for inner and outer circle
+						if ey * ey > float(lr_outer * lr_outer):
 							continue
-						if pass_idx == 2 and a_pos.y <= center.y:
+						var w_outer: int = int(sqrt(maxf(0, float(lr_outer * lr_outer) - ey * ey)))
+						var w_inner: int = 0
+						if ey * ey < float(lr * lr):
+							w_inner = int(sqrt(maxf(0, float(lr * lr) - ey * ey)))
+						if w_outer <= w_inner:
 							continue
-						if pass_idx == 0 and a_pos.distance_to(center) < float(void_r):
-							continue
-						var a_bright: float = 0.5 + 0.5 * maxf(0, sin(a_angle * 1.5 + time * 3.0 + float(layer) * 0.7))
-						var front_boost: float = 1.4 if pass_idx == 2 else 1.0
-						# Color gradient: inner = bright white-yellow, outer = orange
+						# Animated color: varies with angle approximation
+						var angle_approx: float = atan2(float(py), float(w_outer)) + time * (2.0 - float(layer) * 0.3)
+						var a_bright: float = 0.5 + 0.5 * sin(angle_approx * 2.0 + time * 3.0)
+						var layer_t: float = float(layer) / 2.0
 						var r_c: float = 1.0
 						var g_c: float = lerpf(0.95, 0.4, layer_t) * a_bright
 						var b_c: float = lerpf(0.7, 0.1, layer_t) * a_bright * a_bright
-						var a_alpha: float = lerpf(1.0, 0.7, layer_t) * a_bright * bright * front_boost
-						# Cross cluster: center bright, arms dimmer (looks bigger, still pixel art)
-						var fx: float = floor(a_pos.x)
-						var fy: float = floor(a_pos.y)
-						var ac: Color = Color(r_c, g_c, b_c, minf(a_alpha, 1.0))
-						var ad: Color = Color(r_c, g_c, b_c, minf(a_alpha * 0.4, 1.0))
-						draw_rect(Rect2(fx, fy, 1, 1), ac)
-						draw_rect(Rect2(fx - 1, fy, 1, 1), ad)
-						draw_rect(Rect2(fx + 1, fy, 1, 1), ad)
-						draw_rect(Rect2(fx, fy - 1, 1, 1), ad)
-						draw_rect(Rect2(fx, fy + 1, 1, 1), ad)
+						var a_alpha: float = lerpf(0.9, 0.6, layer_t) * a_bright * bright * front_boost
+						var col: Color = Color(r_c, g_c, b_c, minf(a_alpha, 1.0))
+						# Draw left and right arcs
+						if w_inner > 0:
+							draw_rect(Rect2(cx - w_outer, cy + py, w_outer - w_inner, 1), col)
+							draw_rect(Rect2(cx + w_inner + 1, cy + py, w_outer - w_inner, 1), col)
+						else:
+							draw_rect(Rect2(cx - w_outer, cy + py, w_outer * 2 + 1, 1), col)
 
 			elif pass_idx == 1:
 				# Void core — solid black circle (single draw for performance)
