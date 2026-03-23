@@ -53,9 +53,11 @@ func _draw() -> void:
 		for pass_idx in range(3):  # 0=back ring, 1=void+glow, 2=front ring
 			if pass_idx == 0 or pass_idx == 2:
 				# Accretion disk — circumference-matched particle count (no gaps)
+				# Ring thickness is FIXED ~10px regardless of hole size
+				var ring_thick: float = 10.0
 				for layer in range(4):
 					var layer_t: float = float(layer) / 3.0
-					var layer_r: float = float(void_r) + 2.0 + layer_t * maxf(6.0, float(void_r) * 0.6)
+					var layer_r: float = float(void_r) + 1.0 + layer_t * ring_thick
 					# Enough particles to fill the ellipse circumference
 					var layer_count: int = int(layer_r * 4.0)
 					var speed: float = 2.5 - layer_t * 1.0
@@ -87,7 +89,7 @@ func _draw() -> void:
 						draw_rect(Rect2(cx - row_w, cy + py, row_w * 2 + 1, 1), Color(0.0, 0.0, 0.0, 1.0))
 
 				# Event horizon glow ring
-				var eh_count: int = mini(200, maxi(30, void_r * 6))  # Dense event horizon
+				var eh_count: int = int(float(void_r) * TAU)  # Exactly enough for circumference
 				for ei in range(eh_count):
 					var e_angle: float = TAU * float(ei) / float(eh_count)
 					var e_r: float = float(void_r) + 1.0 + sin(e_angle * 4.0 + time * 2.5) * 0.5
