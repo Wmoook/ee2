@@ -253,8 +253,8 @@ func tick(input_h: int, input_v: int, space_just: bool, space_held: bool) -> voi
 				_poly_hit_normal = poly_result.normal
 				_poly_hit_tangent = poly_result.tangent
 			_prev_poly_normal = poly_result.normal
-		# Pass 2: resolve other curves (block passage through intersections)
-		var poly2: Dictionary = WorldManager.check_polyline_collision(x, y, 16.0, 16.0, _prev_poly_normal, -1)
+		# Pass 2: resolve OTHER curves (exclude stick poly to find intersecting ones)
+		var poly2: Dictionary = WorldManager.check_polyline_collision(x, y, 16.0, 16.0, _prev_poly_normal, -1, _stick_poly_idx)
 		if poly2.hit and poly2.push.length() > 0.1:
 			if _poly_any_hit and poly2.normal.dot(_poly_hit_normal) < -0.3:
 				# Opposing curve at intersection — apply push but re-resolve stick curve

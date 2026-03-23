@@ -190,7 +190,7 @@ func _build_spatial_hash(pts: PackedVector2Array, cell_size: int) -> Dictionary:
 	hash["cell_size"] = cell_size
 	return hash
 
-func check_polyline_collision(px: float, py: float, pw: float, ph: float, prefer_normal: Vector2 = Vector2.ZERO, stick_poly: int = -1) -> Dictionary:
+func check_polyline_collision(px: float, py: float, pw: float, ph: float, prefer_normal: Vector2 = Vector2.ZERO, stick_poly: int = -1, exclude_poly: int = -1) -> Dictionary:
 	## Check if axis-aligned box (px,py,pw,ph) collides with any polyline.
 	## Returns {hit, push, normal, tangent, poly_idx} with interpolated normal at closest point.
 	## stick_poly: when >= 0 and sandwiched, only collide with this polyline index.
@@ -202,6 +202,8 @@ func check_polyline_collision(px: float, py: float, pw: float, ph: float, prefer
 	var _dbg_poly_idx: int = -1
 	for poly in polylines:
 		_dbg_poly_idx += 1
+		if _dbg_poly_idx == exclude_poly:
+			continue  # Skip excluded polyline (pass 2 excludes stick poly)
 		# AABB broad phase
 		var bb_min: Vector2 = poly.bbox_min
 		var bb_max: Vector2 = poly.bbox_max
