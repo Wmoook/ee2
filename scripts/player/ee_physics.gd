@@ -270,16 +270,16 @@ func tick(input_h: int, input_v: int, space_just: bool, space_held: bool) -> voi
 		var _poly_hit_against: float = -999.0
 		# Decay stick tracking: release after 5 ticks without contact
 		_stick_poly_ticks += 1
-		if _stick_poly_ticks > 10:
+		if _stick_poly_ticks > 5:
 			_stick_poly_idx = -1
 		# Pass 1: resolve stick polyline (stay on your curve)
 		var poly_result: Dictionary = WorldManager.check_polyline_collision(x, y, 16.0, 16.0, _prev_poly_normal, _stick_poly_idx)
 		if poly_result.hit:
-			_poly_any_hit = true
 			var poly_vel: Vector2 = Vector2(_speedX, _speedY)
 			var vel_toward: float = poly_vel.dot(-poly_result.normal)
 			var _skip_poly: bool = vel_toward < -3.0 and poly_result.push.length() < 1.0
 			if not _skip_poly:
+				_poly_any_hit = true
 				x += poly_result.push.x
 				y += poly_result.push.y
 				_stick_poly_idx = poly_result.poly_idx

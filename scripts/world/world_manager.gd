@@ -219,7 +219,7 @@ func check_polyline_collision(px: float, py: float, pw: float, ph: float, prefer
 		var second_t: float = 0.0
 		var second_dist: float = 999999.0
 		var eff_radius: float = 8.0
-		var block_half: float = 8.5  # Match step_position threshold (8 + 8.5 = 16.5)
+		var block_half: float = 8.0  # Curve collision half-width
 		for si in range(pts.size() - 1):
 			var sa: Vector2 = pts[si]
 			var sb: Vector2 = pts[si + 1]
@@ -270,23 +270,8 @@ func check_polyline_collision(px: float, py: float, pw: float, ph: float, prefer
 		# Distance from player center to surface
 		var to_player: Vector2 = Vector2(pcx, pcy) - on_seg
 		var dist_to_line: float = to_player.length()
-		# Push direction: use to_player normally, but when player has tunneled through
-		# (center crossed the curve line), use the interpolated normal to push back correctly
-		var push_dir: Vector2
-		if dist_to_line < 0.01:
-			push_dir = interp_normal
-		elif dist_to_line < eff_radius:
-			# Deep inside — player center past the curve surface. Use normal direction
-			# matching the side the player SHOULD be on (prefer_normal or interp_normal)
-			var to_norm: Vector2 = to_player.normalized()
-			if prefer_normal.length() > 0.1 and to_norm.dot(prefer_normal) < 0.0:
-				# Player is on wrong side relative to previous surface — flip push
-				push_dir = -to_norm
-			else:
-				push_dir = to_norm
-		else:
-			push_dir = to_player.normalized()
-		var penetration: float = minf((eff_radius + block_half) - dist_to_line, 8.0)
+		var push_dir: Vector2 = to_player.normalized() if dist_to_line > 0.01 else interp_normal
+		var penetration: float = (eff_radius + block_half) - dist_to_line  # No cap — full push for deep penetration
 		if penetration > 0 and dist_to_line < eff_radius + block_half + 2.0:
 			var seg_tangent: Vector2 = (seg_b - seg_a).normalized()
 			_dbg_hits.append({"poly": _dbg_poly_idx, "seg": closest_seg, "pen": penetration, "dist": dist_to_line, "push_dir": push_dir, "on_seg": on_seg, "tangent": seg_tangent})
