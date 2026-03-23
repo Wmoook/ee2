@@ -42,8 +42,7 @@ func _draw() -> void:
 			var r: float = radius * (0.3 + 0.7 * (1.0 - spiral * 0.3))
 			var pos: Vector2 = center + Vector2(cos(angle), sin(angle)) * r
 			var p_alpha: float = 0.5 if GameState.is_edit_mode else 0.15
-			var p_size: float = 1.5 + sin(time * 2.0 + float(i)) * 0.5
-			draw_circle(pos, p_size, Color(0.5, 0.4, 1.0, p_alpha))
+			draw_rect(Rect2(floor(pos.x), floor(pos.y), 1, 1), Color(0.5, 0.4, 1.0, p_alpha))
 
 		# BLACK HOLE CENTER — deadly singularity
 		var glow_pulse: float = 0.5 + 0.3 * sin(time * 2.0)
@@ -60,29 +59,37 @@ func _draw() -> void:
 		draw_arc(center, eh_r, 0, TAU, 48, Color(1.0, 0.4, 0.0, 0.6 * glow_pulse * edit_mult), 1.5)
 		draw_arc(center, eh_r - 1.5, 0, TAU, 48, Color(1.0, 0.7, 0.2, 0.3 * glow_pulse * edit_mult), 0.8)
 
-		# Accretion disk — elliptical ring of matter spiraling in
-		for ai in range(20):
-			var a_angle: float = TAU * float(ai) / 20.0 + time * 2.0
-			var a_r: float = 12.0 + sin(a_angle * 2.0 + time * 3.0) * 2.0
-			# Slight vertical squash for 3D perspective feel
-			var a_pos: Vector2 = center + Vector2(cos(a_angle) * a_r, sin(a_angle) * a_r * 0.6)
+		# Accretion disk — 1px rects, draw BEHIND the void (only visible outside core)
+		for ai in range(30):
+			var a_angle: float = TAU * float(ai) / 30.0 + time * 2.0
+			var a_r: float = 12.0 + sin(a_angle * 2.0 + time * 3.0) * 2.5
+			var a_pos: Vector2 = center + Vector2(cos(a_angle) * a_r, sin(a_angle) * a_r * 0.55)
+			# Skip pixels that would be inside the void
+			if a_pos.distance_to(center) < 7.0:
+				continue
 			var a_bright: float = 0.4 + 0.6 * maxf(0, sin(a_angle + time * 3.0))
-			var a_size: float = 1.0 + a_bright * 0.5
-			draw_circle(a_pos, a_size, Color(1.0, 0.6 * a_bright, 0.1 * a_bright, 0.7 * a_bright * edit_mult))
+			var col: Color = Color(1.0, 0.6 * a_bright, 0.1 * a_bright, 0.9 * a_bright * edit_mult)
+			draw_rect(Rect2(floor(a_pos.x), floor(a_pos.y), 1, 1), col)
 
-		# Sucking-in spiral streams (matter falling in)
-		for si in range(12):
-			var s_angle: float = TAU * float(si) / 12.0 + time * 1.2
-			var s_phase: float = fmod(time * 0.6 + float(si) * 0.083, 1.0)
-			var s_r: float = 25.0 * (1.0 - s_phase * s_phase)  # Accelerates inward
-			var spiral_twist: float = s_phase * 3.0  # Tighter spiral near center
+		# Redraw void core ON TOP of accretion disk (hides ring behind it)
+		draw_circle(center, 8.0, Color(0.0, 0.0, 0.0, 0.95 * edit_mult))
+		draw_circle(center, 5.0, Color(0.0, 0.0, 0.0, 1.0))
+
+		# Sucking-in spiral streams — 1px rects like fire trail
+		for si in range(16):
+			var s_angle: float = TAU * float(si) / 16.0 + time * 1.2
+			var s_phase: float = fmod(time * 0.6 + float(si) * 0.0625, 1.0)
+			var s_r: float = 25.0 * (1.0 - s_phase * s_phase)
+			var spiral_twist: float = s_phase * 3.0
 			var s_pos: Vector2 = center + Vector2(cos(s_angle + spiral_twist), sin(s_angle + spiral_twist)) * s_r
-			var s_alpha: float = s_phase * (1.0 - s_phase) * 2.5 * edit_mult
-			# Color shifts from blue-white (far) to orange-red (near)
+			# Skip inside void
+			if s_pos.distance_to(center) < 7.0:
+				continue
+			var s_alpha: float = s_phase * (1.0 - s_phase) * 3.0 * edit_mult
 			var r_col: float = lerpf(0.5, 1.0, s_phase)
 			var g_col: float = lerpf(0.7, 0.2, s_phase)
 			var b_col: float = lerpf(1.0, 0.0, s_phase)
-			draw_circle(s_pos, 1.2 * (1.0 - s_phase * 0.7), Color(r_col, g_col, b_col, s_alpha))
+			draw_rect(Rect2(floor(s_pos.x), floor(s_pos.y), 1, 1), Color(r_col, g_col, b_col, s_alpha))
 
 		# Inward flow lines (6 lines pointing toward center)
 		var num_lines: int = 6
