@@ -848,12 +848,13 @@ func _input(event: InputEvent) -> void:
 						if positions.is_empty() or positions[-1].distance_to(isnap) > 2.0:
 							positions.append(isnap)
 			for ppos in positions:
-				var exists: bool = false
+				# Allow stacking: same position = background behind foreground
+				var same_block: bool = false
 				for fb in WorldManager.free_blocks:
-					if fb.pos.distance_to(ppos) < 2.0:
-						exists = true
+					if fb.pos.distance_to(ppos) < 2.0 and fb.id == GameState.selected_block_id and fb.rotation == _align_angle:
+						same_block = true  # Exact same block already here
 						break
-				if not exists:
+				if not same_block:
 					WorldManager.free_blocks.append({"pos": ppos, "id": GameState.selected_block_id, "rotation": _align_angle})
 			_last_align_place = snap_pos
 			queue_redraw()
