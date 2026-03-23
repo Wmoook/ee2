@@ -391,7 +391,9 @@ func _physics_process(delta: float) -> void:
 						_fire_particles.resize(500)
 		_at_max_speed = _glow_intensity > 0.7
 		# Landing impact: was NOT grounded + falling fast → now grounded
-		if physics.is_grounded and not _pre_tick_grounded and _pre_tick_fall > 1.0 and not physics.is_god_mode:
+		# Only trigger landing if actually fell a meaningful distance (not 1x1 gap bouncing)
+		var _actual_fall_dist: float = absf(_phys_pos.y - _prev_pos.y)
+		if physics.is_grounded and not _pre_tick_grounded and _pre_tick_fall > 3.0 and _actual_fall_dist > 8.0 and not physics.is_god_mode:
 			# Impact scales with fall speed: tiny jump = tiny burst, terminal velocity = explosion
 			# Normal jump lands at ~3-4 speed, terminal velocity is ~13-16
 			var impact: float = clampf(_pre_tick_fall / 14.0, 0.0, 1.0)
