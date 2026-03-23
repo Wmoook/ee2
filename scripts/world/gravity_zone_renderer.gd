@@ -40,43 +40,56 @@ func _draw() -> void:
 
 		# --- BLACK HOLE CENTER ---
 
-		# 1. Accretion disk FIRST (behind void) — thick, dense, bright
-		# Multiple layers at different radii for thickness
-		for layer in range(3):
-			var layer_r: float = 11.0 + float(layer) * 2.0
-			var layer_count: int = 50 + layer * 10
-			for ai in range(layer_count):
-				var a_angle: float = TAU * float(ai) / float(layer_count) + time * (2.0 - float(layer) * 0.3)
-				var wobble: float = sin(a_angle * 3.0 + time * 3.0 + float(layer)) * 1.5
-				var a_r: float = layer_r + wobble
-				var a_pos: Vector2 = center + Vector2(cos(a_angle) * a_r, sin(a_angle) * a_r * 0.5)
-				if a_pos.distance_to(center) < 8.0:
-					continue
-				var a_bright: float = 0.3 + 0.7 * maxf(0, sin(a_angle + time * 3.0 + float(layer)))
-				var col: Color
-				if layer == 0:
-					col = Color(1.0, 0.8 * a_bright, 0.2 * a_bright, a_bright * bright)
-				elif layer == 1:
-					col = Color(1.0, 0.5 * a_bright, 0.1 * a_bright, a_bright * 0.8 * bright)
-				else:
-					col = Color(0.8, 0.3 * a_bright, 0.05 * a_bright, a_bright * 0.6 * bright)
-				draw_rect(Rect2(floor(a_pos.x), floor(a_pos.y), 1, 1), col)
-
-		# 2. Void core — big solid black pixel circle ON TOP
 		var void_r: int = 8
-		for px in range(-void_r, void_r + 1):
-			for py in range(-void_r, void_r + 1):
-				if px * px + py * py <= void_r * void_r:
-					draw_rect(Rect2(cx + px, cy + py, 1, 1), Color(0.0, 0.0, 0.0, 1.0))
 
-		# 3. Event horizon glow — bright pixel ring right at the void edge
-		var eh_count: int = 60
-		for ei in range(eh_count):
-			var e_angle: float = TAU * float(ei) / float(eh_count)
-			var e_r: float = float(void_r) + 1.0 + sin(e_angle * 4.0 + time * 2.5) * 0.5
-			var e_pos: Vector2 = center + Vector2(cos(e_angle), sin(e_angle)) * e_r
-			var e_pulse: float = 0.5 + 0.5 * sin(e_angle * 2.0 + time * 3.0)
-			draw_rect(Rect2(floor(e_pos.x), floor(e_pos.y), 1, 1), Color(1.0, 0.3 * e_pulse, 0.0, 0.9 * e_pulse * bright))
+		# --- DRAW ORDER: back ring → void → front ring (Saturn's rings illusion) ---
+
+		# Helper: draw accretion ring pixels for a given angle range
+		# back_half = true means top half (behind hole), false = bottom (in front)
+		for pass_idx in range(3):  # 0=back ring, 1=void+glow, 2=front ring
+			if pass_idx == 0 or pass_idx == 2:
+				# Accretion disk — 3 layers
+				for layer in range(3):
+					var layer_r: float = 11.0 + float(layer) * 2.0
+					var layer_count: int = 60 + layer * 10
+					for ai in range(layer_count):
+						var a_angle: float = TAU * float(ai) / float(layer_count) + time * (2.0 - float(layer) * 0.3)
+						var wobble: float = sin(a_angle * 3.0 + time * 3.0 + float(layer)) * 1.5
+						var a_r: float = layer_r + wobble
+						var a_pos: Vector2 = center + Vector2(cos(a_angle) * a_r, sin(a_angle) * a_r * 0.45)
+						# Back pass: only pixels ABOVE center (behind the hole)
+						# Front pass: only pixels BELOW center (in front of the hole)
+						if pass_idx == 0 and a_pos.y > center.y:
+							continue
+						if pass_idx == 2 and a_pos.y <= center.y:
+							continue
+						if a_pos.distance_to(center) < float(void_r) - 1.0:
+							continue
+						var a_bright: float = 0.3 + 0.7 * maxf(0, sin(a_angle + time * 3.0 + float(layer)))
+						var col: Color
+						if layer == 0:
+							col = Color(1.0, 0.8 * a_bright, 0.2 * a_bright, a_bright * bright)
+						elif layer == 1:
+							col = Color(1.0, 0.5 * a_bright, 0.1 * a_bright, a_bright * 0.8 * bright)
+						else:
+							col = Color(0.8, 0.3 * a_bright, 0.05 * a_bright, a_bright * 0.6 * bright)
+						draw_rect(Rect2(floor(a_pos.x), floor(a_pos.y), 1, 1), col)
+
+			elif pass_idx == 1:
+				# Void core — solid black pixel circle
+				for px in range(-void_r, void_r + 1):
+					for py in range(-void_r, void_r + 1):
+						if px * px + py * py <= void_r * void_r:
+							draw_rect(Rect2(cx + px, cy + py, 1, 1), Color(0.0, 0.0, 0.0, 1.0))
+
+				# Event horizon glow ring
+				var eh_count: int = 60
+				for ei in range(eh_count):
+					var e_angle: float = TAU * float(ei) / float(eh_count)
+					var e_r: float = float(void_r) + 1.0 + sin(e_angle * 4.0 + time * 2.5) * 0.5
+					var e_pos: Vector2 = center + Vector2(cos(e_angle), sin(e_angle)) * e_r
+					var e_pulse: float = 0.5 + 0.5 * sin(e_angle * 2.0 + time * 3.0)
+					draw_rect(Rect2(floor(e_pos.x), floor(e_pos.y), 1, 1), Color(1.0, 0.3 * e_pulse, 0.0, 0.9 * e_pulse * bright))
 
 		# 4. Spiral streams being sucked in — dense, many particles
 		for si in range(24):
