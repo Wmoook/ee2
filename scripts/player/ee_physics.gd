@@ -220,6 +220,12 @@ func tick(input_h: int, input_v: int, space_just: bool, space_held: bool) -> voi
 	var _pre_step_x: float = x
 	var _pre_step_y: float = y
 	_step_position()
+	# Snap sub-pixel Y on grid tile landing (fixes 0.7px visual clipping)
+	if _speedY == 0 and _pre_tick_speedY > 0 and fmod(y, 1.0) > 0.01:
+		var snap_y: float = floor(y)
+		# Only snap if the snapped position is valid (not inside a block above)
+		if not _collides_px(x, snap_y) and _collides_px(x, snap_y + 16):
+			y = snap_y
 
 	# 7.15 Polyline collision — also check pre-step position for tunneling
 	if not is_god_mode and WorldManager.polylines.size() > 0:
