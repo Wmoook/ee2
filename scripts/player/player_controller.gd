@@ -170,11 +170,19 @@ func _physics_process(delta: float) -> void:
 	_cbf_consumed_jump = false  # Reset for next frame
 
 	_phys_pos = Vector2(physics.get_pixel_x(), physics.get_pixel_y())
-	# On a freeform line: use exact sub-pixel position for smooth diagonal
-	# On tiles: floor to pixel for crisp rendering
-	# Sub-pixel on lines/slopes for smooth diagonal, floor on flat tiles
-	if physics.on_rotated_block:
-		_visual_pos = _phys_pos  # Sub-pixel = smooth diagonal
+	# Visual position: pixel-snap on grid tiles, sub-pixel on curves/slopes
+	# Grid tile check: prevents polyline collision from causing sub-pixel visual
+	# when the player is actually standing on a solid grid tile
+	var _snap_to_grid: bool = false
+	if physics.is_grounded:
+		var _gcx: int = int(floor((physics.x + 8) / 16.0))
+		var _gcy: int = int(floor((physics.y + 16) / 16.0))
+		if WorldManager.is_solid_at(_gcx, _gcy):
+			_snap_to_grid = true
+	if _snap_to_grid:
+		_visual_pos = Vector2(floor(_phys_pos.x), floor(_phys_pos.y))
+	elif physics.on_rotated_block:
+		_visual_pos = _phys_pos  # Sub-pixel = smooth diagonal on curves/slopes
 	else:
 		var on_line: float = WorldManager.check_line_collision(physics.x, physics.y + 1, 16.0, 16.0)
 		if on_line >= 0:
