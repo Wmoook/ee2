@@ -228,15 +228,21 @@ func tick(input_h: int, input_v: int, space_just: bool, space_held: bool) -> voi
 	# 7.05 Gap-assist: when moving toward a wall, snap into any opening passed through
 	if not is_god_mode and absf(_last_input_h) > 0.01 and _collides_fn.is_valid():
 		var dir: int = 1 if _last_input_h > 0 else -1
-		# Check if wall exists in that direction (within 4px)
-		var wall_blocked: bool = _collides_px(x + dir, y) or _collides_px(x + dir * 2, y) or _collides_px(x + dir * 4, y)
-		if wall_blocked:
-			# Find the wall tile column
-			var wall_tx: int
-			if dir > 0:
-				wall_tx = int(floor((x + 15) / 16.0)) + 1  # Tile to the right of player
-			else:
-				wall_tx = int(floor(x / 16.0)) - 1  # Tile to the left of player
+		# Find the nearest wall tile in the input direction (scan up to 16px out)
+		var wall_tx: int = -1
+		if dir > 0:
+			var start_tx: int = int(floor((x + 16) / 16.0))
+			for wtx in range(start_tx, start_tx + 2):
+				if _collides_fn.call(wtx, int(floor((y + 8) / 16.0))):
+					wall_tx = wtx
+					break
+		else:
+			var start_tx: int = int(floor((x - 1) / 16.0))
+			for wtx in range(start_tx, start_tx - 2, -1):
+				if _collides_fn.call(wtx, int(floor((y + 8) / 16.0))):
+					wall_tx = wtx
+					break
+		if wall_tx >= 0:
 			# Scan tile rows the player passed through
 			var ty_min: int = int(floor(minf(_pre_step_y, y) / 16.0))
 			var ty_max: int = int(floor(maxf(_pre_step_y + 15, y + 15) / 16.0))
