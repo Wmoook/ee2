@@ -48,35 +48,35 @@ func _draw() -> void:
 		# back_half = true means top half (behind hole), false = bottom (in front)
 		for pass_idx in range(3):  # 0=back ring, 1=void+glow, 2=front ring
 			if pass_idx == 0 or pass_idx == 2:
-				# Accretion disk — 3 layers
-				for layer in range(3):
-					var layer_r: float = 11.0 + float(layer) * 2.0
-					var layer_count: int = 60 + layer * 10
+				# Accretion disk — 6 tightly-packed layers that blend together
+				for layer in range(6):
+					var layer_t: float = float(layer) / 5.0  # 0=inner, 1=outer
+					var layer_r: float = 10.0 + layer_t * 8.0
+					var layer_count: int = 70
+					var speed: float = 2.5 - layer_t * 1.0  # Inner spins faster
 					for ai in range(layer_count):
-						var a_angle: float = TAU * float(ai) / float(layer_count) + time * (2.0 - float(layer) * 0.3)
-						var wobble: float = sin(a_angle * 3.0 + time * 3.0 + float(layer)) * 1.5
+						var a_angle: float = TAU * float(ai) / float(layer_count) + time * speed + float(layer) * 0.5
+						var wobble: float = sin(a_angle * 3.0 + time * 2.5 + float(layer)) * (1.0 + layer_t)
 						var a_r: float = layer_r + wobble
-						var a_pos: Vector2 = center + Vector2(cos(a_angle) * a_r, sin(a_angle) * a_r * 0.45)
-						# Back pass: only pixels ABOVE center (behind the hole)
-						# Front pass: only pixels BELOW center (in front of the hole)
+						var a_pos: Vector2 = center + Vector2(cos(a_angle) * a_r, sin(a_angle) * a_r * 0.4)
 						if pass_idx == 0 and a_pos.y > center.y:
 							continue
 						if pass_idx == 2 and a_pos.y <= center.y:
 							continue
-						# Back pass: skip inside void. Front pass: allow overlap (draws ON TOP of void)
 						if pass_idx == 0 and a_pos.distance_to(center) < float(void_r):
 							continue
-						var a_bright: float = 0.3 + 0.7 * maxf(0, sin(a_angle + time * 3.0 + float(layer)))
-						# Front half is brighter (closer to viewer)
+						var a_bright: float = 0.4 + 0.6 * maxf(0, sin(a_angle * 1.5 + time * 3.0 + float(layer) * 0.7))
 						var front_boost: float = 1.3 if pass_idx == 2 else 1.0
-						var col: Color
-						if layer == 0:
-							col = Color(1.0, 0.8 * a_bright, 0.2 * a_bright, minf(a_bright * bright * front_boost, 1.0))
-						elif layer == 1:
-							col = Color(1.0, 0.5 * a_bright, 0.1 * a_bright, minf(a_bright * 0.8 * bright * front_boost, 1.0))
-						else:
-							col = Color(0.8, 0.3 * a_bright, 0.05 * a_bright, minf(a_bright * 0.6 * bright * front_boost, 1.0))
-						draw_rect(Rect2(floor(a_pos.x), floor(a_pos.y), 1, 1), col)
+						# Color gradient: inner = white-yellow hot, outer = deep red
+						var r_c: float = 1.0
+						var g_c: float = lerpf(0.9, 0.15, layer_t) * a_bright
+						var b_c: float = lerpf(0.5, 0.0, layer_t) * a_bright * a_bright
+						var a_alpha: float = lerpf(0.9, 0.5, layer_t) * a_bright * bright * front_boost
+						draw_rect(Rect2(floor(a_pos.x), floor(a_pos.y), 1, 1), Color(r_c, g_c, b_c, minf(a_alpha, 1.0)))
+						# Second pixel offset for blending/thickness
+						if a_bright > 0.5:
+							var off: Vector2 = Vector2(cos(a_angle), sin(a_angle) * 0.4).normalized()
+							draw_rect(Rect2(floor(a_pos.x + off.x), floor(a_pos.y + off.y), 1, 1), Color(r_c, g_c, b_c, minf(a_alpha * 0.5, 1.0)))
 
 			elif pass_idx == 1:
 				# Void core — solid black pixel circle
