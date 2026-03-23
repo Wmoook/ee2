@@ -212,11 +212,17 @@ func _draw() -> void:
 			if GameState.is_edit_mode:
 				draw_polyline(poly_pts, Color(0.2, 0.8, 1.0, 0.4), 1.0, true)
 
-	# Draw free (rotated/off-grid) blocks AFTER curves (end caps render on top)
+	# Draw free blocks: BG layer first (behind), then FG layer on top
 	for fb in WorldManager.free_blocks:
 		if fb.get("curve_visual", false):
 			continue
-		_draw_free_block(fb)
+		if fb.get("bg", false):
+			_draw_free_block(fb, 0.55)  # BG at reduced opacity
+	for fb in WorldManager.free_blocks:
+		if fb.get("curve_visual", false):
+			continue
+		if not fb.get("bg", false):
+			_draw_free_block(fb)
 
 	# Draw freeform lines
 	for line in WorldManager.lines:
@@ -330,7 +336,7 @@ func _draw_block_rotated(x: int, y: int, block_id: int, alpha: float, degrees: i
 	draw_texture_rect_region(tex, dest, src, Color(1, 1, 1, alpha))
 	draw_set_transform(Vector2.ZERO, 0, Vector2.ONE)  # Reset
 
-func _draw_free_block(fb: Dictionary) -> void:
+func _draw_free_block(fb: Dictionary, alpha: float = 1.0) -> void:
 	var pos: Vector2 = fb.pos
 	var bid: int = fb.id
 	var rot: float = fb.rotation
@@ -360,7 +366,7 @@ func _draw_free_block(fb: Dictionary) -> void:
 				uvs.append(Vector2(1, 0)); uvs.append(Vector2(0, 0)); uvs.append(Vector2(0, 1)); uvs.append(Vector2(1, 1))
 			else:
 				uvs.append(Vector2(0, 0)); uvs.append(Vector2(1, 0)); uvs.append(Vector2(1, 1)); uvs.append(Vector2(0, 1))
-			draw_colored_polygon(corners, Color.WHITE, uvs, ctex)
+			draw_colored_polygon(corners, Color(1, 1, 1, alpha), uvs, ctex)
 		return
 	var info: Dictionary = GameState.get_block_info(render_id)
 	if info.is_empty():

@@ -847,15 +847,18 @@ func _input(event: InputEvent) -> void:
 						var isnap: Vector2 = _get_aligned_snap(interp)
 						if positions.is_empty() or positions[-1].distance_to(isnap) > 2.0:
 							positions.append(isnap)
+			var is_bg: bool = Input.is_key_pressed(KEY_TAB)
 			for ppos in positions:
-				# Allow stacking: same position = background behind foreground
 				var same_block: bool = false
 				for fb in WorldManager.free_blocks:
-					if fb.pos.distance_to(ppos) < 2.0 and fb.id == GameState.selected_block_id and fb.rotation == _align_angle:
-						same_block = true  # Exact same block already here
+					if fb.pos.distance_to(ppos) < 2.0 and fb.id == GameState.selected_block_id and fb.get("bg", false) == is_bg:
+						same_block = true
 						break
 				if not same_block:
-					WorldManager.free_blocks.append({"pos": ppos, "id": GameState.selected_block_id, "rotation": _align_angle})
+					var new_fb: Dictionary = {"pos": ppos, "id": GameState.selected_block_id, "rotation": _align_angle}
+					if is_bg:
+						new_fb["bg"] = true
+					WorldManager.free_blocks.append(new_fb)
 			_last_align_place = snap_pos
 			queue_redraw()
 		if event.is_action_pressed("remove_block"):
