@@ -1,19 +1,11 @@
 extends Node2D
-## Renders gravity zone visual effects
-## Void core = cached texture (zero lag), everything else = live animated pixels
+## Renders gravity zone visual effects — all pixel art style
 
 func _ready() -> void:
 	z_index = -1
-	WorldManager.gravity_zones.zones_changed.connect(_rebuild_caches)
-
-func _rebuild_caches() -> void:
-	for gz in WorldManager.gravity_zones.zones:
-		if not gz.has("_void_tex"):
-			_build_void_cache(gz)
-	queue_redraw()
+	WorldManager.gravity_zones.zones_changed.connect(func(): queue_redraw())
 
 func _build_void_cache(gz: Dictionary) -> void:
-	# Only cache the VOID CORE (solid black circle) — it's the expensive part
 	var void_r: int = int(round(gz.get("center_radius", 8.0)))
 	var sz: int = (void_r + 2) * 2
 	var img: Image = Image.create(sz, sz, false, Image.FORMAT_RGBA8)
@@ -21,7 +13,8 @@ func _build_void_cache(gz: Dictionary) -> void:
 	for py in range(-void_r, void_r + 1):
 		var row_w: int = int(sqrt(float(void_r * void_r - py * py)))
 		for px in range(-row_w, row_w + 1):
-			img.set_pixel(ic + px, ic + py, Color(0, 0, 0, 1))
+			if ic + px >= 0 and ic + px < sz and ic + py >= 0 and ic + py < sz:
+				img.set_pixel(ic + px, ic + py, Color(0, 0, 0, 1))
 	gz["_void_tex"] = ImageTexture.create_from_image(img)
 	gz["_void_sz"] = sz
 
@@ -37,89 +30,130 @@ func _draw() -> void:
 	for gz in WorldManager.gravity_zones.zones:
 		var center: Vector2 = gz.center
 		var radius: float = gz.radius
-		var void_r: int = int(round(gz.get("center_radius", 8.0)))
+		var cx: int = int(round(center.x))
+		var cy: int = int(round(center.y))
 		var edit: bool = GameState.is_edit_mode
 		var bright: float = 1.0 if edit else 0.7
+		var px_size: int = 1  # Always 1px — scale by adding MORE particles instead
 
-		# Zone boundary (edit mode only)
-		if edit:
-			var bpts: int = int(radius * TAU)  # Fill circumference
-			for bi in range(bpts):
-				var ba: float = TAU * float(bi) / float(bpts) + time * 0.3
-				var bw: float = sin(ba * 6.0 + time * 2.0) * 1.5
-				var bp: Vector2 = center + Vector2(cos(ba), sin(ba)) * (radius + bw)
-				var bb: float = 0.3 + 0.7 * maxf(0, sin(ba * 3.0 - time * 1.5))
-				draw_rect(Rect2(floor(bp.x), floor(bp.y), 1, 1), Color(0.5, 0.2, 0.9, bb * 0.5))
+		# Zone boundary — animated swirling pixel ring (always visible)
+		var border_pts: int = int(radius * 2.5) + 20
+		for bi in range(border_pts):
+			var b_angle: float = TAU * float(bi) / float(border_pts) + time * 0.3
+			var b_wobble: float = sin(b_angle * 6.0 + time * 2.0) * 1.5
+			var b_pos: Vector2 = center + Vector2(cos(b_angle), sin(b_angle)) * (radius + b_wobble)
+			# Swirling brightness pattern
+			var b_bright: float = 0.3 + 0.7 * maxf(0, sin(b_angle * 3.0 - time * 1.5))
+			var b_alpha: float = b_bright * (0.5 if edit else 0.2)
+			draw_rect(Rect2(floor(b_pos.x), floor(b_pos.y), px_size, px_size), Color(0.5, 0.2, 0.9, b_alpha))
 
-		# Pulsing inward rings
+		# Pulsing inward rings (pixel dots)
 		for i in range(4):
 			var phase: float = fmod(time * 0.4 + float(i) * 0.25, 1.0)
-			var rr: float = radius * (1.0 - phase)
-			var ra: float = phase * (1.0 - phase) * 2.0 * (0.7 if edit else 0.2)
-			var rpts: int = int(rr * TAU)  # Fill circumference
-			for ri in range(rpts):
-				var a: float = TAU * float(ri) / float(rpts)
-				var rp: Vector2 = center + Vector2(cos(a), sin(a)) * rr
-				draw_rect(Rect2(floor(rp.x), floor(rp.y), 1, 1), Color(0.6, 0.3, 1.0, ra))
+			var ring_r: float = radius * (1.0 - phase)
+			var ring_alpha: float = phase * (1.0 - phase) * 2.0 * (0.7 if edit else 0.2)
+			var ring_pts: int = int(ring_r * 2.0) + 12
+			for ri in range(ring_pts):
+				var r_angle: float = TAU * float(ri) / float(ring_pts)
+				var r_pos: Vector2 = center + Vector2(cos(r_angle), sin(r_angle)) * ring_r
+				draw_rect(Rect2(floor(r_pos.x), floor(r_pos.y), px_size, px_size), Color(0.6, 0.3, 1.0, ring_alpha))
 
-		# --- BLACK HOLE ---
+		# --- BLACK HOLE CENTER ---
 
-		# Back half accretion disk (LIVE animated — behind void)
-		_draw_accretion(center, void_r, time, bright, true)
+		var void_r: int = int(round(gz.get("center_radius", 8.0)))
 
-		# Void core — cached texture (ONE draw call)
-		if gz.has("_void_tex"):
-			var half: float = float(gz["_void_sz"]) * 0.5
-			draw_texture(gz["_void_tex"], center - Vector2(half, half))
+		# --- DRAW ORDER: back ring → void → front ring (Saturn's rings illusion) ---
 
-		# Event horizon glow (live — ring around void edge)
-		var eh: int = int(float(void_r) * TAU) + 10  # Fill circumference
-		for ei in range(eh):
-			var ea: float = TAU * float(ei) / float(eh)
-			var er: float = float(void_r) + 1.0 + sin(ea * 4.0 + time * 2.5) * 0.5
-			var ep: Vector2 = center + Vector2(cos(ea), sin(ea)) * er
-			var pulse: float = 0.6 + 0.4 * sin(ea * 2.0 + time * 3.0)
-			draw_rect(Rect2(floor(ep.x), floor(ep.y), 1, 1), Color(1.0, 0.6 * pulse, 0.2 * pulse, pulse * bright))
+		# Helper: draw accretion ring pixels for a given angle range
+		# back_half = true means top half (behind hole), false = bottom (in front)
+		for pass_idx in range(3):  # 0=back ring, 1=void+glow, 2=front ring
+			if pass_idx == 0 or pass_idx == 2:
+				# Accretion disk — circumference-matched particle count (no gaps)
+				# Ring thickness scales with hole but stays proportional (35% of void radius)
+				var ring_thick: float = maxf(8.0, float(void_r) * 0.35)
+				var num_layers: int = maxi(4, int(ring_thick / 2.5))  # More layers for thicker rings
+				for layer in range(num_layers):
+					var layer_t: float = float(layer) / float(maxi(num_layers - 1, 1))
+					var layer_r: float = float(void_r) + 1.0 + layer_t * ring_thick
+					# Enough particles to fill the ellipse circumference
+					var layer_count: int = int(layer_r * 4.0)
+					var speed: float = 2.5 - layer_t * 1.0
+					for ai in range(layer_count):
+						var a_angle: float = TAU * float(ai) / float(layer_count) + time * speed + float(layer) * 0.5
+						var wobble: float = sin(a_angle * 3.0 + time * 2.5 + float(layer)) * (1.0 + layer_t)
+						var a_r: float = layer_r + wobble
+						# Outer layers stretch more horizontally (varied ellipse)
+						var squash: float = lerpf(0.5, 0.25, layer_t)
+						var a_pos: Vector2 = center + Vector2(cos(a_angle) * a_r, sin(a_angle) * a_r * squash)
+						if pass_idx == 0 and a_pos.y > center.y:
+							continue
+						if pass_idx == 2 and a_pos.y <= center.y:
+							continue
+						if pass_idx == 0 and a_pos.distance_to(center) < float(void_r):
+							continue
+						var a_bright: float = 0.5 + 0.5 * maxf(0, sin(a_angle * 1.5 + time * 3.0 + float(layer) * 0.7))
+						var front_boost: float = 1.3 if pass_idx == 2 else 1.0
+						var r_c: float = 1.0
+						var g_c: float = lerpf(0.95, 0.4, layer_t) * a_bright
+						var b_c: float = lerpf(0.7, 0.1, layer_t) * a_bright * a_bright
+						var a_alpha: float = lerpf(1.0, 0.7, layer_t) * a_bright * bright * front_boost
+						draw_rect(Rect2(floor(a_pos.x), floor(a_pos.y), px_size, px_size), Color(r_c, g_c, b_c, minf(a_alpha, 1.0)))
 
-		# Front half accretion disk (LIVE — in front of void)
-		_draw_accretion(center, void_r, time, bright, false)
+			elif pass_idx == 1:
+				# Void core — cached texture (1 draw call)
+				if gz.has("_void_tex"):
+					var half: float = float(gz["_void_sz"]) * 0.5
+					draw_texture(gz["_void_tex"], center - Vector2(half, half))
 
-		# Spiral streams (live animated)
-		var sc: int = 24 + int(float(void_r) * 0.3)  # Scales with size, no cap
-		for si in range(sc):
-			var sa: float = TAU * float(si) / float(sc) + time * 1.0
-			var sp: float = fmod(time * 0.5 + float(si) / float(sc), 1.0)
-			var accel: float = 1.0 - sp * sp * sp
-			var sr: float = maxf(radius * 0.8, float(void_r) + 5.0) * accel * accel
-			var twist: float = sp * 6.0
-			var spos: Vector2 = center + Vector2(cos(sa + twist), sin(sa + twist)) * sr
-			if spos.distance_to(center) < float(void_r) + 1.0:
+				# Event horizon glow ring
+				var eh_count: int = int(float(void_r) * TAU)  # Exactly enough for circumference
+				for ei in range(eh_count):
+					var e_angle: float = TAU * float(ei) / float(eh_count)
+					var e_r: float = float(void_r) + 1.0 + sin(e_angle * 4.0 + time * 2.5) * 0.5
+					var e_pos: Vector2 = center + Vector2(cos(e_angle), sin(e_angle)) * e_r
+					var e_pulse: float = 0.6 + 0.4 * sin(e_angle * 2.0 + time * 3.0)
+					var efx: float = floor(e_pos.x)
+					var efy: float = floor(e_pos.y)
+					var ec: Color = Color(1.0, 0.6 * e_pulse, 0.2 * e_pulse, e_pulse * bright)
+					var ed: Color = Color(1.0, 0.6 * e_pulse, 0.2 * e_pulse, e_pulse * bright * 0.4)
+					draw_rect(Rect2(efx, efy, 1, 1), ec)
+					draw_rect(Rect2(efx - 1, efy, 1, 1), ed)
+					draw_rect(Rect2(efx + 1, efy, 1, 1), ed)
+					draw_rect(Rect2(efx, efy - 1, 1, 1), ed)
+					draw_rect(Rect2(efx, efy + 1, 1, 1), ed)
+
+		# 4. Spiral streams — cool logarithmic spiral flowing INWARD
+		var spiral_count: int = mini(60, 24 + void_r)
+		for si in range(spiral_count):
+			var s_angle: float = TAU * float(si) / float(spiral_count) + time * 1.0
+			var s_phase: float = fmod(time * 0.5 + float(si) / float(spiral_count), 1.0)
+			# Logarithmic spiral: slow at edge, ACCELERATES hard into center
+			var accel: float = 1.0 - s_phase * s_phase * s_phase  # Cubic: slow start, fast finish
+			var s_r: float = maxf(radius * 0.8, float(void_r) + 5.0) * accel * accel
+			var spiral_twist: float = s_phase * 6.0  # Lots of twist
+			var s_pos: Vector2 = center + Vector2(cos(s_angle + spiral_twist), sin(s_angle + spiral_twist)) * s_r
+			if s_pos.distance_to(center) < float(void_r) + 1.0:
 				continue
-			var fade: float = clampf(sr / (float(void_r) + 5.0), 0.0, 1.0)
-			var sal: float = sp * fade * 2.5 * bright
-			draw_rect(Rect2(floor(spos.x), floor(spos.y), 1, 1), Color(lerpf(0.4, 1.0, sp), lerpf(0.6, 0.2, sp), lerpf(1.0, 0.0, sp), sal))
+			# Fade out as approaching center (consumed by the void)
+			var fade_near_center: float = clampf(s_r / (float(void_r) + 5.0), 0.0, 1.0)
+			var s_alpha: float = s_phase * fade_near_center * 2.5 * bright
+			# Color: blue-white at border, orange-red near center
+			var rc: float = lerpf(0.4, 1.0, s_phase)
+			var gc: float = lerpf(0.6, 0.2, s_phase)
+			var bc: float = lerpf(1.0, 0.0, s_phase)
+			draw_rect(Rect2(floor(s_pos.x), floor(s_pos.y), px_size, px_size), Color(rc, gc, bc, s_alpha))
 
-func _draw_accretion(center: Vector2, void_r: int, time: float, bright: float, back: bool) -> void:
-	var ring_thick: float = maxf(8.0, float(void_r) * 0.35)
-	var num_layers: int = maxi(4, int(ring_thick / 2.5))
-	var front_boost: float = 1.0 if back else 1.3
-	for layer in range(num_layers):
-		var lt: float = float(layer) / float(maxi(num_layers - 1, 1))
-		var lr: float = float(void_r) + 1.0 + lt * ring_thick
-		var lc: int = int(lr * 4.0)  # No cap — void cache handles perf
-		var speed: float = 2.5 - lt * 1.0
-		var squash: float = lerpf(0.5, 0.25, lt)
-		for ai in range(lc):
-			var aa: float = TAU * float(ai) / float(lc) + time * speed + float(layer) * 0.5
-			var wobble: float = sin(aa * 3.0 + time * 2.5 + float(layer)) * (1.0 + lt)
-			var ar: float = lr + wobble
-			var ap: Vector2 = center + Vector2(cos(aa) * ar, sin(aa) * ar * squash)
-			if back and ap.y > center.y:
-				continue
-			if not back and ap.y <= center.y:
-				continue
-			if back and ap.distance_to(center) < float(void_r):
-				continue
-			var ab: float = 0.5 + 0.5 * maxf(0, sin(aa * 1.5 + time * 3.0 + float(layer) * 0.7))
-			var alpha: float = lerpf(1.0, 0.7, lt) * ab * bright * front_boost
-			draw_rect(Rect2(floor(ap.x), floor(ap.y), 1, 1), Color(1.0, lerpf(0.95, 0.4, lt) * ab, lerpf(0.7, 0.1, lt) * ab * ab, minf(alpha, 1.0)))
+		# 5. Inward flow lines — start at border, ACCELERATE toward center
+		for i in range(8):
+			var line_angle: float = TAU * float(i) / 8.0 + time * 0.15
+			var flow_phase: float = fmod(time * 0.3 + float(i) * 0.125, 1.0)
+			# Cubic acceleration: slow at border, fast near center
+			var accel_phase: float = flow_phase * flow_phase * flow_phase
+			var head_r: float = lerpf(radius * 0.9, float(void_r) + 3.0, accel_phase)
+			var line_len: int = int(radius * 0.1) + 3
+			var line_alpha: float = (1.0 - flow_phase * 0.5) * 0.4 * bright
+			var dir: Vector2 = Vector2(cos(line_angle), sin(line_angle))
+			for li in range(line_len):
+				var lr: float = head_r + float(li)  # Trail extends OUTWARD from head
+				var l_pos: Vector2 = center + dir * lr
+				draw_rect(Rect2(floor(l_pos.x), floor(l_pos.y), px_size, px_size), Color(0.6, 0.3, 1.0, line_alpha * (1.0 - float(li) / float(line_len))))
