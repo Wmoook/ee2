@@ -421,7 +421,7 @@ func enforce_polyline_hard_constraint(px: float, py: float, prev_px: float, prev
 		pushed = true
 	return {"pushed": pushed, "x": cx - 8.0, "y": cy - 8.0, "push": total_push, "normal": best_normal, "tangent": best_tangent, "poly_count": touching_polys.size()}
 
-func check_curve_wall(cx: float, cy: float, stick_poly: int, stick_arc: float, arc_exclude: float = 40.0) -> Dictionary:
+func check_curve_wall(cx: float, cy: float, stick_poly: int, stick_arc: float, arc_exclude: float = 40.0, only_poly: int = -1) -> Dictionary:
 	## Check if player center (cx,cy) is within 16.5px of any "wall" polyline segment.
 	## Uses arc-length distance to exclude the riding zone on the stick poly.
 	## stick_poly=-1 means no exclusion (everything is a wall).
@@ -429,9 +429,14 @@ func check_curve_wall(cx: float, cy: float, stick_poly: int, stick_arc: float, a
 	var min_dist: float = 16.5
 	var best_pen: float = 0.0
 	var best_push: Vector2 = Vector2.ZERO
+	var _best_wall_arc: float = -1.0
+	var _best_wall_poly: int = -1
+	var _best_wall_pos: Vector2 = Vector2.ZERO
 	var _pidx: int = -1
 	for poly in polylines:
 		_pidx += 1
+		if only_poly >= 0 and _pidx != only_poly:
+			continue  # Only check specific poly
 		var bb_min: Vector2 = poly.bbox_min
 		var bb_max: Vector2 = poly.bbox_max
 		if cx < bb_min.x - 20 or cx > bb_max.x + 20 or cy < bb_min.y - 20 or cy > bb_max.y + 20:
@@ -470,7 +475,10 @@ func check_curve_wall(cx: float, cy: float, stick_poly: int, stick_arc: float, a
 							best_pen = pen
 							var to_p: Vector2 = Vector2(cx, cy) - on_pt
 							best_push = to_p.normalized() * pen if to_p.length() > 0.01 else Vector2(0, -1) * pen
-	return {"blocked": best_pen > 0.01, "push": best_push}
+							_best_wall_arc = rd[si] if si < rd.size() else -1.0
+							_best_wall_poly = _pidx
+							_best_wall_pos = on_pt
+	return {"blocked": best_pen > 0.01, "push": best_push, "wall_arc": _best_wall_arc, "wall_poly": _best_wall_poly, "wall_dist": min_dist - best_pen if best_pen > 0 else 99999.0, "wall_pos": _best_wall_pos}
 
 func dist_to_wall_segments(cx: float, cy: float, stick_poly: int, stick_seg: int) -> float:
 	## Distance to nearest "wall" segment — excludes ±20 segments around stick_seg on stick_poly.

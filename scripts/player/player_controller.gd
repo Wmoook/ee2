@@ -20,6 +20,8 @@ var _death_timer: float = 0.0
 var _smiley_sprite: Sprite2D
 var _name_label: Label
 var _camera: Camera2D
+var _debug_label: Label
+var _show_debug: bool = false
 var _last_normal: Vector2 = Vector2(0, -1)
 var _valley_smiley_ticks: int = 0
 var _slow_ticks: int = 0  # Ticks player has been slow
@@ -105,6 +107,18 @@ func _ready() -> void:
 	_name_label.z_as_relative = false
 	_name_label.z_index = 5
 	add_child(_name_label)
+
+	# Debug overlay (toggle with P key)
+	var _dbg_canvas := CanvasLayer.new()
+	_dbg_canvas.layer = 100
+	add_child(_dbg_canvas)
+	_debug_label = Label.new()
+	_debug_label.position = Vector2(10, 10)
+	_debug_label.size = Vector2(600, 100)
+	_debug_label.add_theme_font_size_override("font_size", 11)
+	_debug_label.add_theme_color_override("font_color", Color.YELLOW)
+	_debug_label.visible = false
+	_dbg_canvas.add_child(_debug_label)
 
 	if is_local:
 		_camera = Camera2D.new()
@@ -544,6 +558,8 @@ func _physics_process(delta: float) -> void:
 		_die()
 
 func _process(delta: float) -> void:
+	if _show_debug and _debug_label and physics:
+		_debug_label.text = physics.debug_text
 	if _is_dead:
 		return
 	var fi: int = _fire_particles.size() - 1
@@ -624,6 +640,9 @@ func _input(event: InputEvent) -> void:
 			_name_label.z_index = 11 if physics.is_god_mode else 5
 		elif event.physical_keycode == KEY_N:
 			_name_label.visible = not _name_label.visible
+		elif event.physical_keycode == KEY_P:
+			_show_debug = not _show_debug
+			_debug_label.visible = _show_debug
 		elif event.physical_keycode == KEY_B:
 			_show_hitboxes = not _show_hitboxes
 			if not physics.is_god_mode:
