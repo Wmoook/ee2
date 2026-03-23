@@ -256,6 +256,7 @@ func _ready() -> void:
 		WorldManager.block_groups.clear()
 		WorldManager.polylines.clear()
 		WorldManager.lines.clear()
+		WorldManager.gravity_zones.clear()
 		for y in range(1, WorldManager.world_height - 1):
 			for x in range(1, WorldManager.world_width - 1):
 				WorldManager.set_fg_tile(x, y, 0)
