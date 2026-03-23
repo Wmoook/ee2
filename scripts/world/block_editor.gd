@@ -359,17 +359,17 @@ func _input(event: InputEvent) -> void:
 						var fb: Dictionary = WorldManager.free_blocks[si]
 						fb["flip_h"] = not fb.get("flip_h", false)
 			elif _has_selection:
-				# Grid blocks: convert to free block with flip
+				# Grid block at _sel_start: convert to free block with flip
 				_save_undo()
-				for t in _selection_tiles:
-					var bid: int = WorldManager.get_tile(t.x, t.y)
-					if bid != 0:
-						var rot_deg: int = WorldManager.get_rotation(t.x, t.y)
-						WorldManager.set_tile(t.x, t.y, 0)  # Remove from grid
-						var fb: Dictionary = {"pos": Vector2(t.x * 16, t.y * 16), "id": bid, "rotation": float(rot_deg), "flip_h": true}
-						WorldManager.free_blocks.append(fb)
-						_align_sel_indices.append(WorldManager.free_blocks.size() - 1)
-				_align_has_sel = true
+				var t: Vector2i = _sel_start
+				var bid: int = WorldManager.get_tile(t.x, t.y)
+				if bid != 0:
+					var rot_deg: int = WorldManager.get_rotation(t.x, t.y)
+					WorldManager.set_tile(t.x, t.y, 0)
+					var fb: Dictionary = {"pos": Vector2(t.x * 16, t.y * 16), "id": bid, "rotation": float(rot_deg), "flip_h": true}
+					WorldManager.free_blocks.append(fb)
+					_align_sel_indices.append(WorldManager.free_blocks.size() - 1)
+					_align_has_sel = true
 			get_viewport().set_input_as_handled()
 			queue_redraw()
 		# Arrow keys = nudge selected blocks
