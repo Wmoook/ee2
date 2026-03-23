@@ -85,7 +85,7 @@ func _draw() -> void:
 		_draw_accretion(center, void_r, time, bright, false)
 
 		# Spiral streams (live animated)
-		var sc: int = mini(30, 20 + int(float(void_r) * 0.2))
+		var sc: int = 24 + int(float(void_r) * 0.3)  # Scales with size, no cap
 		for si in range(sc):
 			var sa: float = TAU * float(si) / float(sc) + time * 1.0
 			var sp: float = fmod(time * 0.5 + float(si) / float(sc), 1.0)
@@ -106,7 +106,7 @@ func _draw_accretion(center: Vector2, void_r: int, time: float, bright: float, b
 	for layer in range(num_layers):
 		var lt: float = float(layer) / float(maxi(num_layers - 1, 1))
 		var lr: float = float(void_r) + 1.0 + lt * ring_thick
-		var lc: int = mini(200, int(lr * 4.0))
+		var lc: int = int(lr * 4.0)  # No cap — void cache handles perf
 		var speed: float = 2.5 - lt * 1.0
 		var squash: float = lerpf(0.5, 0.25, lt)
 		for ai in range(lc):
