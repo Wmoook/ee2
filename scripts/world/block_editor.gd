@@ -1192,9 +1192,19 @@ func _process(_delta: float) -> void:
 						var s_rot: float = rad_to_deg(atan2(s_dir.y, s_dir.x))
 						WorldManager.free_blocks.append({"pos": s_pos, "id": GameState.selected_block_id, "rotation": s_rot})
 						# End cap: spline already truncated to 16px boundary
-						var e_dir: Vector2 = (spline_pts[-1] - spline_pts[-2]).normalized()
+						# Use a point 8px+ back for stable direction
+						var e_ref_idx: int = spline_pts.size() - 2
+						for _ei in range(spline_pts.size() - 2, 0, -1):
+							if spline_pts[-1].distance_to(spline_pts[_ei]) >= 8.0:
+								e_ref_idx = _ei
+								break
+						var e_dir: Vector2 = (spline_pts[-1] - spline_pts[e_ref_idx]).normalized()
 						var e_pos: Vector2 = spline_pts[-1] + e_dir * 8.0 - Vector2(8, 8)
-						push_warning("ENDCAP spline_end=(%.1f,%.1f) dir=(%.2f,%.2f) cap_pos=(%.1f,%.1f) pts=%d" % [spline_pts[-1].x, spline_pts[-1].y, e_dir.x, e_dir.y, e_pos.x, e_pos.y, spline_pts.size()])
+						# Check what render_dists ended up as
+						var _rd: Array = WorldManager.polylines[-1].get("render_dists", [])
+						var _rd_total: float = _rd[-1] if _rd.size() > 0 else -1.0
+						var _rd_max: float = round(_rd_total / 16.0) * 16.0
+						push_warning("ENDCAP spline_end=(%.1f,%.1f) cap_pos=(%.1f,%.1f) render_dist_total=%.1f render_max=%.1f" % [spline_pts[-1].x, spline_pts[-1].y, e_pos.x, e_pos.y, _rd_total, _rd_max])
 						var e_rot: float = rad_to_deg(atan2(e_dir.y, e_dir.x))
 						var tile_count: int = int(_tlen / 16.0)
 						var end_fb: Dictionary = {"pos": e_pos, "id": GameState.selected_block_id, "rotation": e_rot}

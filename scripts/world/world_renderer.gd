@@ -136,7 +136,7 @@ func _draw() -> void:
 					var muvs: PackedVector2Array = PackedVector2Array()
 					# Truncate at last full 16px tile boundary
 					var total_d: float = r_dists[-1] if r_dists.size() > 0 else 0.0
-					var max_d: float = floor(total_d / 16.0) * 16.0
+					var max_d: float = round(total_d / 16.0) * 16.0
 					if max_d < 16.0:
 						max_d = total_d  # Too short, show everything
 					var prev_mt: Vector2 = r_top[0]
