@@ -36,6 +36,8 @@ const GLOW_START_SPEED: float = 2.0
 var _at_max_speed: bool = false
 var _glow_intensity: float = 0.0
 var _was_max_speed: bool = false  # For startup burst detection
+var _boxed_in_timer: float = 0.0  # Time spent motionless in a box
+var _last_box_pos: Vector2 = Vector2.ZERO
 var _glow_sprite: Sprite2D = null
 var _fire_particles: Array = []  # Fire trail particles
 var _prev_fire_pos: Vector2 = Vector2.ZERO  # Previous ball center for interpolation
@@ -334,8 +336,18 @@ func _physics_process(delta: float) -> void:
 				if _fire_layer:
 					_fire_layer.queue_redraw()
 		else:
+			# Detect boxed-in: motionless for 0.2s = suppress trail
+			var cur_pos: Vector2 = Vector2(physics.x, physics.y)
+			if cur_pos.distance_to(_last_box_pos) < 2.0:
+				_boxed_in_timer += delta
+			else:
+				_boxed_in_timer = 0.0
+				_last_box_pos = cur_pos
+			var _is_boxed: bool = _boxed_in_timer > 0.2
 			var spd: float = Vector2(physics._speedX, physics._speedY).length()
 			var target: float = clampf((spd - GLOW_START_SPEED) / (MAX_SPEED_THRESHOLD - GLOW_START_SPEED), 0.0, 1.0)
+			if _is_boxed:
+				target = 0.0  # Suppress trail when boxed in
 			_glow_intensity = lerpf(_glow_intensity, target, 0.15)
 			if _glow_intensity > 0.1:
 				var vel: Vector2 = Vector2(physics._speedX, physics._speedY)
