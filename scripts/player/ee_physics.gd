@@ -224,21 +224,22 @@ func tick(input_h: int, input_v: int, space_just: bool, space_held: bool) -> voi
 	_step_position()
 
 	# 7.05 Gap-assist: when falling past a 1x1 gap while holding toward it, ALWAYS enter
+	# Check ALL tile rows between pre-step and post-step Y (catches high-speed falls)
 	if not is_god_mode and absf(_last_input_h) > 0.01 and _collides_fn.is_valid():
 		var dir: int = 1 if _last_input_h > 0 else -1
-		# Check multiple Y tile positions the player covers (top and bottom of hitbox)
-		for py_check in [int(floor(y / 16.0)), int(floor((y + 15) / 16.0)), int(floor((y + 8) / 16.0))]:
-			var ptx: int = int(floor((x + 8) / 16.0))
-			var side_tx: int = ptx + dir
-			# Gap = side tile empty, solid above AND below
-			if not _collides_fn.call(side_tx, py_check) and _collides_fn.call(side_tx, py_check - 1) and _collides_fn.call(side_tx, py_check + 1):
-				var aligned_y: float = float(py_check) * 16.0
-				var y_diff: float = y - aligned_y
-				# Generous snap range — up to 8px (half a tile)
-				if absf(y_diff) < 8.0:
-					y = aligned_y
-					_speedY = 0  # Stop vertical movement to lock into gap
-					break
+		var ptx: int = int(floor((x + 8) / 16.0))
+		var side_tx: int = ptx + dir
+		# Scan every tile row the player passed through this tick
+		var ty_start: int = int(floor(minf(_pre_step_y, y) / 16.0))
+		var ty_end: int = int(floor(maxf(_pre_step_y, y) / 16.0)) + 1
+		var _found_gap: bool = false
+		for ty in range(ty_start, ty_end + 1):
+			if not _collides_fn.call(side_tx, ty) and _collides_fn.call(side_tx, ty - 1) and _collides_fn.call(side_tx, ty + 1):
+				# Found a gap — snap to it
+				y = float(ty) * 16.0
+				_speedY = 0
+				_found_gap = true
+				break
 
 	# 7.15 Polyline collision — also check pre-step position for tunneling
 	if not is_god_mode and WorldManager.polylines.size() > 0:
