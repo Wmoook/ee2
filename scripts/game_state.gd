@@ -410,7 +410,7 @@ func get_custom_block_texture(id: int) -> Texture2D:
 func is_custom_block(id: int) -> bool:
 	return _custom_block_textures.has(id)
 
-var _custom_block_warps: Dictionary = {}  # block_id -> Vector2 warp
+var _custom_block_warps: Dictionary = {5000: Vector2(0.0, 0.35), 5001: Vector2(0.0, 0.35)}  # Baked warp for 40x40 blocks
 
 func get_custom_block_warp(id: int) -> Vector2:
 	return _custom_block_warps.get(id, Vector2.ZERO)

@@ -368,23 +368,26 @@ func _input(event: InputEvent) -> void:
 			elif event.keycode == KEY_DOWN: nudge.y = step
 			if nudge != Vector2.ZERO:
 				if Input.is_key_pressed(KEY_CTRL):
-					# Ctrl+Arrow = warp block visual size by 0.1px per axis
+					# Ctrl+Arrow = warp block TEXTURE size by 0.1px (hitbox unchanged)
+					var warp_dir: Vector2 = nudge.sign()
 					for si in _align_sel_indices:
 						if si < WorldManager.free_blocks.size():
 							var fb: Dictionary = WorldManager.free_blocks[si]
-							# Warp applies globally to this block type
 							var warp: Vector2 = GameState.get_custom_block_warp(fb.id)
-							warp += Vector2(nudge.x * 0.1, nudge.y * 0.1)
+							warp += warp_dir * 0.05
 							GameState.set_custom_block_warp(fb.id, warp)
-							push_warning("BLOCK_WARP id=%d warp=(%.1f,%.1f)" % [fb.id, warp.x, warp.y])
+							push_warning("BLOCK_WARP id=%d warp=(%.2f,%.2f)" % [fb.id, warp.x, warp.y])
+					# DON'T move grid — only warp texture
+					get_viewport().set_input_as_handled()
+					queue_redraw()
 				else:
 					_save_undo()
 					for si in _align_sel_indices:
 						if si < WorldManager.free_blocks.size():
 							WorldManager.free_blocks[si].pos += nudge
-				_align_wheel_pos += nudge
-				_align_origin += nudge
-				get_viewport().set_input_as_handled()
+					_align_wheel_pos += nudge
+					_align_origin += nudge
+					get_viewport().set_input_as_handled()
 				queue_redraw()
 		# Delete/Backspace = clear selected blocks
 		if (event.keycode == KEY_DELETE or event.keycode == KEY_BACKSPACE) and (_has_selection or _align_has_sel):
@@ -1206,11 +1209,15 @@ func _process(_delta: float) -> void:
 						var _rd_max: float = round(_rd_total / 16.0) * 16.0
 						push_warning("ENDCAP spline_end=(%.1f,%.1f) cap_pos=(%.1f,%.1f) render_dist_total=%.1f render_max=%.1f" % [spline_pts[-1].x, spline_pts[-1].y, e_pos.x, e_pos.y, _rd_total, _rd_max])
 						var e_rot: float = rad_to_deg(atan2(e_dir.y, e_dir.x))
-						# Use renderer's tile count (round, same as mesh truncation)
-						var tile_count: int = int(round(_rd_total / 16.0))
+						# Compute mirror from the mesh's actual truncation distance
+						# Use the SPLINE truncation distance (_tmax) which we computed
+						# _tmax is floor(_tlen/16)*16 — always exact multiple of 16
+						var tile_count_from_trunc: int = int(_tmax / 16.0)
 						var end_fb: Dictionary = {"pos": e_pos, "id": GameState.selected_block_id, "rotation": e_rot}
-						if tile_count % 2 == 0:
+						# End cap is the tile AFTER the last mesh tile
+						if tile_count_from_trunc % 2 == 1:
 							end_fb["flip_h"] = true
+						push_warning("ENDCAP_MIRROR trunc_tiles=%d rd_tiles=%d flip=%s" % [tile_count_from_trunc, int(round(_rd_total / 16.0)), str(end_fb.get("flip_h", false))])
 						WorldManager.free_blocks.append(end_fb)
 				_curve_points.clear()
 				_curve_preview.clear()

@@ -84,7 +84,7 @@ func _draw() -> void:
 		var poly_pts: PackedVector2Array = poly.points
 		var poly_norms: Array = poly.normals
 		if poly_pts.size() >= 2:
-			var half_w: float = 8.0
+			var half_w: float = 8.35  # 8.0 + 0.35 warp to match 40x40 block texture
 			# Look up block texture (custom or atlas)
 			var curve_bid: int = poly.get("block_id", 9)
 			var curve_tex: Texture2D = null
@@ -201,6 +201,7 @@ func _draw() -> void:
 						cmesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
 						poly["_cached_mesh"] = cmesh
 						poly["_cached_tex"] = curve_tex
+						poly["_actual_tile_count"] = int(round(max_d / 16.0))
 			# Render: ONE draw_mesh call (zero per-frame computation)
 			if poly.has("_cached_mesh"):
 				draw_mesh(poly["_cached_mesh"], poly["_cached_tex"], Transform2D.IDENTITY)
@@ -344,10 +345,13 @@ func _draw_free_block(fb: Dictionary) -> void:
 			var cos_r: float = cos(rot_rad)
 			var sin_r: float = sin(rot_rad)
 			var flip: float = -1.0 if fb.get("flip_h", false) else 1.0
-			# 4 corners of 16x16 block, rotated around center
+			# 4 corners of 16x16 block + warp, rotated around center
+			var warp: Vector2 = GameState.get_custom_block_warp(render_id)
+			var hw: float = 8.0 + warp.x  # Half-width with warp
+			var hh: float = 8.0 + warp.y  # Half-height with warp
 			var corners: PackedVector2Array = PackedVector2Array()
 			var uvs: PackedVector2Array = PackedVector2Array()
-			for c in [Vector2(-8, -8), Vector2(8, -8), Vector2(8, 8), Vector2(-8, 8)]:
+			for c in [Vector2(-hw, -hh), Vector2(hw, -hh), Vector2(hw, hh), Vector2(-hw, hh)]:
 				var rx: float = c.x * flip * cos_r - c.y * sin_r
 				var ry: float = c.x * flip * sin_r + c.y * cos_r
 				corners.append(center + Vector2(rx, ry))
