@@ -19,13 +19,16 @@ func _draw() -> void:
 		var edit: bool = GameState.is_edit_mode
 		var bright: float = 1.0 if edit else 0.7
 
-		# Edit mode: outer boundary
-		if edit:
-			var boundary_pts: int = int(radius * 2.0) + 16
-			for bi in range(boundary_pts):
-				var b_angle: float = TAU * float(bi) / float(boundary_pts)
-				var b_pos: Vector2 = center + Vector2(cos(b_angle), sin(b_angle)) * radius
-				draw_rect(Rect2(floor(b_pos.x), floor(b_pos.y), 1, 1), Color(0.7, 0.2, 1.0, 0.4))
+		# Zone boundary — animated swirling pixel ring (always visible)
+		var border_pts: int = int(radius * 2.5) + 20
+		for bi in range(border_pts):
+			var b_angle: float = TAU * float(bi) / float(border_pts) + time * 0.3
+			var b_wobble: float = sin(b_angle * 6.0 + time * 2.0) * 1.5
+			var b_pos: Vector2 = center + Vector2(cos(b_angle), sin(b_angle)) * (radius + b_wobble)
+			# Swirling brightness pattern
+			var b_bright: float = 0.3 + 0.7 * maxf(0, sin(b_angle * 3.0 - time * 1.5))
+			var b_alpha: float = b_bright * (0.5 if edit else 0.2)
+			draw_rect(Rect2(floor(b_pos.x), floor(b_pos.y), 1, 1), Color(0.5, 0.2, 0.9, b_alpha))
 
 		# Pulsing inward rings (pixel dots)
 		for i in range(4):
