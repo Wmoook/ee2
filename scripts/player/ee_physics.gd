@@ -224,7 +224,34 @@ func tick(input_h: int, input_v: int, space_just: bool, space_held: bool) -> voi
 	_step_position()
 
 
-	# 7.05 Gap-assist: REMOVED — was breaking physics. Need a better approach.
+	# 7.05 Gap-assist: when holding toward a wall column, snap into 1-tile gaps
+	if not is_god_mode and absf(_last_input_h) > 0.01 and _collides_fn.is_valid():
+		var _ga_dir: int = 1 if _last_input_h > 0 else -1
+		var _ga_wall_tx: int
+		if _ga_dir > 0:
+			_ga_wall_tx = int(floor((x + 16) / 16.0))
+		else:
+			_ga_wall_tx = int(floor((x - 1) / 16.0))
+		# Check: is there a wall column in this direction? (at least 1 solid tile nearby)
+		var _ga_pty: int = int(floor((y + 8) / 16.0))
+		var _ga_has_wall: bool = false
+		for _ga_cy in range(_ga_pty - 2, _ga_pty + 3):
+			if _collides_fn.call(_ga_wall_tx, _ga_cy):
+				_ga_has_wall = true
+				break
+		if _ga_has_wall:
+			# Scan all tile rows between pre-step and post-step
+			var _ga_ty_min: int = int(floor(minf(_pre_step_y, y) / 16.0))
+			var _ga_ty_max: int = int(floor(maxf(_pre_step_y + 15, y + 15) / 16.0))
+			for _ga_ty in range(_ga_ty_min, _ga_ty_max + 1):
+				# 1-tile gap: empty in wall column, solid above AND below
+				if not _collides_fn.call(_ga_wall_tx, _ga_ty) and _collides_fn.call(_ga_wall_tx, _ga_ty - 1) and _collides_fn.call(_ga_wall_tx, _ga_ty + 1):
+					var _ga_snap_y: float = float(_ga_ty) * 16.0
+					if not _collides_px(x, _ga_snap_y):
+						y = _ga_snap_y
+						_speedY = 0
+						_speedX = float(_ga_dir) * 3.0
+						break
 
 	# 7.15 Polyline collision — also check pre-step position for tunneling
 	if not is_god_mode and WorldManager.polylines.size() > 0:
