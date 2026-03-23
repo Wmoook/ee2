@@ -240,9 +240,10 @@ func tick(input_h: int, input_v: int, space_just: bool, space_held: bool) -> voi
 				_ga_has_wall = true
 				break
 		if _ga_has_wall:
-			# Scan all tile rows between pre-step and post-step
-			var _ga_ty_min: int = int(floor(minf(_pre_step_y, y) / 16.0))
-			var _ga_ty_max: int = int(floor(maxf(_pre_step_y + 15, y + 15) / 16.0))
+			# Wide scan: pre-step to post-step PLUS 3 tiles above/below
+			var _ga_ty_min: int = int(floor(minf(_pre_step_y, y) / 16.0)) - 3
+			var _ga_ty_max: int = int(floor(maxf(_pre_step_y + 15, y + 15) / 16.0)) + 3
+			push_warning("GAP_SCAN dir=%d wall_tx=%d ty_range=%d-%d y=%.1f pre=%.1f" % [_ga_dir, _ga_wall_tx, _ga_ty_min, _ga_ty_max, y, _pre_step_y])
 			for _ga_ty in range(_ga_ty_min, _ga_ty_max + 1):
 				# 1-tile gap: empty in wall column, solid above AND below
 				if not _collides_fn.call(_ga_wall_tx, _ga_ty) and _collides_fn.call(_ga_wall_tx, _ga_ty - 1) and _collides_fn.call(_ga_wall_tx, _ga_ty + 1):
