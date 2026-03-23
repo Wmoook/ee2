@@ -223,6 +223,24 @@ func tick(input_h: int, input_v: int, space_just: bool, space_held: bool) -> voi
 	var _pre_step_y: float = y
 	_step_position()
 
+	# 7.05 Gap-assist: when falling past a 1x1 gap while holding toward it, snap into it
+	if not is_god_mode and _pre_tick_grav_speed > 0 and absf(_last_input_h) > 0.01:
+		var dir: int = 1 if _last_input_h > 0 else -1
+		# Check if there's a gap to the side (open tile with solid above and below)
+		var ptx: int = int(floor((x + 8) / 16.0))
+		var pty: int = int(floor((y + 8) / 16.0))
+		var side_tx: int = ptx + dir
+		# Gap = the side tile is empty, tiles above and below it are solid
+		if not _collides_fn.is_valid():
+			pass
+		elif not _collides_fn.call(side_tx, pty) and _collides_fn.call(side_tx, pty - 1) and _collides_fn.call(side_tx, pty + 1):
+			# There's a 1-block gap to the side — check if player Y is close to alignment
+			var aligned_y: float = float(pty) * 16.0
+			var y_diff: float = y - aligned_y
+			if absf(y_diff) < 4.0:
+				# Nudge Y to align with the gap
+				y = aligned_y
+
 	# 7.15 Polyline collision — also check pre-step position for tunneling
 	if not is_god_mode and WorldManager.polylines.size() > 0:
 		var _poly_any_hit: bool = false
