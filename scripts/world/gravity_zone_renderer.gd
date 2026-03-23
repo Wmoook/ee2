@@ -18,6 +18,7 @@ func _draw() -> void:
 		var cy: int = int(round(center.y))
 		var edit: bool = GameState.is_edit_mode
 		var bright: float = 1.0 if edit else 0.7
+		var px_size: int = maxi(1, int(round(gz.get("center_radius", 8.0))) / 10)
 
 		# Zone boundary — animated swirling pixel ring (always visible)
 		var border_pts: int = int(radius * 2.5) + 20
@@ -28,7 +29,7 @@ func _draw() -> void:
 			# Swirling brightness pattern
 			var b_bright: float = 0.3 + 0.7 * maxf(0, sin(b_angle * 3.0 - time * 1.5))
 			var b_alpha: float = b_bright * (0.5 if edit else 0.2)
-			draw_rect(Rect2(floor(b_pos.x), floor(b_pos.y), 1, 1), Color(0.5, 0.2, 0.9, b_alpha))
+			draw_rect(Rect2(floor(b_pos.x), floor(b_pos.y), px_size, px_size), Color(0.5, 0.2, 0.9, b_alpha))
 
 		# Pulsing inward rings (pixel dots)
 		for i in range(4):
@@ -39,7 +40,7 @@ func _draw() -> void:
 			for ri in range(ring_pts):
 				var r_angle: float = TAU * float(ri) / float(ring_pts)
 				var r_pos: Vector2 = center + Vector2(cos(r_angle), sin(r_angle)) * ring_r
-				draw_rect(Rect2(floor(r_pos.x), floor(r_pos.y), 1, 1), Color(0.6, 0.3, 1.0, ring_alpha))
+				draw_rect(Rect2(floor(r_pos.x), floor(r_pos.y), px_size, px_size), Color(0.6, 0.3, 1.0, ring_alpha))
 
 		# --- BLACK HOLE CENTER ---
 
@@ -75,11 +76,11 @@ func _draw() -> void:
 						var g_c: float = lerpf(0.95, 0.4, layer_t) * a_bright
 						var b_c: float = lerpf(0.7, 0.1, layer_t) * a_bright * a_bright
 						var a_alpha: float = lerpf(1.0, 0.7, layer_t) * a_bright * bright * front_boost
-						draw_rect(Rect2(floor(a_pos.x), floor(a_pos.y), 1, 1), Color(r_c, g_c, b_c, minf(a_alpha, 1.0)))
+						draw_rect(Rect2(floor(a_pos.x), floor(a_pos.y), px_size, px_size), Color(r_c, g_c, b_c, minf(a_alpha, 1.0)))
 						# Second pixel offset for blending/thickness
 						if a_bright > 0.5:
 							var off: Vector2 = Vector2(cos(a_angle), sin(a_angle) * 0.4).normalized()
-							draw_rect(Rect2(floor(a_pos.x + off.x), floor(a_pos.y + off.y), 1, 1), Color(r_c, g_c, b_c, minf(a_alpha * 0.5, 1.0)))
+							draw_rect(Rect2(floor(a_pos.x + off.x), floor(a_pos.y + off.y), px_size, px_size), Color(r_c, g_c, b_c, minf(a_alpha * 0.5, 1.0)))
 
 			elif pass_idx == 1:
 				# Void core — solid black circle (single draw for performance)
@@ -96,7 +97,7 @@ func _draw() -> void:
 					var e_r: float = float(void_r) + 1.0 + sin(e_angle * 4.0 + time * 2.5) * 0.5
 					var e_pos: Vector2 = center + Vector2(cos(e_angle), sin(e_angle)) * e_r
 					var e_pulse: float = 0.6 + 0.4 * sin(e_angle * 2.0 + time * 3.0)
-					draw_rect(Rect2(floor(e_pos.x), floor(e_pos.y), 1, 1), Color(1.0, 0.6 * e_pulse, 0.2 * e_pulse, e_pulse * bright))
+					draw_rect(Rect2(floor(e_pos.x), floor(e_pos.y), px_size, px_size), Color(1.0, 0.6 * e_pulse, 0.2 * e_pulse, e_pulse * bright))
 
 		# 4. Spiral streams — cool logarithmic spiral flowing INWARD
 		for si in range(24):
@@ -116,7 +117,7 @@ func _draw() -> void:
 			var rc: float = lerpf(0.4, 1.0, s_phase)
 			var gc: float = lerpf(0.6, 0.2, s_phase)
 			var bc: float = lerpf(1.0, 0.0, s_phase)
-			draw_rect(Rect2(floor(s_pos.x), floor(s_pos.y), 1, 1), Color(rc, gc, bc, s_alpha))
+			draw_rect(Rect2(floor(s_pos.x), floor(s_pos.y), px_size, px_size), Color(rc, gc, bc, s_alpha))
 
 		# 5. Inward flow lines — start at border, ACCELERATE toward center
 		for i in range(8):
@@ -131,4 +132,4 @@ func _draw() -> void:
 			for li in range(line_len):
 				var lr: float = head_r + float(li)  # Trail extends OUTWARD from head
 				var l_pos: Vector2 = center + dir * lr
-				draw_rect(Rect2(floor(l_pos.x), floor(l_pos.y), 1, 1), Color(0.6, 0.3, 1.0, line_alpha * (1.0 - float(li) / float(line_len))))
+				draw_rect(Rect2(floor(l_pos.x), floor(l_pos.y), px_size, px_size), Color(0.6, 0.3, 1.0, line_alpha * (1.0 - float(li) / float(line_len))))
