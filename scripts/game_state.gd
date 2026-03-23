@@ -22,7 +22,7 @@ const SlopeGenerator = preload("res://scripts/world/slope_generator.gd")
 # All sub-themes merged into these 4 tabs like real EE
 var BLOCK_CATEGORIES: Array = [
 	{"name": "Blocks", "ids": [
-		5000, 5001,
+		5000, 5001, 5002,
 	]},
 	{"name": "Slopes", "ids": [
 		2000, 2001, 2002, 2003,
@@ -164,6 +164,7 @@ func _register_custom_blocks() -> void:
 	var custom_blocks: Array = [
 		{"id": 5000, "path": "res://assets/sprites/NEW_BLOCK_SPRITE/block_1.png", "path16": "res://assets/sprites/NEW_BLOCK_SPRITE/block_1_16.png"},
 		{"id": 5001, "path": "res://assets/sprites/NEW_BLOCK_SPRITE/block_2.png", "path16": "res://assets/sprites/NEW_BLOCK_SPRITE/block_2_16.png"},
+		{"id": 5002, "path": "res://assets/sprites/NEW_BLOCK_SPRITE/block_3.png", "path16": "res://assets/sprites/NEW_BLOCK_SPRITE/block_3_16.png"},
 	]
 	for cb in custom_blocks:
 		var tex: Texture2D = load(cb.path) as Texture2D
@@ -410,7 +411,7 @@ func get_custom_block_texture(id: int) -> Texture2D:
 func is_custom_block(id: int) -> bool:
 	return _custom_block_textures.has(id)
 
-var _custom_block_warps: Dictionary = {5000: Vector2(0.0, 0.35), 5001: Vector2(0.0, 0.35)}  # Baked warp for 40x40 blocks
+var _custom_block_warps: Dictionary = {5000: Vector2(0.0, 0.35), 5001: Vector2(0.0, 0.35), 5002: Vector2(0.0, 0.35)}  # Baked warp for 40x40 blocks
 
 func get_custom_block_warp(id: int) -> Vector2:
 	return _custom_block_warps.get(id, Vector2.ZERO)
