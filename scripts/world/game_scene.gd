@@ -24,6 +24,10 @@ func _ready() -> void:
 	renderer = preload("res://scripts/world/world_renderer.gd").new()
 	add_child(renderer)
 
+	# Gravity zone renderer (behind player, above background)
+	var gz_renderer: Node2D = preload("res://scripts/world/gravity_zone_renderer.gd").new()
+	add_child(gz_renderer)
+
 	# Block editor
 	editor = preload("res://scripts/world/block_editor.gd").new()
 	add_child(editor)
