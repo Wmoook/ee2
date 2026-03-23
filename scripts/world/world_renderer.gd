@@ -78,16 +78,7 @@ func _draw() -> void:
 				else:
 					draw_block(x, y, fg_id, 1.0)
 
-	# Draw free (rotated/off-grid) blocks (skip curve_visual — rendered as polygon strip)
-	for fb in WorldManager.free_blocks:
-		if fb.get("curve_visual", false):
-			continue
-		_draw_free_block(fb)
-
-	# Draw freeform lines (always visible, not just edit mode)
-	for line in WorldManager.lines:
-		draw_line(line.start, line.end, line.color, line.width, true)
-
+	# Draw polyline curves FIRST (so end cap blocks render on top)
 	# Draw polyline curves: textured quads every 16px (no triangulation artifacts)
 	for poly in WorldManager.polylines:
 		var poly_pts: PackedVector2Array = poly.points
@@ -220,6 +211,16 @@ func _draw() -> void:
 			if GameState.is_edit_mode:
 				draw_polyline(poly_pts, Color(0.2, 0.8, 1.0, 0.4), 1.0, true)
 
+	# Draw free (rotated/off-grid) blocks AFTER curves (end caps render on top)
+	for fb in WorldManager.free_blocks:
+		if fb.get("curve_visual", false):
+			continue
+		_draw_free_block(fb)
+
+	# Draw freeform lines
+	for line in WorldManager.lines:
+		draw_line(line.start, line.end, line.color, line.width, true)
+
 func _curve_uv(dist: float, cap_frac: float, uv0: float, uv1: float) -> float:
 	## Tiling UV: repeat the block texture every 16px along the curve
 	var uv_range: float = uv1 - uv0
@@ -340,7 +341,7 @@ func _draw_free_block(fb: Dictionary) -> void:
 			var center: Vector2 = pos + Vector2(8, 8)
 			draw_set_transform(center, deg_to_rad(rot), Vector2.ONE)
 			if fb.get("flip_h", false):
-				draw_texture_rect(ctex, Rect2(8, -8, -16, 16), false)  # Negative width = mirror
+				draw_texture_rect(ctex, Rect2(8, -8, -16, 16), false)
 			else:
 				draw_texture_rect(ctex, Rect2(-8, -8, 16, 16), false)
 			draw_set_transform(Vector2.ZERO, 0, Vector2.ONE)
