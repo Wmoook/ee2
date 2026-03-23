@@ -117,10 +117,10 @@ func _get_speed_mult() -> float:
 	return 1.0
 
 func tick(input_h: int, input_v: int, space_just: bool, space_held: bool) -> void:
-	# Wedge: suppress ALL directional input. Only jump works.
-	if is_wedged:
-		input_h = 0
-		input_v = 0
+	# Wedge: suppress directional input (currently disabled — V-shape detection removed)
+	#if is_wedged:
+	#	input_h = 0
+	#	input_v = 0
 	_now_ms += MS_PER_TICK
 	# Track speed in gravity direction to prevent jump during launch
 	var _pre_tick_speedY: float = _speedY
@@ -653,60 +653,9 @@ func tick(input_h: int, input_v: int, space_just: bool, space_held: bool) -> voi
 	# 9. Jump
 	_handle_jump(space_just, space_held)
 
-	# 10. HARD CONSTRAINT: can't overlap any curve wall (runs ALWAYS)
-	# Uses arc-length exclusion: only segments near the riding point are permeable
-	if not is_god_mode and WorldManager.polylines.size() > 0:
-		if _wedge_protect > 0:
-			_wedge_protect -= 1
-		# Exclusion logic:
-		# - On a curve (stick>=0): arc-length exclusion (40px around riding point)
-		# - Airborne (stick<0): exclude entire last-ridden poly
-		#   Only DIFFERENT polylines can block when airborne
-		# When on a curve: check all polys, exclude riding zone on stick poly
-		# When airborne: ONLY check last-ridden poly (for V self-intersection)
-		#   Don't block other polys — let normal collision handle landing on them
-		var _s_poly: int
-		var _s_arc: float = _stick_arc_pos if _stick_arc_pos >= 0 else _wedge_arc
-		var _arc_excl: float = 120.0
-		var _only_poly: int = -1  # -1 = check all, >=0 = only check this poly
-		if _stick_poly_idx >= 0:
-			_s_poly = _stick_poly_idx
-		else:
-			_s_poly = _last_stick_poly
-			_only_poly = _last_stick_poly
-		# Skip wall check entirely if never been on a curve
-		if _s_poly < 0:
-			if is_wedged:
-				is_wedged = false
-		else:
-			pass
-		var _wall: Dictionary = {"blocked": false, "push": Vector2.ZERO}
-		if _s_poly >= 0:
-			_wall = WorldManager.check_curve_wall(x + 8, y + 8, _s_poly, _s_arc, _arc_excl, _only_poly)
-		var _wa: float = _wall.get("wall_arc", -1.0)
-		var _wp2: int = _wall.get("wall_poly", -1)
-		var _wd2: float = _wall.get("wall_dist", 999.0)
-		debug_text = "stick=%d last=%d myArc=%.0f excl=%.0f only=%d\nwall=%s wedge=%s clr=%d wallArc=%.0f wallPoly=%d wallDist=%.1f\npos=(%.0f,%.0f) spd=(%.1f,%.1f)\ninput=(%d,%d) space=%s arcDiff=%.0f" % [_stick_poly_idx, _last_stick_poly, _s_arc, _arc_excl, _only_poly, _wall.blocked, is_wedged, _wedge_clear_ticks, _wa, _wp2, _wd2, x, y, _speedX, _speedY, input_h, input_v, space_just, absf(_wa - _s_arc) if _wa >= 0 else -1]
-		var _wpos: Vector2 = _wall.get("wall_pos", Vector2.ZERO)
-		push_warning("W: bl=%s wdg=%s stk=%d arc=%.0f wArc=%.0f diff=%.0f pos=(%.0f,%.0f) wPos=(%.0f,%.0f) wDist=%.1f" % [_wall.blocked, is_wedged, _stick_poly_idx, _s_arc, _wall.get("wall_arc",-1), absf(_wall.get("wall_arc",-1) - _s_arc) if _wall.get("wall_arc",-1)>=0 else -1, x, y, _wpos.x, _wpos.y, _wall.get("wall_dist", 999)])
-		if _wall.blocked:
-			x = _wedge_safe_pos.x
-			y = _wedge_safe_pos.y
-			_speedX = 0
-			_speedY = 0
-			is_wedged = true
-			is_grounded = true
-			_surface_normal = Vector2(0, -1)
-			_wedge_pos = Vector2(x, y)
-			_wedge_protect = 100
-			_wedge_clear_ticks = 0
-			if _s_arc >= 0:
-				_wedge_arc = _s_arc
-		elif is_wedged:
-			_wedge_clear_ticks += 1
-			if _wedge_clear_ticks >= 3:
-				is_wedged = false
-				_wedge_clear_ticks = 0
+	# 10. Debug info (P key overlay)
+	debug_text = "stick=%d pos=(%.0f,%.0f) spd=(%.1f,%.1f) grnd=%s" % [_stick_poly_idx, x, y, _speedX, _speedY, is_grounded]
+	is_wedged = false
 
 func _arrow_dir_to_vec(dir: int) -> Vector2:
 	match dir:
