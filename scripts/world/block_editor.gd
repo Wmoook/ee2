@@ -640,6 +640,15 @@ func _input(event: InputEvent) -> void:
 	# Aligned mode: shift = rotated select, normal = place
 	if _align_mode and Input.is_key_pressed(KEY_SHIFT):
 		if event.is_action_pressed("place_block"):
+			# Shift+click near gravity zone center = delete it
+			var _gz_mouse: Vector2 = get_global_mouse_position()
+			for _gzi in range(WorldManager.gravity_zones.zones.size()):
+				if _gz_mouse.distance_to(WorldManager.gravity_zones.zones[_gzi].center) < 16.0:
+					_save_undo()
+					WorldManager.gravity_zones.zones.remove_at(_gzi)
+					WorldManager.gravity_zones.zones_changed.emit()
+					queue_redraw()
+					return
 			# Check for block under cursor — show selection immediately
 			var _pmg: Vector2 = get_global_mouse_position()
 			var _pfb_idx: int = -1
