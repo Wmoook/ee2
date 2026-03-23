@@ -18,7 +18,7 @@ func _draw() -> void:
 		var cy: int = int(round(center.y))
 		var edit: bool = GameState.is_edit_mode
 		var bright: float = 1.0 if edit else 0.7
-		var px_size: int = maxi(1, int(round(gz.get("center_radius", 8.0))) / 10)
+		var px_size: int = 1  # Always 1px — scale by adding MORE particles instead
 
 		# Zone boundary — animated swirling pixel ring (always visible)
 		var border_pts: int = int(radius * 2.5) + 20
@@ -56,7 +56,7 @@ func _draw() -> void:
 				for layer in range(6):
 					var layer_t: float = float(layer) / 5.0  # 0=inner, 1=outer
 					var layer_r: float = float(void_r) + 2.0 + layer_t * maxf(8.0, float(void_r) * 0.8)
-					var layer_count: int = mini(70, 40 + int(float(void_r) * 2.0))  # Scale but cap
+					var layer_count: int = mini(150, 40 + int(float(void_r) * 3.0))  # More pixels for bigger holes
 					var speed: float = 2.5 - layer_t * 1.0  # Inner spins faster
 					for ai in range(layer_count):
 						var a_angle: float = TAU * float(ai) / float(layer_count) + time * speed + float(layer) * 0.5
@@ -91,7 +91,7 @@ func _draw() -> void:
 						draw_rect(Rect2(cx - row_w, cy + py, row_w * 2 + 1, 1), Color(0.0, 0.0, 0.0, 1.0))
 
 				# Event horizon glow ring
-				var eh_count: int = mini(80, maxi(30, void_r * 4))
+				var eh_count: int = mini(200, maxi(30, void_r * 6))  # Dense event horizon
 				for ei in range(eh_count):
 					var e_angle: float = TAU * float(ei) / float(eh_count)
 					var e_r: float = float(void_r) + 1.0 + sin(e_angle * 4.0 + time * 2.5) * 0.5
@@ -100,9 +100,10 @@ func _draw() -> void:
 					draw_rect(Rect2(floor(e_pos.x), floor(e_pos.y), px_size, px_size), Color(1.0, 0.6 * e_pulse, 0.2 * e_pulse, e_pulse * bright))
 
 		# 4. Spiral streams — cool logarithmic spiral flowing INWARD
-		for si in range(24):
-			var s_angle: float = TAU * float(si) / 24.0 + time * 1.0
-			var s_phase: float = fmod(time * 0.5 + float(si) * 0.042, 1.0)
+		var spiral_count: int = mini(60, 24 + void_r)
+		for si in range(spiral_count):
+			var s_angle: float = TAU * float(si) / float(spiral_count) + time * 1.0
+			var s_phase: float = fmod(time * 0.5 + float(si) / float(spiral_count), 1.0)
 			# Logarithmic spiral: slow at edge, ACCELERATES hard into center
 			var accel: float = 1.0 - s_phase * s_phase * s_phase  # Cubic: slow start, fast finish
 			var s_r: float = maxf(radius * 0.8, float(void_r) + 5.0) * accel * accel
