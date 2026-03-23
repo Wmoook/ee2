@@ -154,6 +154,8 @@ func _draw() -> void:
 			var line_alpha: float = (1.0 - flow_phase * 0.5) * 0.4 * bright
 			var dir: Vector2 = Vector2(cos(line_angle), sin(line_angle))
 			for li in range(line_len):
-				var lr: float = head_r + float(li)  # Trail extends OUTWARD from head
+				var lr: float = head_r + float(li)
+				if lr > radius:
+					continue  # Don't draw outside gravity radius
 				var l_pos: Vector2 = center + dir * lr
 				draw_rect(Rect2(floor(l_pos.x), floor(l_pos.y), px_size, px_size), Color(0.6, 0.3, 1.0, line_alpha * (1.0 - float(li) / float(line_len))))
