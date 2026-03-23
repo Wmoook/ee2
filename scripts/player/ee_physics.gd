@@ -225,7 +225,7 @@ func tick(input_h: int, input_v: int, space_just: bool, space_held: bool) -> voi
 
 
 	# 7.05 Gap-assist: when holding into wall + falling, snap into 1-tile gaps
-	if not is_god_mode and absf(_last_input_h) > 0.01 and absf(_speedX) < 0.1 and absf(_speedY) > 1.0 and _collides_fn.is_valid():
+	if not is_god_mode and absf(_last_input_h) > 0.01 and absf(_speedX) < 0.5 and _collides_fn.is_valid():
 		var gap_dir: int = 1 if _last_input_h > 0 else -1
 		var gap_wall_tx: int
 		if gap_dir > 0:
@@ -235,13 +235,14 @@ func tick(input_h: int, input_v: int, space_just: bool, space_held: bool) -> voi
 		var gap_ty_min: int = int(floor(minf(_pre_step_y, y) / 16.0))
 		var gap_ty_max: int = int(floor(maxf(_pre_step_y + 15, y + 15) / 16.0))
 		for gap_ty in range(gap_ty_min, gap_ty_max + 1):
-			if not _collides_fn.call(gap_wall_tx, gap_ty) and _collides_fn.call(gap_wall_tx, gap_ty - 1) and _collides_fn.call(gap_wall_tx, gap_ty + 1):
+			# Gap: this tile empty in wall column, AND player would fit there
+			if not _collides_fn.call(gap_wall_tx, gap_ty):
 				var gap_snap_y: float = float(gap_ty) * 16.0
+				# Full collision check: would player fit at current X and snapped Y?
 				if not _collides_px(x, gap_snap_y):
 					y = gap_snap_y
 					_speedY = 0
-					# Push player INTO the gap so they don't fall back out
-					_speedX = float(gap_dir) * 2.0
+					_speedX = float(gap_dir) * 3.0  # Push INTO gap
 					break
 
 	# 7.15 Polyline collision — also check pre-step position for tunneling
