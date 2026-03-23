@@ -107,8 +107,8 @@ func add_polyline(points: PackedVector2Array, side: String = "top", block_id: in
 	var render_bot: PackedVector2Array = PackedVector2Array()
 	var render_dists: Array = [0.0]
 	for ri in range(points.size()):
-		render_top.append(points[ri] + vert_normals[ri] * 8.0)
-		render_bot.append(points[ri] - vert_normals[ri] * 8.0)
+		render_top.append(points[ri] + vert_normals[ri] * 8.35)
+		render_bot.append(points[ri] - vert_normals[ri] * 8.35)
 		if ri > 0:
 			render_dists.append(render_dists[ri - 1] + points[ri].distance_to(points[ri - 1]))
 	# Pre-build mesh for instant rendering (zero per-frame cost)
