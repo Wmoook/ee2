@@ -68,22 +68,24 @@ func _draw() -> void:
 		# back_half = true means top half (behind hole), false = bottom (in front)
 		for pass_idx in range(3):  # 0=back ring, 1=void+glow, 2=front ring
 			if pass_idx == 0 or pass_idx == 2:
-				# Accretion disk — circumference-matched particle count (no gaps)
-				# Ring thickness scales with hole but stays proportional (35% of void radius)
+				# Accretion disk — budget-capped for performance
 				var ring_thick: float = maxf(8.0, float(void_r) * 0.35)
-				var num_layers: int = maxi(4, int(ring_thick / 2.5))  # More layers for thicker rings
+				var num_layers: int = maxi(4, int(ring_thick / 2.5))
+				var total_budget: int = 1500  # Max particles per half
+				var per_layer: int = total_budget / maxi(num_layers, 1)
 				for layer in range(num_layers):
 					var layer_t: float = float(layer) / float(maxi(num_layers - 1, 1))
 					var layer_r: float = float(void_r) + 1.0 + layer_t * ring_thick
-					# Enough particles to fill the ellipse circumference
-					var layer_count: int = int(layer_r * 4.0)
+					var layer_count: int = mini(per_layer, int(layer_r * 4.0))
 					var speed: float = 2.5 - layer_t * 1.0
 					for ai in range(layer_count):
 						var a_angle: float = TAU * float(ai) / float(layer_count) + time * speed + float(layer) * 0.5
 						var wobble: float = sin(a_angle * 3.0 + time * 2.5 + float(layer)) * (1.0 + layer_t)
 						var a_r: float = layer_r + wobble
-						# Outer layers stretch more horizontally (varied ellipse)
-						var squash: float = lerpf(0.5, 0.25, layer_t)
+						# Most layers normal squash, ~30% get extra horizontal stretch
+						var squash: float = 0.45
+						if layer % 3 == 0:
+							squash = lerpf(0.35, 0.2, layer_t)
 						var a_pos: Vector2 = center + Vector2(cos(a_angle) * a_r, sin(a_angle) * a_r * squash)
 						if pass_idx == 0 and a_pos.y > center.y:
 							continue
