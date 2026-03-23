@@ -10,6 +10,8 @@ class_name PlayerController
 const SMILEY_SIZE: int = 26
 const SMILEY_OFFSET: int = 5
 const SMILEYS_PER_CHUNK: int = 157
+const ANIM_SPRITE_SIZE: int = 40
+const ANIM_SCALE: float = 16.0 / 40.0  # 0.4 to fit 40px into one 16x16 block
 
 var physics: EEPhysics = EEPhysics.new()
 var _tick_accumulator: float = 0.0
@@ -23,6 +25,23 @@ var _valley_smiley_ticks: int = 0
 var _slow_ticks: int = 0  # Ticks player has been slow
 var _smiley_textures: Array = []
 var _space_just: bool = false
+# Animated smiley: 3 frames (idle, transition, moving)
+var _anim_textures: Array = []  # [idle, transition, moving]
+var _anim_frame: int = 0  # 0=idle, 1=transition, 2=moving
+var _anim_timer: float = 0.0
+var _anim_facing: int = 0  # -1=left, 0=none, 1=right
+var _use_anim_sprite: bool = false
+const MAX_SPEED_THRESHOLD: float = 5.0
+const GLOW_START_SPEED: float = 2.0
+var _at_max_speed: bool = false
+var _glow_intensity: float = 0.0
+var _was_max_speed: bool = false  # For startup burst detection
+var _glow_sprite: Sprite2D = null
+var _fire_particles: Array = []  # Fire trail particles
+var _prev_fire_pos: Vector2 = Vector2.ZERO  # Previous ball center for interpolation
+var _fire_layer: Node2D = null  # Separate draw layer for fire (above blocks)
+var _prev_fall_speed: float = 0.0  # Track fall speed for landing impact
+var _was_grounded: bool = false
 var _space_held: bool = false
 var _cbf_consumed_jump: bool = false  # Prevents re-latch after CBF
 var _show_hitboxes: bool = false
@@ -39,6 +58,12 @@ func _ready() -> void:
 		var tex: Texture2D = load("res://assets/sprites/smileys_%d.png" % i) as Texture2D
 		if tex:
 			_smiley_textures.append(tex)
+	# Load animated sprite frames
+	for fname in ["smiley_sprite1", "smiley_sprite2", "smiley_sprite3"]:
+		var tex: Texture2D = load("res://assets/sprites/%s.png" % fname) as Texture2D
+		if tex:
+			_anim_textures.append(tex)
+	_use_anim_sprite = _anim_textures.size() == 3
 
 	_smiley_sprite = Sprite2D.new()
 	_smiley_sprite.centered = true
@@ -46,9 +71,21 @@ func _ready() -> void:
 	_smiley_sprite.position = Vector2(8, 8)  # Center of 16x16 hitbox (original)
 	# Z between bg (-2) and fg overlay (2) so blocks cover smiley border
 	_smiley_sprite.z_as_relative = false
-	_smiley_sprite.z_index = 0
+	_smiley_sprite.z_index = 4  # Above fire trail (z=3) and foreground blocks (z=2)
+	if _use_anim_sprite:
+		_smiley_sprite.texture = _anim_textures[0]
+		# Scale 40x40 full-res down to 26x26 display (GPU nearest-neighbor = sharp)
+		_smiley_sprite.scale = Vector2(ANIM_SCALE, ANIM_SCALE)
 	add_child(_smiley_sprite)
-	_set_smiley(smiley_id)
+	if not _use_anim_sprite:
+		_set_smiley(smiley_id)
+	# Fire draw layer (above foreground blocks at z=2)
+	if _use_anim_sprite:
+		_fire_layer = Node2D.new()
+		_fire_layer.z_as_relative = false
+		_fire_layer.z_index = 3  # Above fg blocks (z=2)
+		_fire_layer.set_script(preload("res://scripts/player/fire_drawer.gd"))
+		add_child(_fire_layer)
 
 	_name_label = Label.new()
 	_name_label.text = player_name
@@ -131,6 +168,14 @@ func _physics_process(delta: float) -> void:
 	# Save pre-tick position for interpolation
 	_prev_pos = Vector2(physics.get_pixel_x(), physics.get_pixel_y())
 
+	# Track fall speed BEFORE physics zeroes it on landing
+	var _pre_tick_grounded: bool = physics.is_grounded
+	var grav_pre: Vector2 = Vector2(physics.mox, physics.moy)
+	if grav_pre.length() < 0.01:
+		grav_pre = Vector2(0, 1)
+	grav_pre = grav_pre.normalized()
+	var _pre_tick_fall: float = Vector2(physics._speedX, physics._speedY).dot(grav_pre)
+
 	# Run physics ticks (EE: detect action tile at START of each tick)
 	_tick_accumulator += delta * 1000.0
 	var used_just: bool = false
@@ -191,9 +236,190 @@ func _physics_process(delta: float) -> void:
 			_visual_pos = Vector2(floor(_phys_pos.x), floor(_phys_pos.y))
 	position = _visual_pos
 
-	# Smiley rotation: match slope surface whenever touching rotated blocks
-	# God mode: always upright
-	if _smiley_sprite:
+	# Animated smiley: update frame based on movement direction
+	# States: 0=idle, 1=transition (starting), 2=moving, 3=transition (stopping)
+	if _use_anim_sprite and _smiley_sprite:
+		var spd_h: float = physics._speedX
+		var moving_threshold: float = 0.3
+		var new_facing: int = 0
+		if spd_h > moving_threshold:
+			new_facing = 1  # Right
+		elif spd_h < -moving_threshold:
+			new_facing = -1  # Left
+		if new_facing != 0 and _anim_frame == 0:
+			# Start moving from idle: play transition
+			_anim_frame = 1
+			_anim_timer = 0.0
+			_anim_facing = new_facing
+		elif new_facing != 0 and _anim_facing != 0 and new_facing != _anim_facing:
+			# Direction flip: transition to new direction
+			_anim_frame = 1
+			_anim_timer = 0.0
+			_anim_facing = new_facing
+		elif new_facing != 0:
+			# Still moving same direction
+			_anim_timer += delta
+			if _anim_frame == 1 and _anim_timer > 0.05:
+				_anim_frame = 2  # moving frame
+			elif _anim_frame == 3 and _anim_timer > 0.05:
+				# Was stopping but started again
+				_anim_frame = 2
+		elif new_facing == 0 and (_anim_frame == 2 or _anim_frame == 1):
+			# Released direction: play sprite2 as return transition
+			_anim_frame = 3  # stopping transition
+			_anim_timer = 0.0
+		elif _anim_frame == 3:
+			# In stopping transition
+			_anim_timer += delta
+			if _anim_timer > 0.05:
+				_anim_frame = 0  # back to idle
+				_anim_facing = 0
+		# Map state to texture: 0=sprite1, 1=sprite2, 2=sprite3, 3=sprite2
+		var tex_idx: int = 0
+		match _anim_frame:
+			0: tex_idx = 0
+			1: tex_idx = 1
+			2: tex_idx = 2
+			3: tex_idx = 1
+		_smiley_sprite.texture = _anim_textures[tex_idx]
+		# sprite3 faces right. Mirror for left. sprite2 also mirrors for left.
+		if _anim_facing == -1:
+			_smiley_sprite.flip_h = true
+		else:
+			_smiley_sprite.flip_h = false
+
+	# Smiley rotation
+	if _use_anim_sprite and _smiley_sprite:
+		if physics.is_god_mode:
+			# God mode: no rolling, stay upright (animation handles direction)
+			_smiley_sprite.rotation = lerp_angle(_smiley_sprite.rotation, 0.0, 0.3)
+		else:
+			var spd_total: float = absf(physics._speedX) + absf(physics._speedY)
+			if spd_total > 0.3:
+				# Rolling ball: accumulate rotation from horizontal speed
+				_smiley_sprite.rotation += physics._speedX / 8.0
+			else:
+				# No momentum: lerp back to upright so directional sprites look correct
+				_smiley_sprite.rotation = lerp_angle(_smiley_sprite.rotation, 0.0, 0.3)
+	# Fire trail (WORLD-SPACE so particles detach) + fire glow ring
+	if _use_anim_sprite:
+		if physics.is_god_mode:
+			_glow_intensity = 0.0
+			if not _fire_particles.is_empty():
+				_fire_particles.clear()
+				if _fire_layer:
+					_fire_layer.queue_redraw()
+		else:
+			var spd: float = Vector2(physics._speedX, physics._speedY).length()
+			var target: float = clampf((spd - GLOW_START_SPEED) / (MAX_SPEED_THRESHOLD - GLOW_START_SPEED), 0.0, 1.0)
+			_glow_intensity = lerpf(_glow_intensity, target, 0.15)
+			if _glow_intensity > 0.1:
+				var vel: Vector2 = Vector2(physics._speedX, physics._speedY)
+				var spd_len: float = vel.length()
+				if spd_len > 0.5:
+					var vel_dir: Vector2 = vel / spd_len
+					var ball_center: Vector2 = Vector2(physics.x + 8, physics.y + 8)
+					# Reset prev position if too far (first frame or teleport)
+					if _prev_fire_pos.distance_to(ball_center) > 16:
+						_prev_fire_pos = ball_center
+					# Interpolate spawn positions between prev and current to fill gaps
+					var move_dist: float = ball_center.distance_to(_prev_fire_pos)
+					var steps: int = maxi(1, int(move_dist / 1.5))  # One burst per ~1.5px
+					var per_step: int = maxi(4, int((15 + _glow_intensity * 15) / steps))
+					for step in range(steps):
+						var lerp_t: float = float(step) / float(steps)
+						var spawn_center: Vector2 = _prev_fire_pos.lerp(ball_center, lerp_t)
+						for _si in range(per_step):
+							var angle: float = randf_range(-0.9, 0.9)
+							var spawn_dir: Vector2 = (-vel_dir).rotated(angle)
+							var radius: float = 5.0 + randf_range(0, 3)
+							var wpos: Vector2 = spawn_center + spawn_dir * radius
+							var scatter: float = randf_range(2, 8)
+							var psize: float = randf_range(0.8, 2.8)
+							_fire_particles.append({
+								"wpos": wpos,
+								"vel": vel * randf_range(0.85, 1.0) + spawn_dir * scatter,
+								"life": randf_range(0.06, 0.18),
+								"max_life": 0.18,
+								"size": psize,
+							})
+					_prev_fire_pos = ball_center
+					# Meteor heat shield: only when falling WITH gravity (not walking)
+					# Compute speed along gravity direction
+					var grav_dir: Vector2 = Vector2(physics.mox, physics.moy)
+					if grav_dir.length() < 0.01:
+						grav_dir = Vector2(0, 1)
+					grav_dir = grav_dir.normalized()
+					var fall_speed: float = vel.dot(grav_dir)  # Positive = falling
+					var meteor_intensity: float = clampf((fall_speed - 3.0) / 10.0, 0.0, 1.0)
+					if meteor_intensity > 0.1:
+						var meteor_amt: float = meteor_intensity
+						var meteor_count: int = int(5 + meteor_amt * 60)
+						for _ri in range(meteor_count):
+							# Crescent grows wider + more intense with speed
+							var arc_width: float = lerpf(0.4, 1.8, meteor_amt)
+							var angle: float = randf_range(-arc_width, arc_width)
+							var front_dir: Vector2 = vel_dir.rotated(angle)
+							var nose_bias: float = cos(angle)
+							# Shield well ahead of ball — extra clearance
+							var radius: float = lerpf(10.0, 15.0, meteor_amt) + randf_range(0, 3) * (1.0 - nose_bias)
+							var mpos: Vector2 = ball_center + front_dir * radius
+							# Push outward from ball, match velocity exactly
+							_fire_particles.append({
+								"wpos": mpos,
+								"vel": vel + front_dir * randf_range(5, 15),
+								"life": randf_range(0.01, 0.025),
+								"max_life": 0.025,
+								"hot": nose_bias > 0.5,
+							})
+					# Startup burst when first hitting max speed
+					if _at_max_speed and not _was_max_speed:
+						for _bi in range(30):
+							var burst_angle: float = randf_range(0, TAU)
+							var burst_dir: Vector2 = Vector2(cos(burst_angle), sin(burst_angle))
+							_fire_particles.append({
+								"wpos": ball_center + burst_dir * randf_range(4, 8),
+								"vel": vel * 0.5 + burst_dir * randf_range(20, 50),
+								"life": randf_range(0.08, 0.2),
+								"max_life": 0.2,
+								"hot": true,
+							})
+					_was_max_speed = _at_max_speed
+					if _fire_particles.size() > 500:
+						_fire_particles.resize(500)
+		_at_max_speed = _glow_intensity > 0.7
+		# Landing impact: was NOT grounded + falling fast → now grounded
+		if physics.is_grounded and not _pre_tick_grounded and _pre_tick_fall > 1.0 and not physics.is_god_mode:
+			# Impact scales with fall speed: tiny jump = tiny burst, terminal velocity = explosion
+			# Normal jump lands at ~3-4 speed, terminal velocity is ~13-16
+			var impact: float = clampf(_pre_tick_fall / 14.0, 0.0, 1.0)
+			var impact_sq: float = impact * impact  # Exponential scaling — small jumps barely visible
+			var bc: Vector2 = Vector2(physics.x + 8, physics.y + 8)
+			var grav_d: Vector2 = grav_pre
+			var perp_d: Vector2 = Vector2(-grav_d.y, grav_d.x)
+			var count: int = int(3 + impact_sq * 80)
+			var spray_force: float = 20 + impact_sq * 120
+			var spray_life: float = lerpf(0.06, 0.35, impact_sq)
+			for _li in range(count):
+				var side: float = randf_range(-1.0, 1.0)
+				var spray_dir: Vector2 = perp_d * side - grav_d * randf_range(0.1, 0.4)
+				var offset: Vector2 = perp_d * side * (3 + impact * 5) + grav_d * 7
+				_fire_particles.append({
+					"wpos": bc + offset,
+					"vel": spray_dir * randf_range(spray_force * 0.5, spray_force),
+					"life": randf_range(spray_life * 0.5, spray_life),
+					"max_life": spray_life,
+					"hot": randf() < impact_sq * 0.6,
+				})
+		# Clear stray particles when stopped
+		if _glow_intensity < 0.05 and not _fire_particles.is_empty():
+			_fire_particles.clear()
+			_prev_fire_pos = Vector2.ZERO
+			if _fire_layer:
+				_fire_layer.queue_redraw()
+		queue_redraw()
+	elif _smiley_sprite:
+		# Legacy smiley rotation for non-animated sprites
 		if physics.is_god_mode:
 			_smiley_sprite.rotation = lerp_angle(_smiley_sprite.rotation, 0.0, 0.3)
 		elif physics.in_valley:
@@ -255,10 +481,31 @@ func _physics_process(delta: float) -> void:
 func _process(delta: float) -> void:
 	if _is_dead:
 		return
-	if _show_hitboxes:
+	var fi: int = _fire_particles.size() - 1
+	while fi >= 0:
+		_fire_particles[fi].life -= delta
+		if _fire_particles[fi].life <= 0:
+			_fire_particles.remove_at(fi)
+		else:
+			var new_pos: Vector2 = _fire_particles[fi].wpos + _fire_particles[fi].vel * delta
+			# Collide with solid blocks: bounce/splash on walls
+			var tx: int = int(floor(new_pos.x / 16.0))
+			var ty: int = int(floor(new_pos.y / 16.0))
+			if WorldManager.is_solid_at(tx, ty):
+				# Hit a wall — kill velocity, die faster
+				_fire_particles[fi].vel *= -0.2  # Slight bounce
+				_fire_particles[fi].life *= 0.5  # Die faster on impact
+			else:
+				_fire_particles[fi].wpos = new_pos
+			_fire_particles[fi].vel *= 0.96
+			_fire_particles[fi].vel.x += randf_range(-1, 1) * delta * 20
+			_fire_particles[fi].vel.y += randf_range(-1, 1) * delta * 20
+		fi -= 1
+	if _show_hitboxes or _fire_particles.size() > 0:
 		queue_redraw()
 
 func _draw() -> void:
+	# Fire particles drawn by fire_drawer.gd (z=3, above blocks)
 	if not _show_hitboxes:
 		return
 	# Player hitbox (16x16 square - this IS the EE collision shape)
@@ -308,7 +555,7 @@ func _input(event: InputEvent) -> void:
 			physics.is_god_mode = not physics.is_god_mode
 			_smiley_sprite.modulate = Color(0.6, 0.8, 1.0, 0.5) if physics.is_god_mode else Color.WHITE
 			# God mode: above all layers; normal: between bg and fg
-			_smiley_sprite.z_index = 10 if physics.is_god_mode else 0
+			_smiley_sprite.z_index = 10 if physics.is_god_mode else 4
 			_name_label.z_index = 11 if physics.is_god_mode else 5
 		elif event.physical_keycode == KEY_N:
 			_name_label.visible = not _name_label.visible

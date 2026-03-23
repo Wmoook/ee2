@@ -187,14 +187,18 @@ func _build_spatial_hash(pts: PackedVector2Array, cell_size: int) -> Dictionary:
 	hash["cell_size"] = cell_size
 	return hash
 
-func check_polyline_collision(px: float, py: float, pw: float, ph: float) -> Dictionary:
+func check_polyline_collision(px: float, py: float, pw: float, ph: float, prefer_normal: Vector2 = Vector2.ZERO, stick_poly: int = -1) -> Dictionary:
 	## Check if axis-aligned box (px,py,pw,ph) collides with any polyline.
-	## Returns {hit, push, normal, tangent} with interpolated normal at closest point.
-	var result: Dictionary = {"hit": false, "push": Vector2.ZERO, "normal": Vector2(0, -1), "tangent": Vector2(1, 0)}
+	## Returns {hit, push, normal, tangent, poly_idx} with interpolated normal at closest point.
+	## stick_poly: when >= 0 and sandwiched, only collide with this polyline index.
+	var result: Dictionary = {"hit": false, "push": Vector2.ZERO, "normal": Vector2(0, -1), "tangent": Vector2(1, 0), "poly_idx": -1}
 	var pcx: float = px + pw * 0.5
 	var pcy: float = py + ph * 0.5
 	var best_pen: float = -999.0  # Most positive = deepest penetration
+	var _dbg_hits: Array = []  # DEBUG: track all polyline hits
+	var _dbg_poly_idx: int = -1
 	for poly in polylines:
+		_dbg_poly_idx += 1
 		# AABB broad phase
 		var bb_min: Vector2 = poly.bbox_min
 		var bb_max: Vector2 = poly.bbox_max
@@ -202,15 +206,20 @@ func check_polyline_collision(px: float, py: float, pw: float, ph: float) -> Dic
 			continue
 		var pts: PackedVector2Array = poly.points
 		var norms: Array = poly.normals
-		# Find NEAREST segment using spatial hash
-		var closest_seg: int = -1
-		var closest_t: float = 0.0
-		var closest_dist: float = 999999.0
+		# Find nearest segment + detect self-intersection branches
 		var shash: Dictionary = poly.get("spatial_hash", {})
 		var cs: int = shash.get("cell_size", 32)
 		var gx: int = int(floor(pcx / cs))
 		var gy: int = int(floor(pcy / cs))
 		var checked: Dictionary = {}
+		var closest_seg: int = -1
+		var closest_t: float = 0.0
+		var closest_dist: float = 999999.0
+		var second_seg: int = -1
+		var second_t: float = 0.0
+		var second_dist: float = 999999.0
+		var eff_radius: float = 8.0
+		var block_half: float = 8.0
 		for dx in range(-1, 2):
 			for dy in range(-1, 2):
 				var key: int = (gx + dx) * 10000 + (gy + dy)
@@ -229,11 +238,36 @@ func check_polyline_collision(px: float, py: float, pw: float, ph: float) -> Dic
 					var on_pt: Vector2 = sa + ab * seg_t
 					var dist: float = Vector2(pcx, pcy).distance_to(on_pt)
 					if dist < closest_dist:
+						# Demote current closest to second if from a different branch
+						if closest_seg >= 0 and abs(si - closest_seg) > 20:
+							second_seg = closest_seg
+							second_t = closest_t
+							second_dist = closest_dist
 						closest_dist = dist
 						closest_seg = si
 						closest_t = seg_t
+					elif dist < second_dist and closest_seg >= 0 and abs(si - closest_seg) > 20:
+						second_dist = dist
+						second_seg = si
+						second_t = seg_t
 		if closest_seg < 0:
 			continue
+		# Self-intersection guard: if nearest segment push opposes prefer_normal
+		# and there's a second branch nearby, use the second branch instead
+		if second_seg >= 0 and prefer_normal.length() > 0.1:
+			var seg_a1: Vector2 = pts[closest_seg]
+			var seg_b1: Vector2 = pts[closest_seg + 1]
+			var on1: Vector2 = seg_a1 + (seg_b1 - seg_a1) * closest_t
+			var dir1: Vector2 = (Vector2(pcx, pcy) - on1).normalized()
+			var seg_a2: Vector2 = pts[second_seg]
+			var seg_b2: Vector2 = pts[second_seg + 1]
+			var on2: Vector2 = seg_a2 + (seg_b2 - seg_a2) * second_t
+			var dir2: Vector2 = (Vector2(pcx, pcy) - on2).normalized()
+			# If nearest opposes our previous surface but second matches, use second
+			if dir1.dot(prefer_normal) < 0.0 and dir2.dot(prefer_normal) > 0.0:
+				closest_seg = second_seg
+				closest_t = second_t
+				closest_dist = second_dist
 		# Interpolate normal at closest point on segment
 		var interp_normal: Vector2 = (norms[closest_seg] * (1.0 - closest_t) + norms[closest_seg + 1] * closest_t).normalized()
 		if interp_normal.length() < 0.01:
@@ -245,19 +279,68 @@ func check_polyline_collision(px: float, py: float, pw: float, ph: float) -> Dic
 		# Distance from player center to surface
 		var to_player: Vector2 = Vector2(pcx, pcy) - on_seg
 		var dist_to_line: float = to_player.length()
-		# Push direction and fixed half-size (player stands upright on curves)
+		# Push direction and fixed half-size
 		var push_dir: Vector2 = to_player.normalized() if dist_to_line > 0.01 else interp_normal
-		var eff_radius: float = 8.0  # Fixed: player half-height, not box projection
-		# Penetration: player overlaps the curve (block half-width = 8px)
-		var block_half: float = 8.0
-		var penetration: float = (eff_radius + block_half) - dist_to_line
+		var penetration: float = minf((eff_radius + block_half) - dist_to_line, 4.0)
 		if penetration > 0 and dist_to_line < eff_radius + block_half + 2.0:
-			if penetration > best_pen:
-				best_pen = penetration
-				var push_vec: Vector2 = push_dir * penetration
-				# Use the push direction as normal for grounding/speed
-				var seg_tangent: Vector2 = (seg_b - seg_a).normalized()
-				result = {"hit": true, "push": push_vec, "normal": push_dir, "tangent": seg_tangent}
+			var seg_tangent: Vector2 = (seg_b - seg_a).normalized()
+			_dbg_hits.append({"poly": _dbg_poly_idx, "seg": closest_seg, "pen": penetration, "dist": dist_to_line, "push_dir": push_dir, "on_seg": on_seg, "tangent": seg_tangent})
+	# Select best hit: handle opposing curves (sandwich)
+	if _dbg_hits.size() == 1:
+		var h: Dictionary = _dbg_hits[0]
+		result = {"hit": true, "push": h.push_dir * h.pen, "normal": h.push_dir, "tangent": h.tangent, "poly_idx": h.poly}
+	elif _dbg_hits.size() >= 2:
+		# Detect sandwich: opposing normals OR deep penetration from different polylines
+		# (deep pen = player center crossed curve line, push_dir may have flipped)
+		var has_opposing: bool = false
+		for i in range(_dbg_hits.size()):
+			for j in range(i + 1, _dbg_hits.size()):
+				if _dbg_hits[i].poly != _dbg_hits[j].poly:
+					if _dbg_hits[i].push_dir.dot(_dbg_hits[j].push_dir) < -0.3:
+						has_opposing = true
+					# Deep pen from one + any hit from another = sandwich (push_dir flipped)
+					elif _dbg_hits[i].pen > 12.0 or _dbg_hits[j].pen > 12.0:
+						has_opposing = true
+				if has_opposing:
+					break
+			if has_opposing:
+				break
+		if has_opposing and stick_poly >= 0:
+			# Sandwich with known surface: ONLY collide with the stuck polyline
+			var best_h: Dictionary = {}
+			for h in _dbg_hits:
+				if h.poly == stick_poly:
+					best_h = h
+					break
+			if best_h.is_empty():
+				# Stuck poly not in hits - use deepest as fallback
+				best_h = _dbg_hits[0]
+				for h in _dbg_hits:
+					if h.pen > best_h.pen:
+						best_h = h
+			result = {"hit": true, "push": best_h.push_dir * best_h.pen, "normal": best_h.push_dir, "tangent": best_h.tangent, "poly_idx": best_h.poly}
+		elif has_opposing:
+			# Sandwich but no stick: pick deepest (the surface player is closest to)
+			var best_h: Dictionary = _dbg_hits[0]
+			for h in _dbg_hits:
+				if h.pen > best_h.pen:
+					best_h = h
+			result = {"hit": true, "push": best_h.push_dir * best_h.pen, "normal": best_h.push_dir, "tangent": best_h.tangent, "poly_idx": best_h.poly}
+		else:
+			# Same-side hits: use deepest penetration (standard behavior)
+			var best_h: Dictionary = _dbg_hits[0]
+			for h in _dbg_hits:
+				if h.pen > best_h.pen:
+					best_h = h
+			result = {"hit": true, "push": best_h.push_dir * best_h.pen, "normal": best_h.push_dir, "tangent": best_h.tangent, "poly_idx": best_h.poly}
+	if _dbg_hits.size() > 0:
+		var _log: String = "POLY_COL hits=%d player=(%.1f,%.1f)" % [_dbg_hits.size(), pcx, pcy]
+		for h in _dbg_hits:
+			_log += " | p%d/s%d pen=%.2f dist=%.1f dir=(%.2f,%.2f)" % [h.poly, h.seg, h.pen, h.dist, h.push_dir.x, h.push_dir.y]
+		if result.hit:
+			var _mode: String = "SANDWICH" if _dbg_hits.size() >= 2 else "SINGLE"
+			_log += " → %s PUSH=(%.2f,%.2f) n=(%.2f,%.2f)" % [_mode, result.push.x, result.push.y, result.normal.x, result.normal.y]
+		push_warning(_log)
 	return result
 
 func remove_polyline_near(pos: Vector2, radius: float = 16.0) -> void:

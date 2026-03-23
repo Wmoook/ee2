@@ -117,7 +117,7 @@ func _draw() -> void:
 			var v0: float = float(csy) / ah
 			var u1: float = float(csx + TILE_SIZE) / aw
 			var v1: float = float(csy + TILE_SIZE) / ah
-			# Build + cache mesh on first draw (has texture for correct UVs)
+			# Build + cache mesh: smooth edges from render_top/bot, tiling UV every 16px
 			if not poly.has("_cached_mesh") and curve_tex:
 				var r_top: PackedVector2Array = poly.get("render_top", PackedVector2Array())
 				var r_bot: PackedVector2Array = poly.get("render_bot", PackedVector2Array())
@@ -126,28 +126,40 @@ func _draw() -> void:
 					var cmesh: ArrayMesh = ArrayMesh.new()
 					var mverts: PackedVector2Array = PackedVector2Array()
 					var muvs: PackedVector2Array = PackedVector2Array()
-					var total_d: float = r_dists[-1] if r_dists.size() > 0 else 1.0
-					var cap_f: float = 2.0 / 16.0
-					var last_md: float = 0.0
 					var prev_mt: Vector2 = r_top[0]
 					var prev_mb: Vector2 = r_bot[0]
-					var prev_ma: float = 0.0
+					var prev_md: float = 0.0
 					for mi in range(1, r_top.size()):
-						var md: float = r_dists[mi] if mi < r_dists.size() else total_d
-						if md - last_md >= 3.0 or mi == r_top.size() - 1:
-							var mt0f: float = prev_ma / maxf(total_d, 1.0)
-							var mt1f: float = md / maxf(total_d, 1.0)
-							var muv_l: float = _curve_uv(mt0f, cap_f, u0, u1)
-							var muv_r: float = _curve_uv(mt1f, cap_f, u0, u1)
-							# Two triangles
+						var md: float = r_dists[mi] if mi < r_dists.size() else prev_md + 1.0
+						if md - prev_md < 0.5 and mi < r_top.size() - 1:
+							continue
+						# Tiling UV: repeat texture every 16px, flip 180° to match end caps
+						var uv_l: float = u1 - fmod(prev_md / 16.0, 1.0) * (u1 - u0)
+						var uv_r: float = u1 - fmod(md / 16.0, 1.0) * (u1 - u0)
+						# Handle UV wrap-around (reversed U: uv_r > uv_l means tile crossed)
+						if uv_r > uv_l + 0.001:
+							var wrap_t: float = (1.0 - fmod(prev_md / 16.0, 1.0)) / ((md - prev_md) / 16.0)
+							var mid_top: Vector2 = prev_mt.lerp(r_top[mi], wrap_t)
+							var mid_bot: Vector2 = prev_mb.lerp(r_bot[mi], wrap_t)
+							# First half (flipped V: top=v1, bot=v0)
+							mverts.append(prev_mt); mverts.append(mid_top); mverts.append(mid_bot)
+							mverts.append(prev_mt); mverts.append(mid_bot); mverts.append(prev_mb)
+							muvs.append(Vector2(uv_l, v1)); muvs.append(Vector2(u0, v1)); muvs.append(Vector2(u0, v0))
+							muvs.append(Vector2(uv_l, v1)); muvs.append(Vector2(u0, v0)); muvs.append(Vector2(uv_l, v0))
+							# Second half
+							mverts.append(mid_top); mverts.append(r_top[mi]); mverts.append(r_bot[mi])
+							mverts.append(mid_top); mverts.append(r_bot[mi]); mverts.append(mid_bot)
+							muvs.append(Vector2(u1, v1)); muvs.append(Vector2(uv_r, v1)); muvs.append(Vector2(uv_r, v0))
+							muvs.append(Vector2(u1, v1)); muvs.append(Vector2(uv_r, v0)); muvs.append(Vector2(u1, v0))
+						else:
+							# Normal quad (flipped V: top=v1, bot=v0)
 							mverts.append(prev_mt); mverts.append(r_top[mi]); mverts.append(r_bot[mi])
 							mverts.append(prev_mt); mverts.append(r_bot[mi]); mverts.append(prev_mb)
-							muvs.append(Vector2(muv_l, v0)); muvs.append(Vector2(muv_r, v0)); muvs.append(Vector2(muv_r, v1))
-							muvs.append(Vector2(muv_l, v0)); muvs.append(Vector2(muv_r, v1)); muvs.append(Vector2(muv_l, v1))
-							prev_mt = r_top[mi]
-							prev_mb = r_bot[mi]
-							prev_ma = md
-							last_md = md
+							muvs.append(Vector2(uv_l, v1)); muvs.append(Vector2(uv_r, v1)); muvs.append(Vector2(uv_r, v0))
+							muvs.append(Vector2(uv_l, v1)); muvs.append(Vector2(uv_r, v0)); muvs.append(Vector2(uv_l, v0))
+						prev_mt = r_top[mi]
+						prev_mb = r_bot[mi]
+						prev_md = md
 					if mverts.size() >= 3:
 						var arrays: Array = []
 						arrays.resize(Mesh.ARRAY_MAX)
@@ -169,19 +181,14 @@ func _draw() -> void:
 			if GameState.is_edit_mode:
 				draw_polyline(poly_pts, Color(0.2, 0.8, 1.0, 0.4), 1.0, true)
 
-func _curve_uv(t: float, cap_frac: float, uv0: float, uv1: float) -> float:
-	## 3-slice UV: first cap_frac at start, last cap_frac at end, middle stretched
+func _curve_uv(dist: float, cap_frac: float, uv0: float, uv1: float) -> float:
+	## Tiling UV: repeat the block texture every 16px along the curve
 	var uv_range: float = uv1 - uv0
-	if t <= cap_frac:
-		# Start cap: map 0..cap_frac to uv0..uv0+cap_frac*range
-		return uv0 + t * uv_range
-	elif t >= 1.0 - cap_frac:
-		# End cap: map (1-cap_frac)..1 to uv1-cap_frac*range..uv1
-		return uv1 - (1.0 - t) * uv_range
-	else:
-		# Middle: stretch from cap_frac..1-cap_frac to the middle UV region
-		var mid_t: float = (t - cap_frac) / (1.0 - 2.0 * cap_frac)
-		return uv0 + cap_frac * uv_range + mid_t * (1.0 - 2.0 * cap_frac) * uv_range
+	# dist is in pixels along the curve — tile every 16px
+	var tile_t: float = fmod(dist / 16.0, 1.0)
+	if tile_t < 0:
+		tile_t += 1.0
+	return uv0 + tile_t * uv_range
 
 func draw_block(x: int, y: int, block_id: int, alpha: float) -> void:
 	var dest: Rect2 = Rect2(x * TILE_SIZE, y * TILE_SIZE, TILE_SIZE, TILE_SIZE)

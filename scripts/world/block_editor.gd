@@ -1143,19 +1143,24 @@ func _process(_delta: float) -> void:
 							var spos: Vector2 = 0.5 * ((2.0 * cp1) + (-cp0 + cp2) * ct + (2.0 * cp0 - 5.0 * cp1 + 4.0 * cp2 - cp3) * ctt + (-cp0 + 3.0 * cp1 - 3.0 * cp2 + cp3) * cttt)
 							if spline_pts.size() == 0 or spline_pts[-1].distance_to(spos) > 1.0:
 								spline_pts.append(spos)
-					# Add final point
-					if spline_pts.size() > 0 and spline_pts[-1].distance_to(cpts[-1]) > 4.0:
+					# Always add final control point so mesh reaches the end cap
+					if spline_pts.size() > 0 and spline_pts[-1].distance_to(cpts[-1]) > 0.5:
 						spline_pts.append(cpts[-1])
 					if spline_pts.size() >= 2:
 						WorldManager.add_polyline(spline_pts, "both", GameState.selected_block_id)
-						# End cap blocks: placed just OUTSIDE the curve ends
+						# End cap blocks: centered at endpoints, rotated to tangent
+						# Start cap: direction from point 0 toward point 1
 						var s_dir: Vector2 = (spline_pts[1] - spline_pts[0]).normalized()
-						# End cap blocks: real blocks placed just past each endpoint
-						var s_pos: Vector2 = spline_pts[0] - s_dir * 4.0 - Vector2(8, 8)
+						var s_pos: Vector2 = spline_pts[0] - s_dir * 8.0 - Vector2(8, 8)
 						var s_rot: float = rad_to_deg(atan2(s_dir.y, s_dir.x))
 						WorldManager.free_blocks.append({"pos": s_pos, "id": GameState.selected_block_id, "rotation": s_rot})
+						# End cap: mirror of start logic — direction from second-to-last toward last
+						# Use same baseline distance as start for consistency
 						var e_dir: Vector2 = (spline_pts[-1] - spline_pts[-2]).normalized()
-						var e_pos: Vector2 = spline_pts[-1] + e_dir * 4.0 - Vector2(8, 8)
+						# If too short, use longer baseline
+						if spline_pts[-1].distance_to(spline_pts[-2]) < 2.0 and spline_pts.size() > 2:
+							e_dir = (spline_pts[-1] - spline_pts[maxi(0, spline_pts.size() - 10)]).normalized()
+						var e_pos: Vector2 = spline_pts[-1] + e_dir * 8.0 - Vector2(8, 8)
 						var e_rot: float = rad_to_deg(atan2(e_dir.y, e_dir.x))
 						WorldManager.free_blocks.append({"pos": e_pos, "id": GameState.selected_block_id, "rotation": e_rot})
 				_curve_points.clear()

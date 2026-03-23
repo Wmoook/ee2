@@ -45,6 +45,8 @@ var _valley_center: Vector2 = Vector2(-1, -1)  # Locked position in V
 var _surface_normal: Vector2 = Vector2(0, -1)
 var _prev_push_normal: Vector2 = Vector2.ZERO
 var _prev_poly_normal: Vector2 = Vector2.ZERO  # Polyline push from last tick
+var _stick_poly_idx: int = -1  # Polyline index player is currently on
+var _stick_poly_ticks: int = 0  # Ticks since last contact with stuck poly
 var _valley_ticks: int = 0
 var _flip_count: int = 0
 var _jump_cooldown: int = 0
@@ -223,40 +225,63 @@ func tick(input_h: int, input_v: int, space_just: bool, space_held: bool) -> voi
 
 	# 7.15 Polyline collision — also check pre-step position for tunneling
 	if not is_god_mode and WorldManager.polylines.size() > 0:
-		var poly_result: Dictionary = WorldManager.check_polyline_collision(x, y, 16.0, 16.0)
-		# Anti-tunnel removed — was catching jumps as "tunneling"
+		var _poly_any_hit: bool = false
+		var _poly_hit_normal: Vector2 = Vector2.ZERO
+		var _poly_hit_tangent: Vector2 = Vector2(1, 0)
+		var _poly_hit_against: float = -999.0
+		# Decay stick tracking: release after 5 ticks without contact
+		_stick_poly_ticks += 1
+		if _stick_poly_ticks > 5:
+			_stick_poly_idx = -1
+		# Pass 1: resolve stick polyline (stay on your curve)
+		var poly_result: Dictionary = WorldManager.check_polyline_collision(x, y, 16.0, 16.0, _prev_poly_normal, _stick_poly_idx)
 		if poly_result.hit:
+			_poly_any_hit = true
 			var poly_vel: Vector2 = Vector2(_speedX, _speedY)
 			var vel_toward: float = poly_vel.dot(-poly_result.normal)
 			var _skip_poly: bool = vel_toward < -3.0 and poly_result.push.length() < 1.0
-			# No flip-skip — was causing phase-through
 			if not _skip_poly:
-				var poly_push: Vector2 = poly_result.push
+				x += poly_result.push.x
+				y += poly_result.push.y
+				_stick_poly_idx = poly_result.poly_idx
+				_stick_poly_ticks = 0
 				var poly_grav_n: Vector2 = Vector2(mox, moy)
 				if poly_grav_n.length() < 0.01:
 					poly_grav_n = Vector2(0, 1)
 				poly_grav_n = poly_grav_n.normalized()
-				var poly_against: float = -poly_result.normal.dot(poly_grav_n)
-				if poly_against < -0.3:
-					# Ceiling: push away but don't ground or project speed
-					x += poly_push.x
-					y += poly_push.y
-					_prev_poly_normal = poly_result.normal
-				else:
-					x += poly_push.x
-					y += poly_push.y
-					on_rotated_block = true
-					_surface_normal = poly_result.normal
-					push_warning("PC ag=%.2f sX=%.1f sY=%.1f gS=%.1f p=%.1f,%.1f" % [poly_against, _speedX, _speedY, _pre_tick_grav_speed, poly_push.x, poly_push.y])
-					if poly_against > 0.2 and _pre_tick_grav_speed >= 0:
-						is_grounded = true
-						var poly_tangent: Vector2 = poly_result.tangent
-						var poly_spd_along: float = Vector2(_speedX, _speedY).dot(poly_tangent)
-						var poly_grav_tang: float = Vector2(mox, moy).dot(poly_tangent) * _get_grav_mult() / MULT * 0.5
-						poly_spd_along += poly_grav_tang
-						_speedX = poly_tangent.x * poly_spd_along
-						_speedY = poly_tangent.y * poly_spd_along
-				_prev_poly_normal = poly_result.normal
+				_poly_hit_against = -poly_result.normal.dot(poly_grav_n)
+				_poly_hit_normal = poly_result.normal
+				_poly_hit_tangent = poly_result.tangent
+			_prev_poly_normal = poly_result.normal
+		# Pass 2: resolve remaining penetration from other curves
+		var poly2: Dictionary = WorldManager.check_polyline_collision(x, y, 16.0, 16.0, _prev_poly_normal, -1)
+		if poly2.hit and poly2.push.length() > 0.1:
+			x += poly2.push.x
+			y += poly2.push.y
+			if not _poly_any_hit:
+				_poly_any_hit = true
+				_stick_poly_idx = poly2.poly_idx
+				_stick_poly_ticks = 0
+				var poly_grav_n2: Vector2 = Vector2(mox, moy)
+				if poly_grav_n2.length() < 0.01:
+					poly_grav_n2 = Vector2(0, 1)
+				poly_grav_n2 = poly_grav_n2.normalized()
+				_poly_hit_against = -poly2.normal.dot(poly_grav_n2)
+				_poly_hit_normal = poly2.normal
+				_poly_hit_tangent = poly2.tangent
+				_prev_poly_normal = poly2.normal
+		# Apply grounding/speed from the hit surface
+		if _poly_any_hit and _poly_hit_against > -0.3:
+			on_rotated_block = true
+			_surface_normal = _poly_hit_normal
+			if _poly_hit_against > 0.2 and _pre_tick_grav_speed >= 0:
+				is_grounded = true
+				var poly_spd_along: float = Vector2(_speedX, _speedY).dot(_poly_hit_tangent)
+				var poly_grav_tang: float = Vector2(mox, moy).dot(_poly_hit_tangent) * _get_grav_mult() / MULT * 0.5
+				poly_spd_along += poly_grav_tang
+				_speedX = _poly_hit_tangent.x * poly_spd_along
+				_speedY = _poly_hit_tangent.y * poly_spd_along
+
 
 	# 7.5 Line collision
 	if not is_god_mode:
@@ -598,7 +623,7 @@ func _handle_jump(space_just: bool, space_held: bool) -> void:
 	# performJump (EE exact)
 	# Also check polyline grounding for jump (sub-step may not set is_grounded)
 	if not is_grounded and WorldManager.polylines.size() > 0:
-		var jpc: Dictionary = WorldManager.check_polyline_collision(x, y, 16.0, 16.0)
+		var jpc: Dictionary = WorldManager.check_polyline_collision(x, y, 16.0, 16.0, _prev_poly_normal, _stick_poly_idx)
 		if jpc.hit:
 			var jgn: Vector2 = Vector2(mox, moy)
 			if jgn.length() < 0.01: jgn = Vector2(0, 1)
