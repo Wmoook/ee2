@@ -220,21 +220,6 @@ func tick(input_h: int, input_v: int, space_just: bool, space_held: bool) -> voi
 	var _pre_step_x: float = x
 	var _pre_step_y: float = y
 	_step_position()
-	# Snap sub-pixel Y on grid tile landing (fixes 0.7px visual clipping)
-	if _speedY == 0 and _pre_tick_speedY > 0 and fmod(y, 1.0) > 0.01:
-		var snap_y: float = floor(y)
-		if not _collides_px(x, snap_y) and _collides_px(x, snap_y + 16):
-			# Check no free block at snapped position
-			var fb_at_snap: bool = false
-			for fb in WorldManager.free_blocks:
-				if not GameState.is_solid(fb.id) or fb.get("curve_visual", false):
-					continue
-				var fc: Vector2 = fb.pos + Vector2(8, 8)
-				if absf(x + 8 - fc.x) < 16 and absf(snap_y + 8 - fc.y) < 16:
-					fb_at_snap = true
-					break
-			if not fb_at_snap:
-				y = snap_y
 
 	# 7.15 Polyline collision — also check pre-step position for tunneling
 	if not is_god_mode and WorldManager.polylines.size() > 0:
