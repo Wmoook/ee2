@@ -317,13 +317,16 @@ func _draw_free_block(fb: Dictionary) -> void:
 	var bid: int = fb.id
 	var rot: float = fb.rotation
 	var render_id: int = _get_visual_id(bid)
-	# Custom blocks: draw with scaling
+	# Custom blocks: draw with scaling + optional horizontal flip
 	if GameState.is_custom_block(render_id):
 		var ctex: Texture2D = GameState.get_custom_block_texture(render_id)
 		if ctex:
 			var center: Vector2 = pos + Vector2(8, 8)
-			var scale: Vector2 = Vector2(16.0 / ctex.get_width(), 16.0 / ctex.get_height())
-			draw_set_transform(center, deg_to_rad(rot), scale)
+			var sx: float = 16.0 / ctex.get_width()
+			var sy: float = 16.0 / ctex.get_height()
+			if fb.get("flip_h", false):
+				sx = -sx  # Mirror horizontally
+			draw_set_transform(center, deg_to_rad(rot), Vector2(sx, sy))
 			var half: float = ctex.get_width() * 0.5
 			draw_texture(ctex, Vector2(-half, -half))
 			draw_set_transform(Vector2.ZERO, 0, Vector2.ONE)

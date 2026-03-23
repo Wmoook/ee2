@@ -1186,7 +1186,15 @@ func _process(_delta: float) -> void:
 							var e_dir: Vector2 = (e_end - e_ref).normalized()
 							var e_pos: Vector2 = e_end + e_dir * 7.0 - Vector2(8, 8)
 							var e_rot: float = rad_to_deg(atan2(e_dir.y, e_dir.x))
-							WorldManager.free_blocks.append({"pos": e_pos, "id": GameState.selected_block_id, "rotation": e_rot})
+							# Count tiles in curve — if odd, mirror the end cap
+							var curve_len: float = 0.0
+							for _pi in range(1, poly_pts.size()):
+								curve_len += poly_pts[_pi].distance_to(poly_pts[_pi - 1])
+							var tile_count: int = int(curve_len / 16.0)
+							var end_fb: Dictionary = {"pos": e_pos, "id": GameState.selected_block_id, "rotation": e_rot}
+							if tile_count % 2 == 1:
+								end_fb["flip_h"] = true  # Mirror for odd tile count
+							WorldManager.free_blocks.append(end_fb)
 				_curve_points.clear()
 				_curve_preview.clear()
 				_curve_mode = false
