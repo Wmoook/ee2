@@ -55,7 +55,7 @@ func _draw() -> void:
 				for layer in range(6):
 					var layer_t: float = float(layer) / 5.0  # 0=inner, 1=outer
 					var layer_r: float = float(void_r) + 2.0 + layer_t * maxf(8.0, float(void_r) * 0.8)
-					var layer_count: int = 70
+					var layer_count: int = mini(70, 40 + int(float(void_r) * 2.0))  # Scale but cap
 					var speed: float = 2.5 - layer_t * 1.0  # Inner spins faster
 					for ai in range(layer_count):
 						var a_angle: float = TAU * float(ai) / float(layer_count) + time * speed + float(layer) * 0.5
@@ -82,14 +82,15 @@ func _draw() -> void:
 							draw_rect(Rect2(floor(a_pos.x + off.x), floor(a_pos.y + off.y), 1, 1), Color(r_c, g_c, b_c, minf(a_alpha * 0.5, 1.0)))
 
 			elif pass_idx == 1:
-				# Void core — solid black pixel circle
-				for px in range(-void_r, void_r + 1):
-					for py in range(-void_r, void_r + 1):
-						if px * px + py * py <= void_r * void_r:
-							draw_rect(Rect2(cx + px, cy + py, 1, 1), Color(0.0, 0.0, 0.0, 1.0))
+				# Void core — solid black circle (single draw for performance)
+				# Draw rows instead of individual pixels
+				for py in range(-void_r, void_r + 1):
+					var row_w: int = int(sqrt(float(void_r * void_r - py * py)))
+					if row_w > 0:
+						draw_rect(Rect2(cx - row_w, cy + py, row_w * 2 + 1, 1), Color(0.0, 0.0, 0.0, 1.0))
 
 				# Event horizon glow ring
-				var eh_count: int = maxi(30, void_r * 8)
+				var eh_count: int = mini(80, maxi(30, void_r * 4))
 				for ei in range(eh_count):
 					var e_angle: float = TAU * float(ei) / float(eh_count)
 					var e_r: float = float(void_r) + 1.0 + sin(e_angle * 4.0 + time * 2.5) * 0.5

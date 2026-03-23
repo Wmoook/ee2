@@ -603,9 +603,9 @@ func _input(event: InputEvent) -> void:
 			_grav_zone_center = get_global_mouse_position()
 			_grav_zone_dragging = true
 			if Input.is_key_pressed(KEY_SHIFT):
-				_grav_zone_phase = 1  # Sizing center
+				_grav_zone_phase = 1
 			else:
-				_grav_zone_phase = 2  # Sizing radius (default center)
+				_grav_zone_phase = 2
 				_grav_zone_center_r = 8.0
 			queue_redraw()
 			return
