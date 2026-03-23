@@ -75,7 +75,8 @@ func _ready() -> void:
 	if _use_anim_sprite:
 		_smiley_sprite.texture = _anim_textures[0]
 		# Scale 40x40 full-res down to 26x26 display (GPU nearest-neighbor = sharp)
-		_smiley_sprite.scale = Vector2(ANIM_SCALE, ANIM_SCALE + 0.35 * 2.0 / 40.0)  # Y warp +0.35px to match blocks
+		var _warp_px: float = 0.35 * 2.0 / 40.0
+		_smiley_sprite.scale = Vector2(ANIM_SCALE + _warp_px, ANIM_SCALE + _warp_px)  # X+Y warp +0.35px for ball
 	add_child(_smiley_sprite)
 	if not _use_anim_sprite:
 		_set_smiley(smiley_id)
