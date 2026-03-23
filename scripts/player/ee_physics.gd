@@ -253,23 +253,40 @@ func tick(input_h: int, input_v: int, space_just: bool, space_held: bool) -> voi
 				_poly_hit_normal = poly_result.normal
 				_poly_hit_tangent = poly_result.tangent
 			_prev_poly_normal = poly_result.normal
-		# Pass 2: resolve remaining penetration from other curves
+		# Pass 2: resolve other curves (block passage through intersections)
 		var poly2: Dictionary = WorldManager.check_polyline_collision(x, y, 16.0, 16.0, _prev_poly_normal, -1)
 		if poly2.hit and poly2.push.length() > 0.1:
-			x += poly2.push.x
-			y += poly2.push.y
-			if not _poly_any_hit:
-				_poly_any_hit = true
-				_stick_poly_idx = poly2.poly_idx
-				_stick_poly_ticks = 0
-				var poly_grav_n2: Vector2 = Vector2(mox, moy)
-				if poly_grav_n2.length() < 0.01:
-					poly_grav_n2 = Vector2(0, 1)
-				poly_grav_n2 = poly_grav_n2.normalized()
-				_poly_hit_against = -poly2.normal.dot(poly_grav_n2)
-				_poly_hit_normal = poly2.normal
-				_poly_hit_tangent = poly2.tangent
-				_prev_poly_normal = poly2.normal
+			if _poly_any_hit and poly2.normal.dot(_poly_hit_normal) < -0.3:
+				# Opposing curve at intersection — apply push but re-resolve stick curve
+				x += poly2.push.x
+				y += poly2.push.y
+				# Zero speed into the opposing surface
+				var into_wall: float = Vector2(_speedX, _speedY).dot(-poly2.normal)
+				if into_wall > 0:
+					_speedX += poly2.normal.x * into_wall
+					_speedY += poly2.normal.y * into_wall
+				# Re-resolve stick curve (pass 3)
+				if _stick_poly_idx >= 0:
+					var poly3: Dictionary = WorldManager.check_polyline_collision(x, y, 16.0, 16.0, _prev_poly_normal, _stick_poly_idx)
+					if poly3.hit and poly3.push.length() > 0.01:
+						x += poly3.push.x
+						y += poly3.push.y
+			else:
+				# Same direction or no pass 1 — apply normally
+				x += poly2.push.x
+				y += poly2.push.y
+				if not _poly_any_hit:
+					_poly_any_hit = true
+					_stick_poly_idx = poly2.poly_idx
+					_stick_poly_ticks = 0
+					var poly_grav_n2: Vector2 = Vector2(mox, moy)
+					if poly_grav_n2.length() < 0.01:
+						poly_grav_n2 = Vector2(0, 1)
+					poly_grav_n2 = poly_grav_n2.normalized()
+					_poly_hit_against = -poly2.normal.dot(poly_grav_n2)
+					_poly_hit_normal = poly2.normal
+					_poly_hit_tangent = poly2.tangent
+					_prev_poly_normal = poly2.normal
 		# Apply grounding/speed from the hit surface
 		if _poly_any_hit and _poly_hit_against > -0.3:
 			on_rotated_block = true
