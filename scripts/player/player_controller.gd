@@ -58,9 +58,9 @@ func _ready() -> void:
 		var tex: Texture2D = load("res://assets/sprites/smileys_%d.png" % i) as Texture2D
 		if tex:
 			_smiley_textures.append(tex)
-	# Load animated sprite frames
-	for fname in ["smiley_sprite1", "smiley_sprite2", "smiley_sprite3"]:
-		var tex: Texture2D = load("res://assets/sprites/%s.png" % fname) as Texture2D
+	# Load animated sprite frames (BALL_1)
+	for fname in ["BALL_1_frame1", "BALL_1_frame2", "BALL_1_frame3"]:
+		var tex: Texture2D = load("res://assets/sprites/NEW_SPRITES_BALL/%s.png" % fname) as Texture2D
 		if tex:
 			_anim_textures.append(tex)
 	_use_anim_sprite = _anim_textures.size() == 3

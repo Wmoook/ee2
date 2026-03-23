@@ -94,29 +94,37 @@ func _draw() -> void:
 		var poly_norms: Array = poly.normals
 		if poly_pts.size() >= 2:
 			var half_w: float = 8.0
-			# Look up block texture
+			# Look up block texture (custom or atlas)
 			var curve_bid: int = poly.get("block_id", 9)
-			var curve_info: Dictionary = GameState.get_block_info(curve_bid)
 			var curve_tex: Texture2D = null
-			var curve_atlas: String = curve_info.get("atlas", "blocks")
-			var curve_artoff: int = curve_info.get("artoffset", 0)
-			var curve_chunk: int = 0
-			var curve_local: int = curve_artoff
-			if split_info.has(curve_atlas):
-				curve_chunk = curve_local / TILES_PER_CHUNK
-				curve_local = curve_local % TILES_PER_CHUNK
-			var ctex_key: String = "%s_%d" % [curve_atlas, curve_chunk]
-			if textures.has(ctex_key):
-				curve_tex = textures[ctex_key]
-			var aw: float = curve_tex.get_width() if curve_tex else 256.0
-			var ah: float = curve_tex.get_height() if curve_tex else 256.0
-			var curve_cols: int = int(aw) / TILE_SIZE
-			var csx: int = (curve_local % curve_cols) * TILE_SIZE
-			var csy: int = (curve_local / curve_cols) * TILE_SIZE
-			var u0: float = float(csx) / aw
-			var v0: float = float(csy) / ah
-			var u1: float = float(csx + TILE_SIZE) / aw
-			var v1: float = float(csy + TILE_SIZE) / ah
+			var u0: float = 0.0
+			var v0: float = 0.0
+			var u1: float = 1.0
+			var v1: float = 1.0
+			if GameState.is_custom_block(curve_bid):
+				curve_tex = GameState.get_custom_block_texture(curve_bid)
+				# Full texture UV (0-1)
+			else:
+				var curve_info: Dictionary = GameState.get_block_info(curve_bid)
+				var curve_atlas: String = curve_info.get("atlas", "blocks")
+				var curve_artoff: int = curve_info.get("artoffset", 0)
+				var curve_chunk: int = 0
+				var curve_local: int = curve_artoff
+				if split_info.has(curve_atlas):
+					curve_chunk = curve_local / TILES_PER_CHUNK
+					curve_local = curve_local % TILES_PER_CHUNK
+				var ctex_key: String = "%s_%d" % [curve_atlas, curve_chunk]
+				if textures.has(ctex_key):
+					curve_tex = textures[ctex_key]
+				var aw: float = curve_tex.get_width() if curve_tex else 256.0
+				var ah: float = curve_tex.get_height() if curve_tex else 256.0
+				var curve_cols: int = int(aw) / TILE_SIZE
+				var csx: int = (curve_local % curve_cols) * TILE_SIZE
+				var csy: int = (curve_local / curve_cols) * TILE_SIZE
+				u0 = float(csx) / aw
+				v0 = float(csy) / ah
+				u1 = float(csx + TILE_SIZE) / aw
+				v1 = float(csy + TILE_SIZE) / ah
 			# Build + cache mesh: smooth edges from render_top/bot, tiling UV every 16px
 			if not poly.has("_cached_mesh") and curve_tex:
 				var r_top: PackedVector2Array = poly.get("render_top", PackedVector2Array())
@@ -133,24 +141,39 @@ func _draw() -> void:
 						var md: float = r_dists[mi] if mi < r_dists.size() else prev_md + 1.0
 						if md - prev_md < 0.5 and mi < r_top.size() - 1:
 							continue
-						# Tiling UV: repeat texture every 16px, flip 180° to match end caps
-						var uv_l: float = u1 - fmod(prev_md / 16.0, 1.0) * (u1 - u0)
-						var uv_r: float = u1 - fmod(md / 16.0, 1.0) * (u1 - u0)
-						# Handle UV wrap-around (reversed U: uv_r > uv_l means tile crossed)
-						if uv_r > uv_l + 0.001:
-							var wrap_t: float = (1.0 - fmod(prev_md / 16.0, 1.0)) / ((md - prev_md) / 16.0)
+						# Tiling UV: repeat every 16px, mirror every other tile for seamless pattern
+						var tile_num_l: int = int(prev_md / 16.0)
+						var tile_num_r: int = int(md / 16.0)
+						var mirror: bool = (tile_num_l % 2) == 1
+						var raw_uv_l: float = fmod(prev_md / 16.0, 1.0)
+						var raw_uv_r: float = fmod(md / 16.0, 1.0)
+						var uv_l: float
+						var uv_r: float
+						if mirror:
+							uv_l = u0 + raw_uv_l * (u1 - u0)
+							uv_r = u0 + raw_uv_r * (u1 - u0)
+						else:
+							uv_l = u1 - raw_uv_l * (u1 - u0)
+							uv_r = u1 - raw_uv_r * (u1 - u0)
+						# Handle UV wrap-around (tile boundary crossed when tile_num changes)
+						if tile_num_r != tile_num_l:
+							var wrap_t: float = (1.0 - fmod(prev_md / 16.0, 1.0)) / maxf((md - prev_md) / 16.0, 0.001)
+							wrap_t = clampf(wrap_t, 0.0, 1.0)
 							var mid_top: Vector2 = prev_mt.lerp(r_top[mi], wrap_t)
 							var mid_bot: Vector2 = prev_mb.lerp(r_bot[mi], wrap_t)
-							# First half (flipped V: top=v1, bot=v0)
+							# First half: current tile direction
+							var uv_end1: float = u0 if not mirror else u1  # End of current tile
 							mverts.append(prev_mt); mverts.append(mid_top); mverts.append(mid_bot)
 							mverts.append(prev_mt); mverts.append(mid_bot); mverts.append(prev_mb)
-							muvs.append(Vector2(uv_l, v1)); muvs.append(Vector2(u0, v1)); muvs.append(Vector2(u0, v0))
-							muvs.append(Vector2(uv_l, v1)); muvs.append(Vector2(u0, v0)); muvs.append(Vector2(uv_l, v0))
-							# Second half
+							muvs.append(Vector2(uv_l, v1)); muvs.append(Vector2(uv_end1, v1)); muvs.append(Vector2(uv_end1, v0))
+							muvs.append(Vector2(uv_l, v1)); muvs.append(Vector2(uv_end1, v0)); muvs.append(Vector2(uv_l, v0))
+							# Second half: next tile (opposite mirror)
+							var mirror2: bool = not mirror
+							var uv_start2: float = u0 if not mirror2 else u1
 							mverts.append(mid_top); mverts.append(r_top[mi]); mverts.append(r_bot[mi])
 							mverts.append(mid_top); mverts.append(r_bot[mi]); mverts.append(mid_bot)
-							muvs.append(Vector2(u1, v1)); muvs.append(Vector2(uv_r, v1)); muvs.append(Vector2(uv_r, v0))
-							muvs.append(Vector2(u1, v1)); muvs.append(Vector2(uv_r, v0)); muvs.append(Vector2(u1, v0))
+							muvs.append(Vector2(uv_start2, v1)); muvs.append(Vector2(uv_r, v1)); muvs.append(Vector2(uv_r, v0))
+							muvs.append(Vector2(uv_start2, v1)); muvs.append(Vector2(uv_r, v0)); muvs.append(Vector2(uv_start2, v0))
 						else:
 							# Normal quad (flipped V: top=v1, bot=v0)
 							mverts.append(prev_mt); mverts.append(r_top[mi]); mverts.append(r_bot[mi])
@@ -194,6 +217,15 @@ func draw_block(x: int, y: int, block_id: int, alpha: float) -> void:
 	var dest: Rect2 = Rect2(x * TILE_SIZE, y * TILE_SIZE, TILE_SIZE, TILE_SIZE)
 	# Door/gate visual swap when key is active
 	var render_id: int = _get_visual_id(block_id)
+	# Custom blocks (with optional warp for visual scale tuning)
+	if GameState.is_custom_block(render_id):
+		var ctex: Texture2D = GameState.get_custom_block_texture(render_id)
+		if ctex:
+			# Check for per-block warp (visual expansion, hitbox unchanged)
+			var warp: Vector2 = GameState.get_custom_block_warp(render_id)
+			var wdest: Rect2 = Rect2(dest.position.x - warp.x, dest.position.y - warp.y, dest.size.x + warp.x * 2, dest.size.y + warp.y * 2)
+			draw_texture_rect(ctex, wdest, false, Color(1, 1, 1, alpha))
+		return
 	# Slope blocks use generated ImageTextures instead of atlas lookup
 	if GameState.is_slope(render_id):
 		var slope_tex = GameState.get_slope_texture(render_id)
@@ -285,6 +317,17 @@ func _draw_free_block(fb: Dictionary) -> void:
 	var bid: int = fb.id
 	var rot: float = fb.rotation
 	var render_id: int = _get_visual_id(bid)
+	# Custom blocks: draw with scaling
+	if GameState.is_custom_block(render_id):
+		var ctex: Texture2D = GameState.get_custom_block_texture(render_id)
+		if ctex:
+			var center: Vector2 = pos + Vector2(8, 8)
+			var scale: Vector2 = Vector2(16.0 / ctex.get_width(), 16.0 / ctex.get_height())
+			draw_set_transform(center, deg_to_rad(rot), scale)
+			var half: float = ctex.get_width() * 0.5
+			draw_texture(ctex, Vector2(-half, -half))
+			draw_set_transform(Vector2.ZERO, 0, Vector2.ONE)
+		return
 	var info: Dictionary = GameState.get_block_info(render_id)
 	if info.is_empty():
 		return

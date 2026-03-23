@@ -29,6 +29,14 @@ func _draw() -> void:
 func _draw_block(x: int, y: int, block_id: int) -> void:
 	var ts: int = 16
 	var dest: Rect2 = Rect2(x * ts, y * ts, ts, ts)
+	# Custom blocks (with warp)
+	if GameState.is_custom_block(block_id):
+		var ctex: Texture2D = GameState.get_custom_block_texture(block_id)
+		if ctex:
+			var warp: Vector2 = GameState.get_custom_block_warp(block_id)
+			var wdest: Rect2 = Rect2(dest.position.x - warp.x, dest.position.y - warp.y, dest.size.x + warp.x * 2, dest.size.y + warp.y * 2)
+			draw_texture_rect(ctex, wdest, false)
+		return
 	# Slope blocks use generated ImageTextures
 	if GameState.is_slope(block_id):
 		var slope_tex = GameState.get_slope_texture(block_id)

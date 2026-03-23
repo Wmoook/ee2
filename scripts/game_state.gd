@@ -2,7 +2,8 @@ extends Node
 
 const TILE_SIZE: int = 16
 var is_edit_mode: bool = false
-var selected_block_id: int = 9
+var selected_block_id: int = 5000  # Start with block_1
+var _custom_block_textures: Dictionary = {}  # Custom block ID -> Texture2D
 var selected_block: int = 9
 var selected_palette_index: int = 0
 var selected_category: int = 0
@@ -21,36 +22,7 @@ const SlopeGenerator = preload("res://scripts/world/slope_generator.gd")
 # All sub-themes merged into these 4 tabs like real EE
 var BLOCK_CATEGORIES: Array = [
 	{"name": "Blocks", "ids": [
-		0,
-		1088, 9, 182, 12, 1018, 13, 14, 15, 10, 11,
-		1089, 42, 1021, 40, 1020, 41, 38, 1019, 39, 37,
-		1022, 1023, 18, 20, 16, 21, 19, 17, 1024,
-		29, 30, 31, 34, 35, 36,
-		22, 1057, 32, 1058, 33, 44, 45, 46, 47, 48, 49, 50, 243, 136,
-		51, 52, 53, 54, 55, 56, 57, 58,
-		72, 71, 70, 76, 75, 74, 73,
-		78, 79, 80, 81, 82,
-		60, 61, 62, 63, 64, 65, 66, 67,
-		59, 68, 69,
-		84, 85, 86, 87, 88, 89, 90, 91, 1051,
-		92, 93, 94, 95, 96, 97, 1044, 1045, 1046,
-		122, 123, 124, 125, 126, 127,
-		128, 129, 130, 131, 132, 133, 134, 135, 137, 138, 139, 140, 141, 142, 143,
-		144, 145, 146, 147, 148, 149,
-		158, 159, 160, 162, 163,
-		166, 167, 168, 169, 170, 171, 172, 173, 174, 175,
-		176, 1029, 177, 178, 179, 180, 181,
-		186, 187, 188, 189, 1025, 190, 191, 192, 1026, 193,
-		194, 195, 196, 197, 198,
-		202, 203, 204, 208, 209, 210, 211, 212, 215, 216,
-		1013, 1014, 1015, 1016, 1017,
-		1065, 1066, 1067, 1068, 1069,
-		1030, 1031, 1032, 1033, 1034,
-		1035, 1036, 1037, 1038, 1039, 1040, 1041, 1042, 1043,
-		1047, 1048, 1049, 1050,
-		1059, 1060, 1061, 1062, 1063,
-		1070, 1071, 1072, 1073, 1074, 1075, 1076, 1077, 1078,
-		1081, 1082,
+		5000, 5001,
 	]},
 	{"name": "Slopes", "ids": [
 		2000, 2001, 2002, 2003,
@@ -179,12 +151,32 @@ signal state_channel_changed(channel_id: int, value: int)
 func _ready() -> void:
 	# Load items_map.json
 	_load_items_map()
+	# Register custom blocks (40x40 textures scaled to 16x16)
+	_register_custom_blocks()
 	# Generate slope textures and register slope blocks
 	_generate_slopes()
 	# Build flat palette
 	_build_palette()
 	# Build action/hazard/door/key lookups and non-solid set
 	_build_lookups()
+
+func _register_custom_blocks() -> void:
+	var custom_blocks: Array = [
+		{"id": 5000, "path": "res://assets/sprites/NEW_BLOCK_SPRITE/block_1.png", "path16": "res://assets/sprites/NEW_BLOCK_SPRITE/block_1_16.png"},
+		{"id": 5001, "path": "res://assets/sprites/NEW_BLOCK_SPRITE/block_2.png", "path16": "res://assets/sprites/NEW_BLOCK_SPRITE/block_2_16.png"},
+	]
+	for cb in custom_blocks:
+		var tex: Texture2D = load(cb.path) as Texture2D
+		var tex16: Texture2D = load(cb.path16) as Texture2D
+		if tex:
+			_custom_block_textures[cb.id] = tex  # 40x40 for HUD preview
+			if tex16:
+				_custom_block_textures[cb.id * -1] = tex16  # 16x16 for grid (negative key)
+			_block_db[cb.id] = {"atlas": "custom", "layer": "foreground", "artoffset": 0, "custom_tex": true}
+			_solid_set[cb.id] = true
+
+func get_custom_block_texture_16(id: int) -> Texture2D:
+	return _custom_block_textures.get(id * -1, _custom_block_textures.get(id, null))
 
 func _load_items_map() -> void:
 	var path: String = "res://data/items_map.json"
@@ -411,6 +403,20 @@ func is_solid(id: int) -> bool:
 
 func is_solid_block(id: int) -> bool:
 	return _solid_set.has(id)
+
+func get_custom_block_texture(id: int) -> Texture2D:
+	return _custom_block_textures.get(id, null)
+
+func is_custom_block(id: int) -> bool:
+	return _custom_block_textures.has(id)
+
+var _custom_block_warps: Dictionary = {}  # block_id -> Vector2 warp
+
+func get_custom_block_warp(id: int) -> Vector2:
+	return _custom_block_warps.get(id, Vector2.ZERO)
+
+func set_custom_block_warp(id: int, warp: Vector2) -> void:
+	_custom_block_warps[id] = warp
 
 func is_hazard(id: int) -> bool:
 	return _hazard_set.has(id)

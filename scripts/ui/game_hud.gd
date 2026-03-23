@@ -330,6 +330,9 @@ func _make_block_thumbnail(block_id: int) -> Texture2D:
 					img.set_pixel(TILE_SIZE - 2 - p, p, Color(1, 0.2, 0.2, 0.5))
 		return ImageTexture.create_from_image(img)
 
+	# Custom blocks - return their texture directly
+	if GameState.is_custom_block(block_id):
+		return GameState.get_custom_block_texture(block_id)
 	# Slope blocks - return the pre-generated ImageTexture directly
 	if GameState.is_slope(block_id):
 		return GameState.get_slope_texture(block_id)

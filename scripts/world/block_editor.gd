@@ -352,18 +352,36 @@ func _input(event: InputEvent) -> void:
 					var cur: int = WorldManager.get_rotation(t.x, t.y)
 					WorldManager.set_rotation(t.x, t.y, (cur + 90) % 360)
 		# Arrow keys = nudge selected blocks
+		# Ctrl = 1px exact, Shift = 1.6px fine, Normal = 16px grid
 		if _align_has_sel and _align_sel_indices.size() > 0:
 			var nudge: Vector2 = Vector2.ZERO
-			var step: float = 16.0 if not Input.is_key_pressed(KEY_SHIFT) else 1.6
+			var step: float
+			if Input.is_key_pressed(KEY_CTRL):
+				step = 1.0
+			elif Input.is_key_pressed(KEY_SHIFT):
+				step = 1.6
+			else:
+				step = 16.0
 			if event.keycode == KEY_LEFT: nudge.x = -step
 			elif event.keycode == KEY_RIGHT: nudge.x = step
 			elif event.keycode == KEY_UP: nudge.y = -step
 			elif event.keycode == KEY_DOWN: nudge.y = step
 			if nudge != Vector2.ZERO:
-				_save_undo()
-				for si in _align_sel_indices:
-					if si < WorldManager.free_blocks.size():
-						WorldManager.free_blocks[si].pos += nudge
+				if Input.is_key_pressed(KEY_CTRL):
+					# Ctrl+Arrow = warp block visual size by 0.1px per axis
+					for si in _align_sel_indices:
+						if si < WorldManager.free_blocks.size():
+							var fb: Dictionary = WorldManager.free_blocks[si]
+							# Warp applies globally to this block type
+							var warp: Vector2 = GameState.get_custom_block_warp(fb.id)
+							warp += Vector2(nudge.x * 0.1, nudge.y * 0.1)
+							GameState.set_custom_block_warp(fb.id, warp)
+							push_warning("BLOCK_WARP id=%d warp=(%.1f,%.1f)" % [fb.id, warp.x, warp.y])
+				else:
+					_save_undo()
+					for si in _align_sel_indices:
+						if si < WorldManager.free_blocks.size():
+							WorldManager.free_blocks[si].pos += nudge
 				_align_wheel_pos += nudge
 				_align_origin += nudge
 				get_viewport().set_input_as_handled()
