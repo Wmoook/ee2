@@ -52,9 +52,10 @@ func _draw() -> void:
 		# back_half = true means top half (behind hole), false = bottom (in front)
 		for pass_idx in range(3):  # 0=back ring, 1=void+glow, 2=front ring
 			if pass_idx == 0 or pass_idx == 2:
-				# Accretion disk — 6 tightly-packed layers that blend together
-				for layer in range(6):
-					var layer_t: float = float(layer) / 5.0  # 0=inner, 1=outer
+				# Accretion disk — layers scale with size
+				var num_layers: int = mini(12, 6 + void_r / 8)
+				for layer in range(num_layers):
+					var layer_t: float = float(layer) / float(maxi(num_layers - 1, 1))
 					var layer_r: float = float(void_r) + 2.0 + layer_t * maxf(8.0, float(void_r) * 0.8)
 					var layer_count: int = mini(150, 40 + int(float(void_r) * 3.0))  # More pixels for bigger holes
 					var speed: float = 2.5 - layer_t * 1.0  # Inner spins faster
@@ -76,11 +77,16 @@ func _draw() -> void:
 						var g_c: float = lerpf(0.95, 0.4, layer_t) * a_bright
 						var b_c: float = lerpf(0.7, 0.1, layer_t) * a_bright * a_bright
 						var a_alpha: float = lerpf(1.0, 0.7, layer_t) * a_bright * bright * front_boost
-						draw_rect(Rect2(floor(a_pos.x), floor(a_pos.y), px_size, px_size), Color(r_c, g_c, b_c, minf(a_alpha, 1.0)))
-						# Second pixel offset for blending/thickness
-						if a_bright > 0.5:
-							var off: Vector2 = Vector2(cos(a_angle), sin(a_angle) * 0.4).normalized()
-							draw_rect(Rect2(floor(a_pos.x + off.x), floor(a_pos.y + off.y), px_size, px_size), Color(r_c, g_c, b_c, minf(a_alpha * 0.5, 1.0)))
+						# Cross cluster: center bright, arms dimmer (looks bigger, still pixel art)
+						var fx: float = floor(a_pos.x)
+						var fy: float = floor(a_pos.y)
+						var ac: Color = Color(r_c, g_c, b_c, minf(a_alpha, 1.0))
+						var ad: Color = Color(r_c, g_c, b_c, minf(a_alpha * 0.4, 1.0))
+						draw_rect(Rect2(fx, fy, 1, 1), ac)
+						draw_rect(Rect2(fx - 1, fy, 1, 1), ad)
+						draw_rect(Rect2(fx + 1, fy, 1, 1), ad)
+						draw_rect(Rect2(fx, fy - 1, 1, 1), ad)
+						draw_rect(Rect2(fx, fy + 1, 1, 1), ad)
 
 			elif pass_idx == 1:
 				# Void core — solid black circle (single draw for performance)
@@ -97,7 +103,15 @@ func _draw() -> void:
 					var e_r: float = float(void_r) + 1.0 + sin(e_angle * 4.0 + time * 2.5) * 0.5
 					var e_pos: Vector2 = center + Vector2(cos(e_angle), sin(e_angle)) * e_r
 					var e_pulse: float = 0.6 + 0.4 * sin(e_angle * 2.0 + time * 3.0)
-					draw_rect(Rect2(floor(e_pos.x), floor(e_pos.y), px_size, px_size), Color(1.0, 0.6 * e_pulse, 0.2 * e_pulse, e_pulse * bright))
+					var efx: float = floor(e_pos.x)
+					var efy: float = floor(e_pos.y)
+					var ec: Color = Color(1.0, 0.6 * e_pulse, 0.2 * e_pulse, e_pulse * bright)
+					var ed: Color = Color(1.0, 0.6 * e_pulse, 0.2 * e_pulse, e_pulse * bright * 0.4)
+					draw_rect(Rect2(efx, efy, 1, 1), ec)
+					draw_rect(Rect2(efx - 1, efy, 1, 1), ed)
+					draw_rect(Rect2(efx + 1, efy, 1, 1), ed)
+					draw_rect(Rect2(efx, efy - 1, 1, 1), ed)
+					draw_rect(Rect2(efx, efy + 1, 1, 1), ed)
 
 		# 4. Spiral streams — cool logarithmic spiral flowing INWARD
 		var spiral_count: int = mini(60, 24 + void_r)
