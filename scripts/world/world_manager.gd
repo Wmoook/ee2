@@ -840,7 +840,7 @@ func serialize_world() -> Dictionary:
 		var pts_arr: Array = []
 		for pt in poly.points:
 			pts_arr.append([pt.x, pt.y])
-		poly_data.append({"points": pts_arr, "side": poly.side})
+		poly_data.append({"points": pts_arr, "side": poly.side, "block_id": poly.get("block_id", 9)})
 	return {"width": world_width, "height": world_height, "fg": fg_data, "bg": bg_data,
 		"rotations": rot_data, "free_blocks": free_data, "lines": line_data,
 		"spawn_points": spawn_points.map(func(v): return [v.x, v.y]),
@@ -897,7 +897,8 @@ func deserialize_world(data: Dictionary) -> void:
 			if pt.size() >= 2:
 				packed_pts.append(Vector2(float(pt[0]), float(pt[1])))
 		var poly_side: String = str(pd.get("side", "top"))
-		add_polyline(packed_pts, poly_side)
+		var poly_bid: int = int(pd.get("block_id", 9))
+		add_polyline(packed_pts, poly_side, poly_bid)
 	# Gravity zones
 	gravity_zones.deserialize(data.get("gravity_zones", []))
 	world_loaded.emit()
