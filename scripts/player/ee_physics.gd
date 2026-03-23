@@ -223,38 +223,24 @@ func tick(input_h: int, input_v: int, space_just: bool, space_held: bool) -> voi
 	var _pre_step_y: float = y
 	_step_position()
 
-	# 7.05 Gap-assist: when falling past a 1x1 gap while holding toward it, ALWAYS enter
-	# Check ALL tile rows between pre-step and post-step Y (catches high-speed falls)
-	# 7.05 Gap-assist: when moving toward a wall, snap into any opening passed through
-	if not is_god_mode and absf(_last_input_h) > 0.01 and _collides_fn.is_valid():
-		var dir: int = 1 if _last_input_h > 0 else -1
-		# Find the nearest wall tile in the input direction (scan up to 16px out)
-		var wall_tx: int = -1
-		if dir > 0:
-			var start_tx: int = int(floor((x + 16) / 16.0))
-			for wtx in range(start_tx, start_tx + 2):
-				if _collides_fn.call(wtx, int(floor((y + 8) / 16.0))):
-					wall_tx = wtx
-					break
+
+	# 7.05 Gap-assist: when holding into wall + falling, snap into 1-tile gaps
+	if not is_god_mode and absf(_last_input_h) > 0.01 and absf(_speedX) < 0.1 and absf(_speedY) > 1.0 and _collides_fn.is_valid():
+		var gap_dir: int = 1 if _last_input_h > 0 else -1
+		var gap_wall_tx: int
+		if gap_dir > 0:
+			gap_wall_tx = int(floor((x + 16) / 16.0))
 		else:
-			var start_tx: int = int(floor((x - 1) / 16.0))
-			for wtx in range(start_tx, start_tx - 2, -1):
-				if _collides_fn.call(wtx, int(floor((y + 8) / 16.0))):
-					wall_tx = wtx
+			gap_wall_tx = int(floor((x - 1) / 16.0))
+		var gap_ty_min: int = int(floor(minf(_pre_step_y, y) / 16.0))
+		var gap_ty_max: int = int(floor(maxf(_pre_step_y + 15, y + 15) / 16.0))
+		for gap_ty in range(gap_ty_min, gap_ty_max + 1):
+			if not _collides_fn.call(gap_wall_tx, gap_ty) and _collides_fn.call(gap_wall_tx, gap_ty - 1) and _collides_fn.call(gap_wall_tx, gap_ty + 1):
+				var gap_snap_y: float = float(gap_ty) * 16.0
+				if not _collides_px(x, gap_snap_y):
+					y = gap_snap_y
+					_speedY = 0
 					break
-		if wall_tx >= 0:
-			# Scan tile rows the player passed through
-			var ty_min: int = int(floor(minf(_pre_step_y, y) / 16.0))
-			var ty_max: int = int(floor(maxf(_pre_step_y + 15, y + 15) / 16.0))
-			for ty in range(ty_min, ty_max + 1):
-				# Is this tile in the wall empty? (gap)
-				if not _collides_fn.call(wall_tx, ty):
-					var snap_y: float = float(ty) * 16.0
-					# Would player fit there? (check full collision at snapped position)
-					if not _collides_px(x, snap_y):
-						y = snap_y
-						_speedY = 0
-						break
 
 	# 7.15 Polyline collision — also check pre-step position for tunneling
 	if not is_god_mode and WorldManager.polylines.size() > 0:
