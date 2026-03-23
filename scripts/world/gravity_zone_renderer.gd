@@ -65,13 +65,13 @@ func _draw() -> void:
 							continue
 						if pass_idx == 0 and a_pos.distance_to(center) < float(void_r):
 							continue
-						var a_bright: float = 0.4 + 0.6 * maxf(0, sin(a_angle * 1.5 + time * 3.0 + float(layer) * 0.7))
-						var front_boost: float = 1.3 if pass_idx == 2 else 1.0
-						# Color gradient: inner = white-yellow hot, outer = deep red
+						var a_bright: float = 0.5 + 0.5 * maxf(0, sin(a_angle * 1.5 + time * 3.0 + float(layer) * 0.7))
+						var front_boost: float = 1.4 if pass_idx == 2 else 1.0
+						# Color gradient: inner = bright white-yellow, outer = orange
 						var r_c: float = 1.0
-						var g_c: float = lerpf(0.9, 0.15, layer_t) * a_bright
-						var b_c: float = lerpf(0.5, 0.0, layer_t) * a_bright * a_bright
-						var a_alpha: float = lerpf(0.9, 0.5, layer_t) * a_bright * bright * front_boost
+						var g_c: float = lerpf(0.95, 0.4, layer_t) * a_bright
+						var b_c: float = lerpf(0.7, 0.1, layer_t) * a_bright * a_bright
+						var a_alpha: float = lerpf(1.0, 0.7, layer_t) * a_bright * bright * front_boost
 						draw_rect(Rect2(floor(a_pos.x), floor(a_pos.y), 1, 1), Color(r_c, g_c, b_c, minf(a_alpha, 1.0)))
 						# Second pixel offset for blending/thickness
 						if a_bright > 0.5:
@@ -91,8 +91,8 @@ func _draw() -> void:
 					var e_angle: float = TAU * float(ei) / float(eh_count)
 					var e_r: float = float(void_r) + 1.0 + sin(e_angle * 4.0 + time * 2.5) * 0.5
 					var e_pos: Vector2 = center + Vector2(cos(e_angle), sin(e_angle)) * e_r
-					var e_pulse: float = 0.5 + 0.5 * sin(e_angle * 2.0 + time * 3.0)
-					draw_rect(Rect2(floor(e_pos.x), floor(e_pos.y), 1, 1), Color(1.0, 0.3 * e_pulse, 0.0, 0.9 * e_pulse * bright))
+					var e_pulse: float = 0.6 + 0.4 * sin(e_angle * 2.0 + time * 3.0)
+					draw_rect(Rect2(floor(e_pos.x), floor(e_pos.y), 1, 1), Color(1.0, 0.6 * e_pulse, 0.2 * e_pulse, e_pulse * bright))
 
 		# 4. Spiral streams being sucked in — dense, many particles
 		for si in range(24):
