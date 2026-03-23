@@ -483,15 +483,7 @@ func _input(event: InputEvent) -> void:
 	if not GameState.is_edit_mode:
 		return
 
-	# Tab / Shift+Tab to cycle categories
 	if event is InputEventKey and event.pressed and not event.echo:
-		if event.keycode == KEY_TAB:
-			if event.shift_pressed:
-				_cycle_category(-1)
-			else:
-				_cycle_category(1)
-			get_viewport().set_input_as_handled()
-
 		# Number keys 1-9 for quick block select within category
 		var key: int = event.keycode
 		if key >= KEY_1 and key <= KEY_9:
