@@ -127,16 +127,16 @@ func _draw() -> void:
 		for si in range(spiral_count):
 			var s_angle: float = TAU * float(si) / float(spiral_count) + time * 1.0
 			var s_phase: float = fmod(time * 0.5 + float(si) / float(spiral_count), 1.0)
-			# Logarithmic spiral: slow at edge, ACCELERATES hard into center
-			var accel: float = 1.0 - s_phase * s_phase * s_phase  # Cubic: slow start, fast finish
-			var s_r: float = maxf(radius * 0.8, float(void_r) + 5.0) * accel * accel
+			# Start exactly at border radius, accelerate into center
+			var accel: float = 1.0 - s_phase * s_phase * s_phase
+			var s_r: float = lerpf(float(void_r) + 2.0, radius, accel * accel)
 			var spiral_twist: float = s_phase * 6.0  # Lots of twist
 			var s_pos: Vector2 = center + Vector2(cos(s_angle + spiral_twist), sin(s_angle + spiral_twist)) * s_r
 			if s_pos.distance_to(center) < float(void_r) + 1.0:
 				continue
-			# Fade out as approaching center (consumed by the void)
-			var fade_near_center: float = clampf(s_r / (float(void_r) + 5.0), 0.0, 1.0)
-			var s_alpha: float = s_phase * fade_near_center * 2.5 * bright
+			# Visible from border, fade out near center (consumed by void)
+			var fade_near_center: float = clampf((s_r - float(void_r)) / maxf(radius * 0.3, 5.0), 0.0, 1.0)
+			var s_alpha: float = fade_near_center * 2.0 * bright
 			# Color: blue-white at border, orange-red near center
 			var rc: float = lerpf(0.4, 1.0, s_phase)
 			var gc: float = lerpf(0.6, 0.2, s_phase)
