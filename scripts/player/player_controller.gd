@@ -145,7 +145,23 @@ func _set_smiley(id: int) -> void:
 func _physics_process(delta: float) -> void:
 	if _is_dead:
 		_death_timer += delta
-		if _death_timer > 0.5:
+		# Spaghettification effect for gravity zone death
+		if _gz_death and _smiley_sprite:
+			var t: float = clampf(_death_timer / 0.4, 0.0, 1.0)
+			# Stretch toward black hole center, shrink perpendicular
+			var to_center: Vector2 = _gz_death_center - _visual_pos - Vector2(8, 8)
+			var stretch_angle: float = to_center.angle()
+			_smiley_sprite.rotation = stretch_angle + PI * 0.5
+			var stretch: float = 1.0 + t * 3.0  # Elongate
+			var squash: float = 1.0 - t * 0.8  # Narrow
+			var shrink: float = 1.0 - t * 0.9  # Shrink into nothing
+			_smiley_sprite.scale = Vector2(ANIM_SCALE * squash * shrink, (ANIM_SCALE + 0.35 * 2.0 / 40.0) * stretch * shrink)
+			# Pull position toward center
+			position = _visual_pos.lerp(_gz_death_center - Vector2(8, 8), t * t)
+			_smiley_sprite.modulate = Color(1, lerpf(1, 0.3, t), lerpf(1, 0.1, t), 1.0 - t * 0.5)
+			if t >= 1.0:
+				_smiley_sprite.visible = false
+		if _death_timer > 0.6:
 			_respawn()
 		return
 	if not is_local:
@@ -492,11 +508,11 @@ func _physics_process(delta: float) -> void:
 			if GameState.is_hazard(WorldManager.get_tile(t.x, t.y)):
 				_die()
 				return
-		# Gravity zone center = death
+		# Gravity zone center = death (spaghettification)
 		var player_center: Vector2 = Vector2(physics.x + 8, physics.y + 8)
 		for gz in WorldManager.gravity_zones.zones:
 			if player_center.distance_to(gz.center) < 10.0:
-				_die()
+				_die_gravity_zone(gz.center)
 				return
 	# OOB
 	if physics.y > WorldManager.world_height * 16 + 80:
@@ -672,16 +688,36 @@ func _get_free_block_action() -> Dictionary:
 				best_fb = {"id": fb.id, "rot": int(round(rot_deg))}
 	return best_fb
 
+var _gz_death: bool = false  # Dying from gravity zone
+var _gz_death_center: Vector2 = Vector2.ZERO
+
+func _die_gravity_zone(gz_center: Vector2) -> void:
+	if _is_dead: return
+	_gz_death = true
+	_gz_death_center = gz_center
+	_die()
+
 func _die() -> void:
 	if _is_dead: return
 	_is_dead = true
 	_death_timer = 0.0
-	_smiley_sprite.visible = false
 	_name_label.visible = false
+	# Clear fire trail
+	_fire_particles.clear()
+	_glow_intensity = 0.0
+	_prev_fire_pos = Vector2.ZERO
+	if _fire_layer:
+		_fire_layer.queue_redraw()
+	if not _gz_death:
+		_smiley_sprite.visible = false
 
 func _respawn() -> void:
 	_is_dead = false
+	_gz_death = false
 	_smiley_sprite.visible = true
+	_smiley_sprite.modulate = Color.WHITE
+	_smiley_sprite.scale = Vector2(ANIM_SCALE + 0.35 * 2.0 / 40.0, ANIM_SCALE + 0.35 * 2.0 / 40.0)
+	_smiley_sprite.rotation = 0.0
 	_name_label.visible = true
 	var sp: Vector2 = WorldManager.get_spawn_point()
 	physics.set_position_tiles(sp.x, sp.y)

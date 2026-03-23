@@ -45,36 +45,44 @@ func _draw() -> void:
 			var p_size: float = 1.5 + sin(time * 2.0 + float(i)) * 0.5
 			draw_circle(pos, p_size, Color(0.5, 0.4, 1.0, p_alpha))
 
-		# BLACK HOLE CENTER — deadly, menacing
+		# BLACK HOLE CENTER — deadly singularity
 		var glow_pulse: float = 0.5 + 0.3 * sin(time * 2.0)
-		var edit_mult: float = 1.0 if GameState.is_edit_mode else 0.6
+		var edit_mult: float = 1.0 if GameState.is_edit_mode else 0.7
 
-		# Dark void core
-		draw_circle(center, 8.0, Color(0.0, 0.0, 0.0, 0.95 * edit_mult))
-		draw_circle(center, 6.0, Color(0.02, 0.0, 0.05, 1.0 * edit_mult))
+		# Event horizon dark gradient (multiple layers for depth)
+		draw_circle(center, 14.0, Color(0.0, 0.0, 0.0, 0.3 * edit_mult))
+		draw_circle(center, 11.0, Color(0.0, 0.0, 0.0, 0.6 * edit_mult))
+		draw_circle(center, 8.0, Color(0.0, 0.0, 0.0, 0.9 * edit_mult))
+		draw_circle(center, 5.0, Color(0.0, 0.0, 0.0, 1.0))
 
-		# Danger ring — red/orange pulsing
-		var danger_r: float = 10.0 + sin(time * 3.0) * 1.5
-		draw_arc(center, danger_r, 0, TAU, 32, Color(1.0, 0.2, 0.0, 0.7 * glow_pulse * edit_mult), 1.5)
-		draw_arc(center, danger_r + 2.0, 0, TAU, 32, Color(1.0, 0.5, 0.0, 0.4 * glow_pulse * edit_mult), 1.0)
+		# Event horizon glow — thin bright ring at the boundary
+		var eh_r: float = 10.0 + sin(time * 1.5) * 0.5
+		draw_arc(center, eh_r, 0, TAU, 48, Color(1.0, 0.4, 0.0, 0.6 * glow_pulse * edit_mult), 1.5)
+		draw_arc(center, eh_r - 1.5, 0, TAU, 48, Color(1.0, 0.7, 0.2, 0.3 * glow_pulse * edit_mult), 0.8)
 
-		# Sucking-in spiral particles near center
-		for si in range(8):
-			var s_angle: float = TAU * float(si) / 8.0 + time * 1.5
-			var s_phase: float = fmod(time * 0.8 + float(si) * 0.125, 1.0)
-			var s_r: float = 20.0 * (1.0 - s_phase)  # Spirals inward
-			var s_pos: Vector2 = center + Vector2(cos(s_angle + s_phase * 2.0), sin(s_angle + s_phase * 2.0)) * s_r
-			var s_alpha: float = s_phase * (1.0 - s_phase) * 3.0 * edit_mult
-			var s_col: Color = Color(1.0, lerpf(0.1, 0.6, s_phase), 0.0, s_alpha * 0.8)
-			draw_circle(s_pos, 1.5 * (1.0 - s_phase), s_col)
+		# Accretion disk — elliptical ring of matter spiraling in
+		for ai in range(20):
+			var a_angle: float = TAU * float(ai) / 20.0 + time * 2.0
+			var a_r: float = 12.0 + sin(a_angle * 2.0 + time * 3.0) * 2.0
+			# Slight vertical squash for 3D perspective feel
+			var a_pos: Vector2 = center + Vector2(cos(a_angle) * a_r, sin(a_angle) * a_r * 0.6)
+			var a_bright: float = 0.4 + 0.6 * maxf(0, sin(a_angle + time * 3.0))
+			var a_size: float = 1.0 + a_bright * 0.5
+			draw_circle(a_pos, a_size, Color(1.0, 0.6 * a_bright, 0.1 * a_bright, 0.7 * a_bright * edit_mult))
 
-		# Accretion ring — fast-spinning bright ring just outside the kill zone
-		for ai in range(12):
-			var a_angle: float = TAU * float(ai) / 12.0 + time * 2.5
-			var a_r: float = 12.0 + sin(a_angle * 3.0 + time) * 1.5
-			var a_pos: Vector2 = center + Vector2(cos(a_angle), sin(a_angle)) * a_r
-			var a_bright: float = 0.5 + 0.5 * sin(a_angle * 2.0 + time * 4.0)
-			draw_circle(a_pos, 1.0, Color(1.0, 0.8 * a_bright, 0.3 * a_bright, 0.6 * a_bright * edit_mult))
+		# Sucking-in spiral streams (matter falling in)
+		for si in range(12):
+			var s_angle: float = TAU * float(si) / 12.0 + time * 1.2
+			var s_phase: float = fmod(time * 0.6 + float(si) * 0.083, 1.0)
+			var s_r: float = 25.0 * (1.0 - s_phase * s_phase)  # Accelerates inward
+			var spiral_twist: float = s_phase * 3.0  # Tighter spiral near center
+			var s_pos: Vector2 = center + Vector2(cos(s_angle + spiral_twist), sin(s_angle + spiral_twist)) * s_r
+			var s_alpha: float = s_phase * (1.0 - s_phase) * 2.5 * edit_mult
+			# Color shifts from blue-white (far) to orange-red (near)
+			var r_col: float = lerpf(0.5, 1.0, s_phase)
+			var g_col: float = lerpf(0.7, 0.2, s_phase)
+			var b_col: float = lerpf(1.0, 0.0, s_phase)
+			draw_circle(s_pos, 1.2 * (1.0 - s_phase * 0.7), Color(r_col, g_col, b_col, s_alpha))
 
 		# Inward flow lines (6 lines pointing toward center)
 		var num_lines: int = 6
