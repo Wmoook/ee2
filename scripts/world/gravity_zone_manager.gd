@@ -35,7 +35,11 @@ func get_gravity_at(px: float, py: float) -> Dictionary:
 		var dist: float = to_center.length()
 		if dist < gz.radius and dist > 0.1:
 			result.in_zone = true
-			result.direction += to_center.normalized() * gz.strength
+			# Gravity gets stronger closer to center (inverse distance)
+			# Edge = 0.5x strength, center = 3x strength
+			var dist_ratio: float = 1.0 - (dist / gz.radius)  # 0 at edge, 1 at center
+			var pull_mult: float = 0.5 + dist_ratio * dist_ratio * 2.5  # 0.5x to 3x
+			result.direction += to_center.normalized() * gz.strength * pull_mult
 	return result
 
 func serialize() -> Array:
