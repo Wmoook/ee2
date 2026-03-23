@@ -609,12 +609,7 @@ func _input(event: InputEvent) -> void:
 				_grav_zone_center_r = 8.0
 			queue_redraw()
 			return
-		# During drag: shift released = switch from center sizing to radius sizing
-		if _grav_zone_dragging and _grav_zone_phase == 1 and not Input.is_key_pressed(KEY_SHIFT):
-			_grav_zone_center_r = maxf(4.0, _grav_zone_center.distance_to(get_global_mouse_position()))
-			_grav_zone_phase = 2  # Now sizing outer radius
-			queue_redraw()
-			return
+		# Phase transition also checked in motion handler above
 		if event.is_action_released("place_block") and _grav_zone_dragging:
 			var r: float = _grav_zone_center.distance_to(get_global_mouse_position())
 			if _grav_zone_phase == 2 and r > _grav_zone_center_r + 5:
@@ -638,20 +633,14 @@ func _input(event: InputEvent) -> void:
 				WorldManager.gravity_zones.remove_zone_near(get_global_mouse_position())
 			queue_redraw()
 			return
-		if event is InputEventMouseMotion and _grav_zone_dragging:
+		if (event is InputEventMouseMotion or event is InputEventKey) and _grav_zone_dragging:
+			# Phase 1: sizing center (shift held)
 			if _grav_zone_phase == 1:
 				_grav_zone_center_r = maxf(4.0, _grav_zone_center.distance_to(get_global_mouse_position()))
-				# Check if shift released — transition to phase 2
 				if not Input.is_key_pressed(KEY_SHIFT):
 					_grav_zone_phase = 2
 			queue_redraw()
 			return
-		# Also check shift release via key event
-		if event is InputEventKey and _grav_zone_dragging and _grav_zone_phase == 1:
-			if not Input.is_key_pressed(KEY_SHIFT):
-				_grav_zone_phase = 2
-				queue_redraw()
-				return
 
 	# Curve mode (before align/selection so it gets clicks)
 	if _curve_mode:
@@ -1389,9 +1378,13 @@ func _process(_delta: float) -> void:
 		var vps_gz: Vector2 = get_viewport().get_visible_rect().size
 		_grav_zone_btn.position = Vector2(vps_gz.x - 330, 320)
 		if _grav_zone_mode:
-			_grav_zone_btn.modulate = Color(0.8, 0.3, 1.0)  # Purple when active
+			_grav_zone_btn.modulate = Color(0.8, 0.3, 1.0)
 		else:
 			_grav_zone_btn.modulate = Color.WHITE
+		# Poll shift state for gravity zone phase transition
+		if _grav_zone_dragging and _grav_zone_phase == 1 and not Input.is_key_pressed(KEY_SHIFT):
+			_grav_zone_phase = 2
+			queue_redraw()
 	# Group filter position (bottom-right)
 	var gf_node: Control = _ui_layer.get_node_or_null("GroupFilter")
 	if gf_node:
