@@ -348,7 +348,7 @@ func enforce_polyline_hard_constraint(px: float, py: float, prev_px: float, prev
 	var cy: float = py + 8.0
 	var prev_cx: float = prev_px + 8.0
 	var prev_cy: float = prev_py + 8.0
-	var min_dist: float = 16.5  # 8 player half + 8.35 curve visual half + 0.15 margin
+	var min_dist: float = 16.1  # 8 player half + 8.35 curve visual half + 0.15 margin
 	var total_push: Vector2 = Vector2.ZERO
 	var best_normal: Vector2 = Vector2.ZERO
 	var best_tangent: Vector2 = Vector2(1, 0)
@@ -426,7 +426,7 @@ func check_curve_wall(cx: float, cy: float, stick_poly: int, stick_arc: float, a
 	## Uses arc-length distance to exclude the riding zone on the stick poly.
 	## stick_poly=-1 means no exclusion (everything is a wall).
 	## Returns {blocked: bool, push: Vector2}
-	var min_dist: float = 16.5
+	var min_dist: float = 16.1
 	var best_pen: float = 0.0
 	var best_push: Vector2 = Vector2.ZERO
 	var _best_wall_arc: float = -1.0

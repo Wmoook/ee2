@@ -701,7 +701,7 @@ func tick(input_h: int, input_v: int, space_just: bool, space_held: bool) -> voi
 			_wedge_protect = 100
 			_wedge_clear_ticks = 0
 			if _s_arc >= 0:
-				_wedge_arc = _s_arc  # Remember arc at wedge time
+				_wedge_arc = _s_arc
 		elif is_wedged:
 			_wedge_clear_ticks += 1
 			if _wedge_clear_ticks >= 3:
