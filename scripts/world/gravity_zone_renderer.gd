@@ -45,11 +45,36 @@ func _draw() -> void:
 			var p_size: float = 1.5 + sin(time * 2.0 + float(i)) * 0.5
 			draw_circle(pos, p_size, Color(0.5, 0.4, 1.0, p_alpha))
 
-		# Center glow — subtle pulsing dot
-		var glow_pulse: float = 0.5 + 0.3 * sin(time * 1.5)
-		var glow_alpha: float = glow_pulse * (0.6 if GameState.is_edit_mode else 0.2)
-		draw_circle(center, 5.0 + sin(time) * 1.5, Color(0.8, 0.5, 1.0, glow_alpha * 0.4))
-		draw_circle(center, 3.0, Color(0.9, 0.7, 1.0, glow_alpha))
+		# BLACK HOLE CENTER — deadly, menacing
+		var glow_pulse: float = 0.5 + 0.3 * sin(time * 2.0)
+		var edit_mult: float = 1.0 if GameState.is_edit_mode else 0.6
+
+		# Dark void core
+		draw_circle(center, 8.0, Color(0.0, 0.0, 0.0, 0.95 * edit_mult))
+		draw_circle(center, 6.0, Color(0.02, 0.0, 0.05, 1.0 * edit_mult))
+
+		# Danger ring — red/orange pulsing
+		var danger_r: float = 10.0 + sin(time * 3.0) * 1.5
+		draw_arc(center, danger_r, 0, TAU, 32, Color(1.0, 0.2, 0.0, 0.7 * glow_pulse * edit_mult), 1.5)
+		draw_arc(center, danger_r + 2.0, 0, TAU, 32, Color(1.0, 0.5, 0.0, 0.4 * glow_pulse * edit_mult), 1.0)
+
+		# Sucking-in spiral particles near center
+		for si in range(8):
+			var s_angle: float = TAU * float(si) / 8.0 + time * 1.5
+			var s_phase: float = fmod(time * 0.8 + float(si) * 0.125, 1.0)
+			var s_r: float = 20.0 * (1.0 - s_phase)  # Spirals inward
+			var s_pos: Vector2 = center + Vector2(cos(s_angle + s_phase * 2.0), sin(s_angle + s_phase * 2.0)) * s_r
+			var s_alpha: float = s_phase * (1.0 - s_phase) * 3.0 * edit_mult
+			var s_col: Color = Color(1.0, lerpf(0.1, 0.6, s_phase), 0.0, s_alpha * 0.8)
+			draw_circle(s_pos, 1.5 * (1.0 - s_phase), s_col)
+
+		# Accretion ring — fast-spinning bright ring just outside the kill zone
+		for ai in range(12):
+			var a_angle: float = TAU * float(ai) / 12.0 + time * 2.5
+			var a_r: float = 12.0 + sin(a_angle * 3.0 + time) * 1.5
+			var a_pos: Vector2 = center + Vector2(cos(a_angle), sin(a_angle)) * a_r
+			var a_bright: float = 0.5 + 0.5 * sin(a_angle * 2.0 + time * 4.0)
+			draw_circle(a_pos, 1.0, Color(1.0, 0.8 * a_bright, 0.3 * a_bright, 0.6 * a_bright * edit_mult))
 
 		# Inward flow lines (6 lines pointing toward center)
 		var num_lines: int = 6

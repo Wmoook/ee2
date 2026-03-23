@@ -492,6 +492,12 @@ func _physics_process(delta: float) -> void:
 			if GameState.is_hazard(WorldManager.get_tile(t.x, t.y)):
 				_die()
 				return
+		# Gravity zone center = death
+		var player_center: Vector2 = Vector2(physics.x + 8, physics.y + 8)
+		for gz in WorldManager.gravity_zones.zones:
+			if player_center.distance_to(gz.center) < 10.0:
+				_die()
+				return
 	# OOB
 	if physics.y > WorldManager.world_height * 16 + 80:
 		_die()
