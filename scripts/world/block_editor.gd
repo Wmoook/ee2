@@ -274,7 +274,8 @@ func _ready() -> void:
 	_save_btn.size = Vector2(90, 25)
 	_save_btn.add_theme_font_size_override("font_size", 10)
 	_save_btn.pressed.connect(func():
-		WorldManager.save_to_file("user://world_save.json")
+		var err = WorldManager.save_to_file("user://world_save.json")
+		push_warning("SAVE result=%d" % err)
 	)
 	_ui_layer.add_child(_save_btn)
 
