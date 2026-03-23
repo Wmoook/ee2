@@ -148,19 +148,21 @@ func _physics_process(delta: float) -> void:
 		# Spaghettification effect for gravity zone death
 		if _gz_death and _smiley_sprite:
 			var t: float = clampf(_death_timer / 0.5, 0.0, 1.0)
-			var to_center: Vector2 = _gz_death_center - _visual_pos - Vector2(8, 8)
+			var to_center: Vector2 = _gz_death_center - (_visual_pos + Vector2(8, 8))
 			var stretch_angle: float = to_center.angle()
-			# Rotate sprite to POINT toward black hole
-			_smiley_sprite.rotation = stretch_angle
-			# X = direction TOWARD hole (stretches long), Y = perpendicular (gets thin)
-			var stretch: float = 1.0 + t * t * 5.0  # Extreme elongation toward hole
-			var thin: float = maxf(0.05, 1.0 - t * t * 0.95)  # Gets paper-thin
+			# Rotate to point toward hole
+			_smiley_sprite.rotation = stretch_angle + PI * 0.5
+			# Stretch along the direction INTO the hole, get thin perpendicular
+			# Y = toward hole (stretch), X = perpendicular (thin)
 			var base_s: float = ANIM_SCALE + 0.35 * 2.0 / 40.0
-			_smiley_sprite.scale = Vector2(base_s * stretch, base_s * thin)
-			# Accelerate toward center (starts slow, gets fast)
+			var stretch_y: float = lerpf(1.0, 2.5, t * t)  # Elongate toward hole
+			var thin_x: float = lerpf(1.0, 0.1, t * t)  # Get very thin
+			var shrink: float = lerpf(1.0, 0.0, t * t * t)  # Shrink to nothing at end
+			_smiley_sprite.scale = Vector2(base_s * thin_x * shrink, base_s * stretch_y * shrink)
+			# Pull position INTO the hole (cubic acceleration)
 			position = _visual_pos.lerp(_gz_death_center - Vector2(8, 8), t * t * t)
-			# Color: turns red-hot as it gets sucked in
-			_smiley_sprite.modulate = Color(1, lerpf(1, 0.15, t), lerpf(1, 0.0, t), 1.0 - t * 0.3)
+			# Turn red-hot, fade out
+			_smiley_sprite.modulate = Color(1, lerpf(1, 0.1, t), lerpf(1, 0.0, t), lerpf(1.0, 0.0, t * t))
 			if t >= 1.0:
 				_smiley_sprite.visible = false
 		if _death_timer > 0.7:

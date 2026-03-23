@@ -20,16 +20,20 @@ func _draw() -> void:
 			draw_arc(center, radius, 0, TAU, 64, Color(0.7, 0.2, 1.0, 0.5), 2.0)
 			draw_circle(center, 4.0, Color(0.7, 0.2, 1.0, 0.8))
 
-		# Pulsing concentric rings that flow INWARD (show pull direction)
+		# Pulsing concentric rings — pixel dots, not smooth arcs
 		for i in range(4):
 			var phase: float = fmod(time * 0.4 + float(i) * 0.25, 1.0)
-			var ring_r: float = radius * (1.0 - phase)  # Shrinks inward
-			var ring_alpha: float = phase * (1.0 - phase) * 2.5  # Fade in then out
+			var ring_r: float = radius * (1.0 - phase)
+			var ring_alpha: float = phase * (1.0 - phase) * 2.5
 			if GameState.is_edit_mode:
 				ring_alpha *= 0.8
 			else:
-				ring_alpha *= 0.25  # Subtle in play mode
-			draw_arc(center, ring_r, 0, TAU, 48, Color(0.6, 0.3, 1.0, ring_alpha), 1.0)
+				ring_alpha *= 0.25
+			var ring_pts: int = int(ring_r * 1.5) + 8
+			for ri in range(ring_pts):
+				var r_angle: float = TAU * float(ri) / float(ring_pts)
+				var r_pos: Vector2 = center + Vector2(cos(r_angle), sin(r_angle)) * ring_r
+				draw_rect(Rect2(floor(r_pos.x), floor(r_pos.y), 1, 1), Color(0.6, 0.3, 1.0, ring_alpha))
 
 		# Orbiting particles around the edge
 		var num_particles: int = int(radius / 15.0) + 4
@@ -48,16 +52,24 @@ func _draw() -> void:
 		var glow_pulse: float = 0.5 + 0.3 * sin(time * 2.0)
 		var edit_mult: float = 1.0 if GameState.is_edit_mode else 0.7
 
-		# Event horizon dark gradient (multiple layers for depth)
-		draw_circle(center, 14.0, Color(0.0, 0.0, 0.0, 0.3 * edit_mult))
-		draw_circle(center, 11.0, Color(0.0, 0.0, 0.0, 0.6 * edit_mult))
-		draw_circle(center, 8.0, Color(0.0, 0.0, 0.0, 0.9 * edit_mult))
-		draw_circle(center, 5.0, Color(0.0, 0.0, 0.0, 1.0))
+		# Event horizon — ALL PIXELS, no smooth circles
+		# Draw void core as filled pixel grid
+		var core_r: int = 6
+		for px in range(-core_r, core_r + 1):
+			for py in range(-core_r, core_r + 1):
+				var dist: float = Vector2(px, py).length()
+				if dist <= float(core_r):
+					var alpha: float = 1.0 if dist < 4.0 else lerpf(1.0, 0.3, (dist - 4.0) / 3.0)
+					draw_rect(Rect2(floor(center.x) + px, floor(center.y) + py, 1, 1), Color(0.0, 0.0, 0.0, alpha * edit_mult))
 
-		# Event horizon glow — thin bright ring at the boundary
-		var eh_r: float = 10.0 + sin(time * 1.5) * 0.5
-		draw_arc(center, eh_r, 0, TAU, 48, Color(1.0, 0.4, 0.0, 0.6 * glow_pulse * edit_mult), 1.5)
-		draw_arc(center, eh_r - 1.5, 0, TAU, 48, Color(1.0, 0.7, 0.2, 0.3 * glow_pulse * edit_mult), 0.8)
+		# Event horizon glow ring — individual pixels around the edge
+		var eh_r: float = 8.0
+		for ei in range(40):
+			var e_angle: float = TAU * float(ei) / 40.0
+			var e_dist: float = eh_r + sin(e_angle * 3.0 + time * 2.0) * 1.0
+			var e_pos: Vector2 = center + Vector2(cos(e_angle), sin(e_angle)) * e_dist
+			var e_bright: float = 0.5 + 0.5 * sin(e_angle * 2.0 + time * 3.0)
+			draw_rect(Rect2(floor(e_pos.x), floor(e_pos.y), 1, 1), Color(1.0, 0.4 * e_bright, 0.0, 0.8 * glow_pulse * edit_mult))
 
 		# Accretion disk — 1px rects, draw BEHIND the void (only visible outside core)
 		for ai in range(30):
@@ -71,9 +83,11 @@ func _draw() -> void:
 			var col: Color = Color(1.0, 0.6 * a_bright, 0.1 * a_bright, 0.9 * a_bright * edit_mult)
 			draw_rect(Rect2(floor(a_pos.x), floor(a_pos.y), 1, 1), col)
 
-		# Redraw void core ON TOP of accretion disk (hides ring behind it)
-		draw_circle(center, 8.0, Color(0.0, 0.0, 0.0, 0.95 * edit_mult))
-		draw_circle(center, 5.0, Color(0.0, 0.0, 0.0, 1.0))
+		# Redraw void core ON TOP of accretion disk (pixel grid)
+		for px in range(-5, 6):
+			for py in range(-5, 6):
+				if Vector2(px, py).length() <= 5.0:
+					draw_rect(Rect2(floor(center.x) + px, floor(center.y) + py, 1, 1), Color(0.0, 0.0, 0.0, 1.0))
 
 		# Sucking-in spiral streams — 1px rects like fire trail
 		for si in range(16):
