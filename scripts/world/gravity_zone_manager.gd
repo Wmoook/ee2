@@ -8,8 +8,8 @@ var zones: Array = []
 
 signal zones_changed()
 
-func add_zone(center: Vector2, radius: float, strength: float = 2.0) -> void:
-	zones.append({"center": center, "radius": radius, "strength": strength})
+func add_zone(center: Vector2, radius: float, strength: float = 2.0, center_radius: float = 8.0) -> void:
+	zones.append({"center": center, "radius": radius, "strength": strength, "center_radius": center_radius})
 	zones_changed.emit()
 
 func remove_zone_near(pos: Vector2, threshold: float = 24.0) -> void:
@@ -41,7 +41,7 @@ func get_gravity_at(px: float, py: float) -> Dictionary:
 func serialize() -> Array:
 	var data: Array = []
 	for gz in zones:
-		data.append({"cx": gz.center.x, "cy": gz.center.y, "r": gz.radius, "s": gz.strength})
+		data.append({"cx": gz.center.x, "cy": gz.center.y, "r": gz.radius, "s": gz.strength, "cr": gz.get("center_radius", 8.0)})
 	return data
 
 func deserialize(data: Array) -> void:
@@ -50,7 +50,8 @@ func deserialize(data: Array) -> void:
 		zones.append({
 			"center": Vector2(gz.get("cx", 0), gz.get("cy", 0)),
 			"radius": gz.get("r", 50),
-			"strength": gz.get("s", 2.0)
+			"strength": gz.get("s", 2.0),
+			"center_radius": gz.get("cr", 8.0)
 		})
 	zones_changed.emit()
 

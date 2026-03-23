@@ -515,7 +515,8 @@ func _physics_process(delta: float) -> void:
 		# Gravity zone center = death (spaghettification)
 		var player_center: Vector2 = Vector2(physics.x + 8, physics.y + 8)
 		for gz in WorldManager.gravity_zones.zones:
-			if player_center.distance_to(gz.center) < 10.0:
+			var kill_r: float = gz.get("center_radius", 8.0) + 2.0
+			if player_center.distance_to(gz.center) < kill_r:
 				_die_gravity_zone(gz.center)
 				return
 	# OOB

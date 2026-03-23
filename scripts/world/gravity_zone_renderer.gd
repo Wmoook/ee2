@@ -43,7 +43,7 @@ func _draw() -> void:
 
 		# --- BLACK HOLE CENTER ---
 
-		var void_r: int = 8
+		var void_r: int = int(round(gz.get("center_radius", 8.0)))
 
 		# --- DRAW ORDER: back ring → void → front ring (Saturn's rings illusion) ---
 
@@ -54,7 +54,7 @@ func _draw() -> void:
 				# Accretion disk — 6 tightly-packed layers that blend together
 				for layer in range(6):
 					var layer_t: float = float(layer) / 5.0  # 0=inner, 1=outer
-					var layer_r: float = 10.0 + layer_t * 8.0
+					var layer_r: float = float(void_r) + 2.0 + layer_t * maxf(8.0, float(void_r) * 0.8)
 					var layer_count: int = 70
 					var speed: float = 2.5 - layer_t * 1.0  # Inner spins faster
 					for ai in range(layer_count):
@@ -89,7 +89,7 @@ func _draw() -> void:
 							draw_rect(Rect2(cx + px, cy + py, 1, 1), Color(0.0, 0.0, 0.0, 1.0))
 
 				# Event horizon glow ring
-				var eh_count: int = 60
+				var eh_count: int = maxi(30, void_r * 8)
 				for ei in range(eh_count):
 					var e_angle: float = TAU * float(ei) / float(eh_count)
 					var e_r: float = float(void_r) + 1.0 + sin(e_angle * 4.0 + time * 2.5) * 0.5
@@ -103,7 +103,7 @@ func _draw() -> void:
 			var s_phase: float = fmod(time * 0.5 + float(si) * 0.042, 1.0)
 			# Logarithmic spiral: slow at edge, ACCELERATES hard into center
 			var accel: float = 1.0 - s_phase * s_phase * s_phase  # Cubic: slow start, fast finish
-			var s_r: float = radius * 0.8 * accel * accel  # Double cubic = extreme acceleration
+			var s_r: float = maxf(radius * 0.8, float(void_r) + 5.0) * accel * accel
 			var spiral_twist: float = s_phase * 6.0  # Lots of twist
 			var s_pos: Vector2 = center + Vector2(cos(s_angle + spiral_twist), sin(s_angle + spiral_twist)) * s_r
 			if s_pos.distance_to(center) < float(void_r) + 1.0:

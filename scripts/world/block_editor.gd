@@ -51,7 +51,9 @@ var _ctrl_line_active: bool = false
 # Gravity zone tool
 var _grav_zone_mode: bool = false
 var _grav_zone_dragging: bool = false
+var _grav_zone_phase: int = 0  # 0=not placing, 1=sizing center (shift), 2=sizing radius
 var _grav_zone_center: Vector2 = Vector2.ZERO
+var _grav_zone_center_r: float = 8.0
 var _grav_zone_btn: Button
 
 var _spin_btn: Button
@@ -595,27 +597,51 @@ func _input(event: InputEvent) -> void:
 	if _is_mouse_over_ui():
 		return
 
-	# Gravity zone mode: click+drag to create circle
+	# Gravity zone mode: Shift+drag = center size, then drag = outer radius
 	if _grav_zone_mode:
 		if event.is_action_pressed("place_block"):
 			_grav_zone_center = get_global_mouse_position()
 			_grav_zone_dragging = true
+			if Input.is_key_pressed(KEY_SHIFT):
+				_grav_zone_phase = 1  # Sizing center
+			else:
+				_grav_zone_phase = 2  # Sizing radius (default center)
+				_grav_zone_center_r = 8.0
+			queue_redraw()
+			return
+		# During drag: shift released = switch from center sizing to radius sizing
+		if _grav_zone_dragging and _grav_zone_phase == 1 and not Input.is_key_pressed(KEY_SHIFT):
+			_grav_zone_center_r = maxf(4.0, _grav_zone_center.distance_to(get_global_mouse_position()))
+			_grav_zone_phase = 2  # Now sizing outer radius
 			queue_redraw()
 			return
 		if event.is_action_released("place_block") and _grav_zone_dragging:
+			if _grav_zone_phase == 1:
+				# Still in center phase — set center size and switch to radius
+				_grav_zone_center_r = maxf(4.0, _grav_zone_center.distance_to(get_global_mouse_position()))
+				_grav_zone_phase = 2
+				queue_redraw()
+				return
 			var r: float = _grav_zone_center.distance_to(get_global_mouse_position())
-			if r > 8:
+			if r > _grav_zone_center_r + 5:
 				_save_undo()
-				WorldManager.gravity_zones.add_zone(_grav_zone_center, r)
+				WorldManager.gravity_zones.add_zone(_grav_zone_center, r, 2.0, _grav_zone_center_r)
 			_grav_zone_dragging = false
+			_grav_zone_phase = 0
 			queue_redraw()
 			return
 		if event.is_action_pressed("remove_block"):
-			_save_undo()
-			WorldManager.gravity_zones.remove_zone_near(get_global_mouse_position())
+			if _grav_zone_dragging:
+				_grav_zone_dragging = false
+				_grav_zone_phase = 0
+			else:
+				_save_undo()
+				WorldManager.gravity_zones.remove_zone_near(get_global_mouse_position())
 			queue_redraw()
 			return
 		if event is InputEventMouseMotion and _grav_zone_dragging:
+			if _grav_zone_phase == 1:
+				_grav_zone_center_r = maxf(4.0, _grav_zone_center.distance_to(get_global_mouse_position()))
 			queue_redraw()
 			return
 
@@ -1594,9 +1620,16 @@ func _draw() -> void:
 		draw_circle(gz.center, 4.0, Color(0.8, 0.2, 1.0, 0.8))
 	# Gravity zone drag preview
 	if _grav_zone_mode and _grav_zone_dragging:
-		var preview_r: float = _grav_zone_center.distance_to(get_global_mouse_position())
-		draw_arc(_grav_zone_center, preview_r, 0, TAU, 64, Color(0.8, 0.2, 1.0, 0.4), 1.5)
-		draw_circle(_grav_zone_center, 4.0, Color(0.8, 0.2, 1.0, 0.7))
+		var mouse_r: float = _grav_zone_center.distance_to(get_global_mouse_position())
+		if _grav_zone_phase == 1:
+			# Sizing center — show center circle
+			draw_arc(_grav_zone_center, mouse_r, 0, TAU, 48, Color(1.0, 0.3, 0.0, 0.6), 2.0)
+			draw_circle(_grav_zone_center, 3.0, Color(1.0, 0.3, 0.0, 0.8))
+		elif _grav_zone_phase == 2:
+			# Sizing radius — show center + outer ring
+			draw_arc(_grav_zone_center, _grav_zone_center_r, 0, TAU, 48, Color(1.0, 0.3, 0.0, 0.5), 1.5)
+			draw_arc(_grav_zone_center, mouse_r, 0, TAU, 64, Color(0.8, 0.2, 1.0, 0.4), 1.5)
+			draw_circle(_grav_zone_center, 3.0, Color(0.8, 0.2, 1.0, 0.7))
 	# Mode indicator
 	if _grav_zone_mode:
 		var ct2: Transform2D = get_viewport().get_canvas_transform()
