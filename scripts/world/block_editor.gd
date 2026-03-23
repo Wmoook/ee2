@@ -1188,7 +1188,7 @@ func _process(_delta: float) -> void:
 						# End cap blocks: centered at endpoints, rotated to tangent
 						# Start cap: direction from point 0 toward point 1
 						var s_dir: Vector2 = (spline_pts[1] - spline_pts[0]).normalized()
-						var s_pos: Vector2 = spline_pts[0] - s_dir * 7.0 - Vector2(8, 8)
+						var s_pos: Vector2 = spline_pts[0] - s_dir * 7.7 - Vector2(8, 8)
 						var s_rot: float = rad_to_deg(atan2(s_dir.y, s_dir.x))
 						WorldManager.free_blocks.append({"pos": s_pos, "id": GameState.selected_block_id, "rotation": s_rot})
 						# End cap: spline already truncated to 16px boundary
@@ -1199,7 +1199,7 @@ func _process(_delta: float) -> void:
 								e_ref_idx = _ei
 								break
 						var e_dir: Vector2 = (spline_pts[-1] - spline_pts[e_ref_idx]).normalized()
-						var e_pos: Vector2 = spline_pts[-1] + e_dir * 8.0 - Vector2(8, 8)
+						var e_pos: Vector2 = spline_pts[-1] + e_dir * 7.7 - Vector2(8, 8)
 						# Check what render_dists ended up as
 						var _rd: Array = WorldManager.polylines[-1].get("render_dists", [])
 						var _rd_total: float = _rd[-1] if _rd.size() > 0 else -1.0
@@ -1208,7 +1208,7 @@ func _process(_delta: float) -> void:
 						var e_rot: float = rad_to_deg(atan2(e_dir.y, e_dir.x))
 						var tile_count: int = int(_tlen / 16.0)
 						var end_fb: Dictionary = {"pos": e_pos, "id": GameState.selected_block_id, "rotation": e_rot}
-						if tile_count % 2 == 1:
+						if tile_count % 2 == 0:
 							end_fb["flip_h"] = true
 						WorldManager.free_blocks.append(end_fb)
 				_curve_points.clear()
