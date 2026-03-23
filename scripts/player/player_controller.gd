@@ -226,9 +226,7 @@ func _physics_process(delta: float) -> void:
 			_snap_to_grid = true
 	if _snap_to_grid:
 		_visual_pos = Vector2(floor(_phys_pos.x), floor(_phys_pos.y))
-		# Nudge down to close sub-pixel gap from floor()
-		if _phys_pos.y - floor(_phys_pos.y) > 0.4:
-			_visual_pos.y += 0.4
+		# (Y nudge removed — warp handles alignment now)
 	elif physics.on_rotated_block:
 		_visual_pos = _phys_pos  # Sub-pixel = smooth diagonal on curves/slopes
 	else:
