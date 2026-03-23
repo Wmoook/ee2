@@ -97,30 +97,33 @@ func _draw() -> void:
 					var e_pulse: float = 0.6 + 0.4 * sin(e_angle * 2.0 + time * 3.0)
 					draw_rect(Rect2(floor(e_pos.x), floor(e_pos.y), 1, 1), Color(1.0, 0.6 * e_pulse, 0.2 * e_pulse, e_pulse * bright))
 
-		# 4. Spiral streams being sucked in — dense, many particles
+		# 4. Spiral streams — start at BORDER, spiral INWARD to center
 		for si in range(24):
-			var s_angle: float = TAU * float(si) / 24.0 + time * 1.0
+			var s_angle: float = TAU * float(si) / 24.0 - time * 0.8
 			var s_phase: float = fmod(time * 0.5 + float(si) * 0.042, 1.0)
-			var s_r: float = 30.0 * (1.0 - s_phase * s_phase)
-			var spiral_twist: float = s_phase * 4.0
-			var s_pos: Vector2 = center + Vector2(cos(s_angle + spiral_twist), sin(s_angle + spiral_twist)) * s_r
+			# phase 0 = at border, phase 1 = at center
+			var s_r: float = lerpf(radius * 0.8, float(void_r) + 2.0, s_phase * s_phase)
+			var spiral_twist: float = s_phase * 5.0  # Tighter spiral near center
+			var s_pos: Vector2 = center + Vector2(cos(s_angle - spiral_twist), sin(s_angle - spiral_twist)) * s_r
 			if s_pos.distance_to(center) < float(void_r) + 1.0:
 				continue
-			var s_alpha: float = s_phase * (1.0 - s_phase) * 3.5 * bright
+			var s_alpha: float = s_phase * (1.0 - s_phase * 0.5) * 2.5 * bright
+			# Color: blue-white at border, orange-red near center
 			var rc: float = lerpf(0.4, 1.0, s_phase)
-			var gc: float = lerpf(0.6, 0.15, s_phase)
+			var gc: float = lerpf(0.6, 0.2, s_phase)
 			var bc: float = lerpf(1.0, 0.0, s_phase)
 			draw_rect(Rect2(floor(s_pos.x), floor(s_pos.y), 1, 1), Color(rc, gc, bc, s_alpha))
 
-		# 5. Inward flow lines (pixel-based)
+		# 5. Inward flow lines — start at border, point TOWARD center
 		for i in range(8):
-			var line_angle: float = TAU * float(i) / 8.0 + time * 0.1
-			var flow_phase: float = fmod(time * 0.4 + float(i) * 0.125, 1.0)
-			var start_r: float = radius * (0.3 + 0.6 * flow_phase)
-			var line_len: int = int(radius * 0.12) + 2
-			var line_alpha: float = (1.0 - flow_phase) * 0.5 * bright
+			var line_angle: float = TAU * float(i) / 8.0 + time * 0.15
+			var flow_phase: float = fmod(time * 0.3 + float(i) * 0.125, 1.0)
+			# Start at border, move toward center
+			var head_r: float = lerpf(radius * 0.9, float(void_r) + 3.0, flow_phase)
+			var line_len: int = int(radius * 0.1) + 3
+			var line_alpha: float = (1.0 - flow_phase * 0.5) * 0.4 * bright
 			var dir: Vector2 = Vector2(cos(line_angle), sin(line_angle))
 			for li in range(line_len):
-				var lr: float = start_r - float(li)
+				var lr: float = head_r + float(li)  # Trail extends OUTWARD from head
 				var l_pos: Vector2 = center + dir * lr
-				draw_rect(Rect2(floor(l_pos.x), floor(l_pos.y), 1, 1), Color(0.7, 0.4, 1.0, line_alpha * (1.0 - float(li) / float(line_len))))
+				draw_rect(Rect2(floor(l_pos.x), floor(l_pos.y), 1, 1), Color(0.6, 0.3, 1.0, line_alpha * (1.0 - float(li) / float(line_len))))
