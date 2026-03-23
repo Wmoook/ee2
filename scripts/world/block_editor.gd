@@ -1143,7 +1143,7 @@ func _process(_delta: float) -> void:
 							var spos: Vector2 = 0.5 * ((2.0 * cp1) + (-cp0 + cp2) * ct + (2.0 * cp0 - 5.0 * cp1 + 4.0 * cp2 - cp3) * ctt + (-cp0 + 3.0 * cp1 - 3.0 * cp2 + cp3) * cttt)
 							if spline_pts.size() == 0 or spline_pts[-1].distance_to(spos) > 1.0:
 								spline_pts.append(spos)
-					# Always add final control point so mesh reaches the end cap
+					# Always add final control point
 					if spline_pts.size() > 0 and spline_pts[-1].distance_to(cpts[-1]) > 0.5:
 						spline_pts.append(cpts[-1])
 					if spline_pts.size() >= 2:
@@ -1151,18 +1151,24 @@ func _process(_delta: float) -> void:
 						# End cap blocks: centered at endpoints, rotated to tangent
 						# Start cap: direction from point 0 toward point 1
 						var s_dir: Vector2 = (spline_pts[1] - spline_pts[0]).normalized()
-						var s_pos: Vector2 = spline_pts[0] - s_dir * 8.0 - Vector2(8, 8)
+						var s_pos: Vector2 = spline_pts[0] - s_dir * 7.0 - Vector2(8, 8)
 						var s_rot: float = rad_to_deg(atan2(s_dir.y, s_dir.x))
 						WorldManager.free_blocks.append({"pos": s_pos, "id": GameState.selected_block_id, "rotation": s_rot})
-						# End cap: mirror of start logic — direction from second-to-last toward last
-						# Use same baseline distance as start for consistency
-						var e_dir: Vector2 = (spline_pts[-1] - spline_pts[-2]).normalized()
-						# If too short, use longer baseline
-						if spline_pts[-1].distance_to(spline_pts[-2]) < 2.0 and spline_pts.size() > 2:
-							e_dir = (spline_pts[-1] - spline_pts[maxi(0, spline_pts.size() - 10)]).normalized()
-						var e_pos: Vector2 = spline_pts[-1] + e_dir * 8.0 - Vector2(8, 8)
-						var e_rot: float = rad_to_deg(atan2(e_dir.y, e_dir.x))
-						WorldManager.free_blocks.append({"pos": e_pos, "id": GameState.selected_block_id, "rotation": e_rot})
+						# End cap: use the POLYLINE's actual last point + tangent
+						var poly_data: Dictionary = WorldManager.polylines[-1] if WorldManager.polylines.size() > 0 else {}
+						var poly_pts: PackedVector2Array = poly_data.get("points", PackedVector2Array())
+						if poly_pts.size() >= 2:
+							var e_end: Vector2 = poly_pts[-1]
+							# Direction from 4+ px back
+							var e_ref: Vector2 = poly_pts[maxi(0, poly_pts.size() - 2)]
+							for _ei in range(poly_pts.size() - 2, -1, -1):
+								if e_end.distance_to(poly_pts[_ei]) >= 4.0:
+									e_ref = poly_pts[_ei]
+									break
+							var e_dir: Vector2 = (e_end - e_ref).normalized()
+							var e_pos: Vector2 = e_end + e_dir * 7.0 - Vector2(8, 8)
+							var e_rot: float = rad_to_deg(atan2(e_dir.y, e_dir.x))
+							WorldManager.free_blocks.append({"pos": e_pos, "id": GameState.selected_block_id, "rotation": e_rot})
 				_curve_points.clear()
 				_curve_preview.clear()
 				_curve_mode = false
