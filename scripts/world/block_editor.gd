@@ -352,12 +352,15 @@ func _input(event: InputEvent) -> void:
 					var cur: int = WorldManager.get_rotation(t.x, t.y)
 					WorldManager.set_rotation(t.x, t.y, (cur + 90) % 360)
 		# F = flip selected blocks horizontally
+		if event.keycode == KEY_F or event.physical_keycode == KEY_F:
+			push_warning("F_KEY align_sel=%s has_sel=%s indices=%d" % [str(_align_has_sel), str(_has_selection), _align_sel_indices.size()])
 		if (event.keycode == KEY_F or event.physical_keycode == KEY_F) and (_align_has_sel or _has_selection):
 			if _align_has_sel:
 				for si in _align_sel_indices:
 					if si < WorldManager.free_blocks.size():
 						var fb: Dictionary = WorldManager.free_blocks[si]
 						fb["flip_h"] = not fb.get("flip_h", false)
+						push_warning("FLIP idx=%d id=%d flip_h=%s" % [si, fb.id, str(fb.flip_h)])
 			elif _has_selection:
 				# Grid block at _sel_start: convert to free block with flip
 				_save_undo()

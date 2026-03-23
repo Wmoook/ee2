@@ -344,19 +344,19 @@ func _draw_free_block(fb: Dictionary) -> void:
 			var rot_rad: float = deg_to_rad(rot)
 			var cos_r: float = cos(rot_rad)
 			var sin_r: float = sin(rot_rad)
-			var flip: float = -1.0 if fb.get("flip_h", false) else 1.0
+			var is_flipped: bool = fb.get("flip_h", false)
 			# 4 corners of 16x16 block + warp, rotated around center
 			var warp: Vector2 = GameState.get_custom_block_warp(render_id)
-			var hw: float = 8.0 + warp.x  # Half-width with warp
-			var hh: float = 8.0 + warp.y  # Half-height with warp
+			var hw: float = 8.0 + warp.x
+			var hh: float = 8.0 + warp.y
 			var corners: PackedVector2Array = PackedVector2Array()
 			var uvs: PackedVector2Array = PackedVector2Array()
+			# Corners stay the same (geometry unchanged), only UV flips
 			for c in [Vector2(-hw, -hh), Vector2(hw, -hh), Vector2(hw, hh), Vector2(-hw, hh)]:
-				var rx: float = c.x * flip * cos_r - c.y * sin_r
-				var ry: float = c.x * flip * sin_r + c.y * cos_r
+				var rx: float = c.x * cos_r - c.y * sin_r
+				var ry: float = c.x * sin_r + c.y * cos_r
 				corners.append(center + Vector2(rx, ry))
-			# UV corners (full texture)
-			if flip < 0:
+			if is_flipped:
 				uvs.append(Vector2(1, 0)); uvs.append(Vector2(0, 0)); uvs.append(Vector2(0, 1)); uvs.append(Vector2(1, 1))
 			else:
 				uvs.append(Vector2(0, 0)); uvs.append(Vector2(1, 0)); uvs.append(Vector2(1, 1)); uvs.append(Vector2(0, 1))
