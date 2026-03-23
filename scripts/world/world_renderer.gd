@@ -338,13 +338,25 @@ func _draw_free_block(fb: Dictionary) -> void:
 	if GameState.is_custom_block(render_id):
 		var ctex: Texture2D = GameState.get_custom_block_texture(render_id)
 		if ctex:
+			# Draw rotated block using polygon with UV (exact hitbox alignment)
 			var center: Vector2 = pos + Vector2(8, 8)
-			draw_set_transform(center, deg_to_rad(rot), Vector2.ONE)
-			if fb.get("flip_h", false):
-				draw_texture_rect(ctex, Rect2(8, -8, -16, 16), false)
+			var rot_rad: float = deg_to_rad(rot)
+			var cos_r: float = cos(rot_rad)
+			var sin_r: float = sin(rot_rad)
+			var flip: float = -1.0 if fb.get("flip_h", false) else 1.0
+			# 4 corners of 16x16 block, rotated around center
+			var corners: PackedVector2Array = PackedVector2Array()
+			var uvs: PackedVector2Array = PackedVector2Array()
+			for c in [Vector2(-8, -8), Vector2(8, -8), Vector2(8, 8), Vector2(-8, 8)]:
+				var rx: float = c.x * flip * cos_r - c.y * sin_r
+				var ry: float = c.x * flip * sin_r + c.y * cos_r
+				corners.append(center + Vector2(rx, ry))
+			# UV corners (full texture)
+			if flip < 0:
+				uvs.append(Vector2(1, 0)); uvs.append(Vector2(0, 0)); uvs.append(Vector2(0, 1)); uvs.append(Vector2(1, 1))
 			else:
-				draw_texture_rect(ctex, Rect2(-8, -8, 16, 16), false)
-			draw_set_transform(Vector2.ZERO, 0, Vector2.ONE)
+				uvs.append(Vector2(0, 0)); uvs.append(Vector2(1, 0)); uvs.append(Vector2(1, 1)); uvs.append(Vector2(0, 1))
+			draw_colored_polygon(corners, Color.WHITE, uvs, ctex)
 		return
 	var info: Dictionary = GameState.get_block_info(render_id)
 	if info.is_empty():
