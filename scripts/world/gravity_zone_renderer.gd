@@ -63,16 +63,19 @@ func _draw() -> void:
 							continue
 						if pass_idx == 2 and a_pos.y <= center.y:
 							continue
-						if a_pos.distance_to(center) < float(void_r) - 1.0:
+						# Back pass: skip inside void. Front pass: allow overlap (draws ON TOP of void)
+						if pass_idx == 0 and a_pos.distance_to(center) < float(void_r):
 							continue
 						var a_bright: float = 0.3 + 0.7 * maxf(0, sin(a_angle + time * 3.0 + float(layer)))
+						# Front half is brighter (closer to viewer)
+						var front_boost: float = 1.3 if pass_idx == 2 else 1.0
 						var col: Color
 						if layer == 0:
-							col = Color(1.0, 0.8 * a_bright, 0.2 * a_bright, a_bright * bright)
+							col = Color(1.0, 0.8 * a_bright, 0.2 * a_bright, minf(a_bright * bright * front_boost, 1.0))
 						elif layer == 1:
-							col = Color(1.0, 0.5 * a_bright, 0.1 * a_bright, a_bright * 0.8 * bright)
+							col = Color(1.0, 0.5 * a_bright, 0.1 * a_bright, minf(a_bright * 0.8 * bright * front_boost, 1.0))
 						else:
-							col = Color(0.8, 0.3 * a_bright, 0.05 * a_bright, a_bright * 0.6 * bright)
+							col = Color(0.8, 0.3 * a_bright, 0.05 * a_bright, minf(a_bright * 0.6 * bright * front_boost, 1.0))
 						draw_rect(Rect2(floor(a_pos.x), floor(a_pos.y), 1, 1), col)
 
 			elif pass_idx == 1:
