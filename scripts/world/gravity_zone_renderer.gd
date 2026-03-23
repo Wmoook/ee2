@@ -151,11 +151,14 @@ func _draw() -> void:
 			var accel_phase: float = flow_phase * flow_phase * flow_phase
 			var head_r: float = lerpf(radius, float(void_r) + 3.0, accel_phase)
 			var line_len: int = int(radius * 0.08) + 3
-			var line_alpha: float = (1.0 - flow_phase * 0.5) * 0.4 * bright
+			# Match border's swirling color at this angle
+			var border_bright: float = 0.3 + 0.7 * maxf(0, sin(line_angle * 3.0 - time * 1.5))
+			var line_alpha: float = (1.0 - flow_phase * 0.5) * border_bright * 0.6 * bright
 			var dir: Vector2 = Vector2(cos(line_angle), sin(line_angle))
 			for li in range(line_len):
 				var lr: float = head_r + float(li)
 				if lr > radius:
-					continue  # Don't draw outside gravity radius
+					continue
 				var l_pos: Vector2 = center + dir * lr
-				draw_rect(Rect2(floor(l_pos.x), floor(l_pos.y), px_size, px_size), Color(0.6, 0.3, 1.0, line_alpha * (1.0 - float(li) / float(line_len))))
+				# Color matches border: purple, brightness synced
+				draw_rect(Rect2(floor(l_pos.x), floor(l_pos.y), px_size, px_size), Color(0.5, 0.2, 0.9, line_alpha * (1.0 - float(li) / float(line_len))))
