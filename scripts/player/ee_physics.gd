@@ -224,35 +224,6 @@ func tick(input_h: int, input_v: int, space_just: bool, space_held: bool) -> voi
 	_step_position()
 
 
-	# 7.05 Gap-assist: when holding toward a wall column, snap into 1-tile gaps
-	if not is_god_mode and absf(_last_input_h) > 0.01 and _collides_fn.is_valid():
-		var _ga_dir: int = 1 if _last_input_h > 0 else -1
-		var _ga_wall_tx: int
-		if _ga_dir > 0:
-			_ga_wall_tx = int(floor((x + 16) / 16.0))
-		else:
-			_ga_wall_tx = int(floor((x - 1) / 16.0))
-		# Check: is there a wall column in this direction? (at least 1 solid tile nearby)
-		var _ga_pty: int = int(floor((y + 8) / 16.0))
-		var _ga_has_wall: bool = false
-		for _ga_cy in range(_ga_pty - 2, _ga_pty + 3):
-			if _collides_fn.call(_ga_wall_tx, _ga_cy):
-				_ga_has_wall = true
-				break
-		if _ga_has_wall:
-			# Wide scan: pre-step to post-step PLUS 3 tiles above/below
-			var _ga_ty_min: int = int(floor(minf(_pre_step_y, y) / 16.0)) - 3
-			var _ga_ty_max: int = int(floor(maxf(_pre_step_y + 15, y + 15) / 16.0)) + 3
-			push_warning("GAP_SCAN dir=%d wall_tx=%d ty_range=%d-%d y=%.1f pre=%.1f" % [_ga_dir, _ga_wall_tx, _ga_ty_min, _ga_ty_max, y, _pre_step_y])
-			for _ga_ty in range(_ga_ty_min, _ga_ty_max + 1):
-				# 1-tile gap: empty in wall column, solid above AND below
-				if not _collides_fn.call(_ga_wall_tx, _ga_ty) and _collides_fn.call(_ga_wall_tx, _ga_ty - 1) and _collides_fn.call(_ga_wall_tx, _ga_ty + 1):
-					var _ga_snap_y: float = float(_ga_ty) * 16.0
-					if not _collides_px(x, _ga_snap_y):
-						y = _ga_snap_y
-						_speedY = 0
-						_speedX = float(_ga_dir) * 3.0
-						break
 
 	# 7.15 Polyline collision — also check pre-step position for tunneling
 	if not is_god_mode and WorldManager.polylines.size() > 0:
@@ -596,6 +567,21 @@ func tick(input_h: int, input_v: int, space_just: bool, space_held: bool) -> voi
 		if _jump_cooldown == 0:
 			is_grounded = true
 
+
+	# 7.9 Gap-assist: when holding into axis-aligned wall with gaps, nudge Y to slip in
+	if not is_god_mode and absf(_last_input_h) > 0.01 and absf(x - _pre_step_x) < 1.5:
+		var _gn_dir: float = sign(_last_input_h)
+		var _gn_test_x: float = x + _gn_dir * 4.0
+		var _gn_blocked: bool = _collides_px(_gn_test_x, y) or _collides_free_blocks_axis(_gn_test_x, y)
+		if _gn_blocked:
+			# Find exact gap between axis-aligned free blocks (requires 2+ blocks with a gap)
+			var _gn_gap_y: float = _find_gap_y_between_free_blocks(x, y, _gn_dir)
+			if _gn_gap_y >= 0 and absf(y - _gn_gap_y) < 12.0:
+				if not _collides_px(x, _gn_gap_y) and not _collides_free_blocks(x, _gn_gap_y, 0.5) \
+					and not _collides_px(_gn_test_x, _gn_gap_y) and not _collides_free_blocks(_gn_test_x, _gn_gap_y, 0.5):
+					y = _gn_gap_y
+					_speedY = 0
+					_speedX = _gn_dir * 1.0
 
 	# 8. Grounded - ONLY when falling or stationary, never during upward jump
 	if not is_grounded and _pre_tick_grav_speed >= 0:
@@ -1042,8 +1028,10 @@ func apply_action_tile(block_id: int, rotation_deg: int = 0) -> void:
 		if boost.y != 0:
 			_speedY = boost.y * TICK_SCALE
 
-func _collides_free_blocks(px: float, py: float) -> bool:
+func _collides_free_blocks(px: float, py: float, shrink: float = 0.0) -> bool:
 	# Check player AABB against rotated free blocks using SAT-lite
+	# shrink: reduce collision box by this amount on each side (for gap-assist tolerance)
+	var half: float = 16.0 - shrink
 	for fb in WorldManager.free_blocks:
 		if not GameState.is_solid(fb.id):
 			continue
@@ -1052,15 +1040,78 @@ func _collides_free_blocks(px: float, py: float) -> bool:
 		var bpos: Vector2 = fb.pos
 		var rot: float = deg_to_rad(fb.rotation)
 		var bcenter: Vector2 = bpos + Vector2(8, 8)
-		# Transform player corners into block's local space
 		var pcenter: Vector2 = Vector2(px + 8, py + 8)
 		var rel: Vector2 = pcenter - bcenter
 		var local: Vector2 = rel.rotated(-rot)
 		# In local space, block is axis-aligned at (-8,-8) to (8,8)
 		# Player is 16x16, check overlap with half-sizes
+		if absf(local.x) < half and absf(local.y) < half:
+			return true
+	return false
+
+func _collides_free_blocks_axis(px: float, py: float) -> bool:
+	# Like _collides_free_blocks but ONLY checks axis-aligned blocks (0/90/180/270)
+	for fb in WorldManager.free_blocks:
+		if not GameState.is_solid(fb.id):
+			continue
+		if fb.get("curve_visual", false):
+			continue
+		var rot_deg: float = fmod(absf(fb.rotation), 360.0)
+		if rot_deg > 1.0 and absf(rot_deg - 90.0) > 1.0 and absf(rot_deg - 180.0) > 1.0 and absf(rot_deg - 270.0) > 1.0:
+			continue
+		var bpos: Vector2 = fb.pos
+		var rot: float = deg_to_rad(fb.rotation)
+		var bcenter: Vector2 = bpos + Vector2(8, 8)
+		var pcenter: Vector2 = Vector2(px + 8, py + 8)
+		var rel: Vector2 = pcenter - bcenter
+		var local: Vector2 = rel.rotated(-rot)
 		if absf(local.x) < 16 and absf(local.y) < 16:
 			return true
 	return false
+
+func _find_gap_y_between_free_blocks(px: float, py: float, dir_x: float) -> float:
+	## Find the exact Y position where the player fits between free blocks.
+	## Only considers axis-aligned blocks (0/90/180/270 degrees). Returns -1 if no gap found.
+	var test_x: float = px + dir_x * 4.0
+	var pcx: float = test_x + 8.0
+	var pcy: float = py + 8.0
+	# Collect all blocking free blocks at the test position
+	var block_centers_y: Array = []
+	for fb in WorldManager.free_blocks:
+		if not GameState.is_solid(fb.id):
+			continue
+		if fb.get("curve_visual", false):
+			continue
+		# Only axis-aligned blocks (0, 90, 180, 270)
+		var rot_deg: float = fmod(absf(fb.rotation), 360.0)
+		if rot_deg > 1.0 and absf(rot_deg - 90.0) > 1.0 and absf(rot_deg - 180.0) > 1.0 and absf(rot_deg - 270.0) > 1.0:
+			continue
+		var bpos: Vector2 = fb.pos
+		var rot: float = deg_to_rad(fb.rotation)
+		var bcenter: Vector2 = bpos + Vector2(8, 8)
+		var rel: Vector2 = Vector2(pcx, pcy) - bcenter
+		var local: Vector2 = rel.rotated(-rot)
+		# Check if X overlaps (player would be in this column)
+		if absf(local.x) < 16:
+			block_centers_y.append(bcenter.y)
+	if block_centers_y.size() < 2:
+		return -1.0
+	# Sort block centers by Y
+	block_centers_y.sort()
+	# Find gaps between consecutive blocks
+	var best_gap_y: float = -1.0
+	var best_dist: float = 999.0
+	for i in range(block_centers_y.size() - 1):
+		var gap_size: float = block_centers_y[i + 1] - block_centers_y[i]
+		# Gap must be >= 32 (16px block + 16px gap = 32 between centers)
+		if gap_size >= 31.5:
+			var gap_center_y: float = (block_centers_y[i] + block_centers_y[i + 1]) / 2.0
+			var target_y: float = gap_center_y - 8.0  # Player top-left Y
+			var dist: float = absf(py - target_y)
+			if dist < best_dist:
+				best_dist = dist
+				best_gap_y = target_y
+	return best_gap_y
 
 func _check_free_block_collision() -> void:
 	# Push player out of free blocks (only solid ones)
