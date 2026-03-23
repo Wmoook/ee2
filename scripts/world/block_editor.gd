@@ -1606,7 +1606,11 @@ func _get_tile() -> Vector2i:
 func _place_at(t: Vector2i) -> void:
 	if t.x <= 0 or t.x >= WorldManager.world_width - 1: return
 	if t.y <= 0 or t.y >= WorldManager.world_height - 1: return
-	WorldManager.set_tile(t.x, t.y, GameState.selected_block_id)
+	var layer: String = GameState.get_block_layer(GameState.selected_block_id)
+	if layer == "background":
+		WorldManager.set_bg_tile(t.x, t.y, GameState.selected_block_id)
+	else:
+		WorldManager.set_tile(t.x, t.y, GameState.selected_block_id)
 
 func _erase_at(t: Vector2i) -> void:
 	if t.x <= 0 or t.x >= WorldManager.world_width - 1: return

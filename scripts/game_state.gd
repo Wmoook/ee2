@@ -102,6 +102,7 @@ var BLOCK_CATEGORIES: Array = [
 		390, 391, 392, 393, 394, 395, 396,
 	]},
 	{"name": "Backgrounds", "ids": [
+		5100, 5101, 5102, 5103, 5104,
 		715, 500, 645, 503, 644, 504, 505, 506, 501, 502,
 		646, 647, 509, 511, 507, 512, 510, 508, 648,
 		513, 514, 515, 516, 649, 517, 518, 519, 650,
@@ -177,6 +178,12 @@ func _register_custom_blocks() -> void:
 				_custom_block_textures[cb.id * -1] = tex16  # 16x16 for grid (negative key)
 			_block_db[cb.id] = {"atlas": "custom", "layer": "foreground", "artoffset": 0, "custom_tex": true}
 			_solid_set[cb.id] = true
+			# Register BG version (ID + 100) — same texture, background layer
+			var bg_id: int = cb.id + 100
+			_custom_block_textures[bg_id] = tex
+			if tex16:
+				_custom_block_textures[bg_id * -1] = tex16
+			_block_db[bg_id] = {"atlas": "custom", "layer": "background", "artoffset": 0, "custom_tex": true}
 
 func get_custom_block_texture_16(id: int) -> Texture2D:
 	return _custom_block_textures.get(id * -1, _custom_block_textures.get(id, null))
@@ -413,7 +420,10 @@ func get_custom_block_texture(id: int) -> Texture2D:
 func is_custom_block(id: int) -> bool:
 	return _custom_block_textures.has(id)
 
-var _custom_block_warps: Dictionary = {5000: Vector2(0.0, 0.35), 5001: Vector2(0.0, 0.35), 5002: Vector2(0.0, 0.35), 5003: Vector2(0.0, 0.35), 5004: Vector2(0.0, 0.35)}  # Baked warp for 40x40 blocks
+var _custom_block_warps: Dictionary = {
+	5000: Vector2(0.0, 0.35), 5001: Vector2(0.0, 0.35), 5002: Vector2(0.0, 0.35), 5003: Vector2(0.0, 0.35), 5004: Vector2(0.0, 0.35),
+	5100: Vector2(0.0, 0.35), 5101: Vector2(0.0, 0.35), 5102: Vector2(0.0, 0.35), 5103: Vector2(0.0, 0.35), 5104: Vector2(0.0, 0.35),
+}  # Baked warp for 40x40 blocks (FG + BG versions)
 
 func get_custom_block_warp(id: int) -> Vector2:
 	return _custom_block_warps.get(id, Vector2.ZERO)
