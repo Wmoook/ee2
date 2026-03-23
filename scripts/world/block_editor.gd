@@ -1192,10 +1192,10 @@ func _process(_delta: float) -> void:
 						var s_rot: float = rad_to_deg(atan2(s_dir.y, s_dir.x))
 						WorldManager.free_blocks.append({"pos": s_pos, "id": GameState.selected_block_id, "rotation": s_rot})
 						# End cap: spline already truncated to 16px boundary
-						# Use a point 8px+ back for stable direction
+						# Use a point 10px+ back for stable direction
 						var e_ref_idx: int = spline_pts.size() - 2
 						for _ei in range(spline_pts.size() - 2, 0, -1):
-							if spline_pts[-1].distance_to(spline_pts[_ei]) >= 8.0:
+							if spline_pts[-1].distance_to(spline_pts[_ei]) >= 10.0:
 								e_ref_idx = _ei
 								break
 						var e_dir: Vector2 = (spline_pts[-1] - spline_pts[e_ref_idx]).normalized()
