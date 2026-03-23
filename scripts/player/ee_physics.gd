@@ -240,6 +240,8 @@ func tick(input_h: int, input_v: int, space_just: bool, space_held: bool) -> voi
 				if not _collides_px(x, gap_snap_y):
 					y = gap_snap_y
 					_speedY = 0
+					# Push player INTO the gap so they don't fall back out
+					_speedX = float(gap_dir) * 2.0
 					break
 
 	# 7.15 Polyline collision — also check pre-step position for tunneling
