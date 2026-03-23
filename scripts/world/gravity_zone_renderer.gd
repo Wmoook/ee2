@@ -43,7 +43,7 @@ func _draw() -> void:
 
 		# Zone boundary (edit mode only)
 		if edit:
-			var bpts: int = mini(80, int(radius * 2.0) + 16)
+			var bpts: int = int(radius * TAU)  # Fill circumference
 			for bi in range(bpts):
 				var ba: float = TAU * float(bi) / float(bpts) + time * 0.3
 				var bw: float = sin(ba * 6.0 + time * 2.0) * 1.5
@@ -56,7 +56,7 @@ func _draw() -> void:
 			var phase: float = fmod(time * 0.4 + float(i) * 0.25, 1.0)
 			var rr: float = radius * (1.0 - phase)
 			var ra: float = phase * (1.0 - phase) * 2.0 * (0.7 if edit else 0.2)
-			var rpts: int = mini(60, int(rr * 1.5) + 8)
+			var rpts: int = int(rr * TAU)  # Fill circumference
 			for ri in range(rpts):
 				var a: float = TAU * float(ri) / float(rpts)
 				var rp: Vector2 = center + Vector2(cos(a), sin(a)) * rr
@@ -73,7 +73,7 @@ func _draw() -> void:
 			draw_texture(gz["_void_tex"], center - Vector2(half, half))
 
 		# Event horizon glow (live — ring around void edge)
-		var eh: int = mini(100, int(float(void_r) * TAU))
+		var eh: int = int(float(void_r) * TAU) + 10  # Fill circumference
 		for ei in range(eh):
 			var ea: float = TAU * float(ei) / float(eh)
 			var er: float = float(void_r) + 1.0 + sin(ea * 4.0 + time * 2.5) * 0.5
