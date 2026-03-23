@@ -211,12 +211,7 @@ func check_polyline_collision(px: float, py: float, pw: float, ph: float, prefer
 			continue
 		var pts: PackedVector2Array = poly.points
 		var norms: Array = poly.normals
-		# Find nearest segment + detect self-intersection branches
-		var shash: Dictionary = poly.get("spatial_hash", {})
-		var cs: int = shash.get("cell_size", 32)
-		var gx: int = int(floor(pcx / cs))
-		var gy: int = int(floor(pcy / cs))
-		var checked: Dictionary = {}
+		# Find nearest segment + detect self-intersection branches (brute force within bbox)
 		var closest_seg: int = -1
 		var closest_t: float = 0.0
 		var closest_dist: float = 999999.0
@@ -224,37 +219,28 @@ func check_polyline_collision(px: float, py: float, pw: float, ph: float, prefer
 		var second_t: float = 0.0
 		var second_dist: float = 999999.0
 		var eff_radius: float = 8.0
-		var block_half: float = 8.0
-		for dx in range(-1, 2):
-			for dy in range(-1, 2):
-				var key: int = (gx + dx) * 10000 + (gy + dy)
-				if not shash.has(key):
-					continue
-				for si in shash[key]:
-					if checked.has(si):
-						continue
-					checked[si] = true
-					var sa: Vector2 = pts[si]
-					var sb: Vector2 = pts[si + 1]
-					var ab: Vector2 = sb - sa
-					var ap: Vector2 = Vector2(pcx, pcy) - sa
-					var ab_dot: float = ab.dot(ab)
-					var seg_t: float = clampf(ap.dot(ab) / maxf(ab_dot, 0.001), 0.0, 1.0)
-					var on_pt: Vector2 = sa + ab * seg_t
-					var dist: float = Vector2(pcx, pcy).distance_to(on_pt)
-					if dist < closest_dist:
-						# Demote current closest to second if from a different branch
-						if closest_seg >= 0 and abs(si - closest_seg) > 20:
-							second_seg = closest_seg
-							second_t = closest_t
-							second_dist = closest_dist
-						closest_dist = dist
-						closest_seg = si
-						closest_t = seg_t
-					elif dist < second_dist and closest_seg >= 0 and abs(si - closest_seg) > 20:
-						second_dist = dist
-						second_seg = si
-						second_t = seg_t
+		var block_half: float = 8.5  # Match step_position threshold (8 + 8.5 = 16.5)
+		for si in range(pts.size() - 1):
+			var sa: Vector2 = pts[si]
+			var sb: Vector2 = pts[si + 1]
+			var ab: Vector2 = sb - sa
+			var ap: Vector2 = Vector2(pcx, pcy) - sa
+			var ab_dot: float = ab.dot(ab)
+			var seg_t: float = clampf(ap.dot(ab) / maxf(ab_dot, 0.001), 0.0, 1.0)
+			var on_pt: Vector2 = sa + ab * seg_t
+			var dist: float = Vector2(pcx, pcy).distance_to(on_pt)
+			if dist < closest_dist:
+				if closest_seg >= 0 and abs(si - closest_seg) > 20:
+					second_seg = closest_seg
+					second_t = closest_t
+					second_dist = closest_dist
+				closest_dist = dist
+				closest_seg = si
+				closest_t = seg_t
+			elif dist < second_dist and closest_seg >= 0 and abs(si - closest_seg) > 20:
+				second_dist = dist
+				second_seg = si
+				second_t = seg_t
 		if closest_seg < 0:
 			continue
 		# Self-intersection guard: if nearest segment push opposes prefer_normal
@@ -284,9 +270,23 @@ func check_polyline_collision(px: float, py: float, pw: float, ph: float, prefer
 		# Distance from player center to surface
 		var to_player: Vector2 = Vector2(pcx, pcy) - on_seg
 		var dist_to_line: float = to_player.length()
-		# Push direction and fixed half-size
-		var push_dir: Vector2 = to_player.normalized() if dist_to_line > 0.01 else interp_normal
-		var penetration: float = minf((eff_radius + block_half) - dist_to_line, 4.0)
+		# Push direction: use to_player normally, but when player has tunneled through
+		# (center crossed the curve line), use the interpolated normal to push back correctly
+		var push_dir: Vector2
+		if dist_to_line < 0.01:
+			push_dir = interp_normal
+		elif dist_to_line < eff_radius:
+			# Deep inside — player center past the curve surface. Use normal direction
+			# matching the side the player SHOULD be on (prefer_normal or interp_normal)
+			var to_norm: Vector2 = to_player.normalized()
+			if prefer_normal.length() > 0.1 and to_norm.dot(prefer_normal) < 0.0:
+				# Player is on wrong side relative to previous surface — flip push
+				push_dir = -to_norm
+			else:
+				push_dir = to_norm
+		else:
+			push_dir = to_player.normalized()
+		var penetration: float = minf((eff_radius + block_half) - dist_to_line, 8.0)
 		if penetration > 0 and dist_to_line < eff_radius + block_half + 2.0:
 			var seg_tangent: Vector2 = (seg_b - seg_a).normalized()
 			_dbg_hits.append({"poly": _dbg_poly_idx, "seg": closest_seg, "pen": penetration, "dist": dist_to_line, "push_dir": push_dir, "on_seg": on_seg, "tangent": seg_tangent})
@@ -338,14 +338,302 @@ func check_polyline_collision(px: float, py: float, pw: float, ph: float, prefer
 				if h.pen > best_h.pen:
 					best_h = h
 			result = {"hit": true, "push": best_h.push_dir * best_h.pen, "normal": best_h.push_dir, "tangent": best_h.tangent, "poly_idx": best_h.poly}
-	if _dbg_hits.size() > 0:
-		var _log: String = "POLY_COL hits=%d player=(%.1f,%.1f)" % [_dbg_hits.size(), pcx, pcy]
-		for h in _dbg_hits:
-			_log += " | p%d/s%d pen=%.2f dist=%.1f dir=(%.2f,%.2f)" % [h.poly, h.seg, h.pen, h.dist, h.push_dir.x, h.push_dir.y]
-		if result.hit:
-			var _mode: String = "SANDWICH" if _dbg_hits.size() >= 2 else "SINGLE"
-			_log += " → %s PUSH=(%.2f,%.2f) n=(%.2f,%.2f)" % [_mode, result.push.x, result.push.y, result.normal.x, result.normal.y]
-		push_warning(_log)
+	return result
+
+func enforce_polyline_hard_constraint(px: float, py: float, prev_px: float, prev_py: float, exclude_poly: int = -1) -> Dictionary:
+	## Hard constraint: player center must be >= 16.35px from every polyline centerline.
+	## Uses prev position to determine correct push side. No exceptions.
+	## Returns {pushed: bool, x: float, y: float, normal: Vector2, tangent: Vector2}
+	var cx: float = px + 8.0
+	var cy: float = py + 8.0
+	var prev_cx: float = prev_px + 8.0
+	var prev_cy: float = prev_py + 8.0
+	var min_dist: float = 16.5  # 8 player half + 8.35 curve visual half + 0.15 margin
+	var total_push: Vector2 = Vector2.ZERO
+	var best_normal: Vector2 = Vector2.ZERO
+	var best_tangent: Vector2 = Vector2(1, 0)
+	var pushed: bool = false
+	var touching_polys: Dictionary = {}  # Track which polylines are within range
+	# Run multiple iterations to handle multiple curves
+	for _iter in range(4):
+		var iter_push: Vector2 = Vector2.ZERO
+		var iter_pen: float = 0.0
+		var _pidx: int = -1
+		for poly in polylines:
+			_pidx += 1
+			if _pidx == exclude_poly:
+				continue
+			var bb_min: Vector2 = poly.bbox_min
+			var bb_max: Vector2 = poly.bbox_max
+			if cx + 8 < bb_min.x - 20 or cx - 8 > bb_max.x + 20 or cy + 8 < bb_min.y - 20 or cy - 8 > bb_max.y + 20:
+				continue
+			var pts: PackedVector2Array = poly.points
+			var norms: Array = poly.normals
+			var closest_seg: int = -1
+			var closest_t: float = 0.0
+			var closest_dist: float = 999999.0
+			for si in range(pts.size() - 1):
+				var sa: Vector2 = pts[si]
+				var sb: Vector2 = pts[si + 1]
+				var ab: Vector2 = sb - sa
+				var ap: Vector2 = Vector2(cx, cy) - sa
+				var ab_dot: float = ab.dot(ab)
+				var seg_t: float = clampf(ap.dot(ab) / maxf(ab_dot, 0.001), 0.0, 1.0)
+				var on_pt: Vector2 = sa + ab * seg_t
+				var dist: float = Vector2(cx, cy).distance_to(on_pt)
+				if dist < closest_dist:
+					closest_dist = dist
+					closest_seg = si
+					closest_t = seg_t
+			if closest_seg < 0 or closest_dist >= min_dist:
+				continue
+			touching_polys[_pidx] = true
+			# Penetration found — compute push direction from PREVIOUS position
+			var seg_a: Vector2 = pts[closest_seg]
+			var seg_b: Vector2 = pts[closest_seg + 1]
+			var on_seg: Vector2 = seg_a + (seg_b - seg_a) * closest_t
+			var to_player: Vector2 = Vector2(cx, cy) - on_seg
+			var to_prev: Vector2 = Vector2(prev_cx, prev_cy) - on_seg
+			# Push direction: use interpolated normal, sign from previous position
+			var interp_n: Vector2 = (norms[closest_seg] * (1.0 - closest_t) + norms[closest_seg + 1] * closest_t).normalized()
+			if interp_n.length() < 0.01:
+				interp_n = norms[closest_seg]
+			var push_dir: Vector2
+			if to_prev.length() > 0.5:
+				# Use normal direction that matches the side the player came from
+				push_dir = interp_n if to_prev.dot(interp_n) > 0 else -interp_n
+			elif to_player.length() > 0.01:
+				push_dir = interp_n if to_player.dot(interp_n) > 0 else -interp_n
+			else:
+				push_dir = interp_n
+			var pen: float = min_dist - closest_dist
+			if pen > iter_pen:
+				iter_pen = pen
+				iter_push = push_dir * pen
+				var seg_tangent: Vector2 = (seg_b - seg_a).normalized()
+				best_normal = push_dir
+				best_tangent = seg_tangent
+		if iter_pen < 0.01:
+			break
+		cx += iter_push.x
+		cy += iter_push.y
+		total_push += iter_push
+		pushed = true
+	return {"pushed": pushed, "x": cx - 8.0, "y": cy - 8.0, "push": total_push, "normal": best_normal, "tangent": best_tangent, "poly_count": touching_polys.size()}
+
+func dist_to_wall_segments(cx: float, cy: float, stick_poly: int, stick_seg: int) -> float:
+	## Distance to nearest "wall" segment — excludes ±20 segments around stick_seg on stick_poly.
+	var best: float = 99999.0
+	var _pidx: int = -1
+	for poly in polylines:
+		_pidx += 1
+		var bb_min: Vector2 = poly.bbox_min
+		var bb_max: Vector2 = poly.bbox_max
+		if cx < bb_min.x - 20 or cx > bb_max.x + 20 or cy < bb_min.y - 20 or cy > bb_max.y + 20:
+			continue
+		var pts: PackedVector2Array = poly.points
+		for si in range(pts.size() - 1):
+			if _pidx == stick_poly and stick_seg >= 0 and abs(si - stick_seg) <= 20:
+				continue
+			var sa: Vector2 = pts[si]
+			var sb: Vector2 = pts[si + 1]
+			var ab: Vector2 = sb - sa
+			var ap: Vector2 = Vector2(cx, cy) - sa
+			var ab_dot: float = ab.dot(ab)
+			var seg_t: float = clampf(ap.dot(ab) / maxf(ab_dot, 0.001), 0.0, 1.0)
+			var on_pt: Vector2 = sa + ab * seg_t
+			var dist: float = Vector2(cx, cy).distance_to(on_pt)
+			if dist < best:
+				best = dist
+	return best
+
+func find_nearest_polyline_segment(cx: float, cy: float, exclude_poly: int = -1) -> Dictionary:
+	## Returns {dist, point, seg_a, seg_b, poly_idx} of nearest segment.
+	var best: Dictionary = {"dist": 99999.0, "point": Vector2.ZERO, "seg_a": Vector2.ZERO, "seg_b": Vector2.ZERO, "poly_idx": -1}
+	var _pidx: int = -1
+	for poly in polylines:
+		_pidx += 1
+		if _pidx == exclude_poly:
+			continue
+		var bb_min: Vector2 = poly.bbox_min
+		var bb_max: Vector2 = poly.bbox_max
+		if cx < bb_min.x - 20 or cx > bb_max.x + 20 or cy < bb_min.y - 20 or cy > bb_max.y + 20:
+			continue
+		var pts: PackedVector2Array = poly.points
+		for si in range(pts.size() - 1):
+			var sa: Vector2 = pts[si]
+			var sb: Vector2 = pts[si + 1]
+			var ab: Vector2 = sb - sa
+			var ap: Vector2 = Vector2(cx, cy) - sa
+			var ab_dot: float = ab.dot(ab)
+			var seg_t: float = clampf(ap.dot(ab) / maxf(ab_dot, 0.001), 0.0, 1.0)
+			var on_pt: Vector2 = sa + ab * seg_t
+			var dist: float = Vector2(cx, cy).distance_to(on_pt)
+			if dist < best.dist:
+				best = {"dist": dist, "point": on_pt, "seg_a": sa, "seg_b": sb, "poly_idx": _pidx}
+	return best
+
+func dist_to_nearest_polyline(cx: float, cy: float, exclude_poly: int = -1) -> float:
+	## Returns the distance from point (cx,cy) to the nearest polyline segment, excluding one.
+	## Uses brute force within bbox for reliability (spatial hash can miss edge cases).
+	var best_dist: float = 99999.0
+	var _pidx: int = -1
+	for poly in polylines:
+		_pidx += 1
+		if _pidx == exclude_poly:
+			continue
+		var bb_min: Vector2 = poly.bbox_min
+		var bb_max: Vector2 = poly.bbox_max
+		if cx < bb_min.x - 20 or cx > bb_max.x + 20 or cy < bb_min.y - 20 or cy > bb_max.y + 20:
+			continue
+		var pts: PackedVector2Array = poly.points
+		for si in range(pts.size() - 1):
+			var sa: Vector2 = pts[si]
+			var sb: Vector2 = pts[si + 1]
+			# Quick AABB check per segment
+			if cx < minf(sa.x, sb.x) - 20 and cx > maxf(sa.x, sb.x) + 20:
+				continue
+			if cy < minf(sa.y, sb.y) - 20 and cy > maxf(sa.y, sb.y) + 20:
+				continue
+			var ab: Vector2 = sb - sa
+			var ap: Vector2 = Vector2(cx, cy) - sa
+			var ab_dot: float = ab.dot(ab)
+			var seg_t: float = clampf(ap.dot(ab) / maxf(ab_dot, 0.001), 0.0, 1.0)
+			var on_pt: Vector2 = sa + ab * seg_t
+			var dist: float = Vector2(cx, cy).distance_to(on_pt)
+			if dist < best_dist:
+				best_dist = dist
+	return best_dist
+
+func is_near_polyline(cx: float, cy: float, threshold: float, exclude_poly: int = -1) -> bool:
+	## Check if point (cx,cy) is within threshold of any polyline segment.
+	## exclude_poly: skip this polyline index (for stick poly).
+	var _pidx: int = -1
+	for poly in polylines:
+		_pidx += 1
+		if _pidx == exclude_poly:
+			continue
+		var bb_min: Vector2 = poly.bbox_min
+		var bb_max: Vector2 = poly.bbox_max
+		if cx < bb_min.x - threshold or cx > bb_max.x + threshold or cy < bb_min.y - threshold or cy > bb_max.y + threshold:
+			continue
+		var shash: Dictionary = poly.get("spatial_hash", {})
+		var cs: int = shash.get("cell_size", 32)
+		var gx: int = int(floor(cx / cs))
+		var gy: int = int(floor(cy / cs))
+		var checked: Dictionary = {}
+		for dx2 in range(-1, 2):
+			for dy2 in range(-1, 2):
+				var key: int = (gx + dx2) * 10000 + (gy + dy2)
+				if not shash.has(key):
+					continue
+				for si in shash[key]:
+					if checked.has(si):
+						continue
+					checked[si] = true
+					var sa: Vector2 = poly.points[si]
+					var sb: Vector2 = poly.points[si + 1]
+					var ab: Vector2 = sb - sa
+					var ap: Vector2 = Vector2(cx, cy) - sa
+					var ab_dot: float = ab.dot(ab)
+					var seg_t: float = clampf(ap.dot(ab) / maxf(ab_dot, 0.001), 0.0, 1.0)
+					var on_pt: Vector2 = sa + ab * seg_t
+					var dist: float = Vector2(cx, cy).distance_to(on_pt)
+					if dist < threshold:
+						return true
+	return false
+
+func does_step_cross_polyline(x1: float, y1: float, x2: float, y2: float) -> bool:
+	## Fast check: does a small step from (x1,y1) to (x2,y2) cross any polyline segment?
+	## Coordinates are player CENTER positions.
+	if polylines.is_empty():
+		return false
+	for poly in polylines:
+		var bb_min: Vector2 = poly.bbox_min
+		var bb_max: Vector2 = poly.bbox_max
+		if maxf(x1, x2) < bb_min.x - 10 or minf(x1, x2) > bb_max.x + 10:
+			continue
+		if maxf(y1, y2) < bb_min.y - 10 or minf(y1, y2) > bb_max.y + 10:
+			continue
+		var shash: Dictionary = poly.get("spatial_hash", {})
+		var cs: int = shash.get("cell_size", 32)
+		var mid_x: float = (x1 + x2) * 0.5
+		var mid_y: float = (y1 + y2) * 0.5
+		var gx: int = int(floor(mid_x / cs))
+		var gy: int = int(floor(mid_y / cs))
+		var checked: Dictionary = {}
+		for dx2 in range(-1, 2):
+			for dy2 in range(-1, 2):
+				var key: int = (gx + dx2) * 10000 + (gy + dy2)
+				if not shash.has(key):
+					continue
+				for si in shash[key]:
+					if checked.has(si):
+						continue
+					checked[si] = true
+					var sa: Vector2 = poly.points[si]
+					var sb: Vector2 = poly.points[si + 1]
+					# 2D line segment intersection test
+					var d1x: float = x2 - x1
+					var d1y: float = y2 - y1
+					var d2x: float = sb.x - sa.x
+					var d2y: float = sb.y - sa.y
+					var denom: float = d1x * d2y - d1y * d2x
+					if absf(denom) < 0.0001:
+						continue
+					var d3x: float = sa.x - x1
+					var d3y: float = sa.y - y1
+					var t: float = (d3x * d2y - d3y * d2x) / denom
+					var u: float = (d3x * d1y - d3y * d1x) / denom
+					if t >= 0.0 and t <= 1.0 and u >= 0.0 and u <= 1.0:
+						return true
+	return false
+
+func check_polyline_crossing(x1: float, y1: float, x2: float, y2: float, player_half: float = 8.0) -> Dictionary:
+	## Check if the player movement path from (x1,y1) to (x2,y2) crosses any polyline.
+	## Uses player center path. Returns {crossed, point, normal, tangent, poly_idx}
+	## Tests against "thick" polyline (offset by player_half + curve_half on both sides).
+	var result: Dictionary = {"crossed": false, "point": Vector2.ZERO, "normal": Vector2.ZERO, "tangent": Vector2.ZERO, "poly_idx": -1}
+	var p1: Vector2 = Vector2(x1 + player_half, y1 + player_half)  # Player center start
+	var p2: Vector2 = Vector2(x2 + player_half, y2 + player_half)  # Player center end
+	var move_dir: Vector2 = p2 - p1
+	var move_len: float = move_dir.length()
+	if move_len < 0.1:
+		return result
+	var best_t: float = 2.0  # Earliest crossing (parametric t along movement)
+	var _poly_idx: int = -1
+	for poly in polylines:
+		_poly_idx += 1
+		var bb: Vector2 = poly.bbox_min
+		var bx: Vector2 = poly.bbox_max
+		# Broad phase: movement AABB vs polyline AABB (with margin)
+		var m: float = 20.0
+		if maxf(p1.x, p2.x) < bb.x - m or minf(p1.x, p2.x) > bx.x + m:
+			continue
+		if maxf(p1.y, p2.y) < bb.y - m or minf(p1.y, p2.y) > bx.y + m:
+			continue
+		var pts: PackedVector2Array = poly.points
+		var norms: Array = poly.normals
+		for si in range(pts.size() - 1):
+			var sa: Vector2 = pts[si]
+			var sb: Vector2 = pts[si + 1]
+			# Line-segment intersection: does p1->p2 cross sa->sb?
+			var d1: Vector2 = p2 - p1
+			var d2: Vector2 = sb - sa
+			var denom: float = d1.x * d2.y - d1.y * d2.x
+			if absf(denom) < 0.001:
+				continue  # Parallel
+			var d3: Vector2 = sa - p1
+			var t: float = (d3.x * d2.y - d3.y * d2.x) / denom  # Parameter along movement
+			var u: float = (d3.x * d1.y - d3.y * d1.x) / denom  # Parameter along segment
+			if t >= 0.0 and t <= 1.0 and u >= 0.0 and u <= 1.0:
+				if t < best_t:
+					best_t = t
+					var seg_normal: Vector2 = (norms[si] * (1.0 - u) + norms[si + 1] * u).normalized()
+					if seg_normal.length() < 0.01:
+						seg_normal = norms[si]
+					var seg_tangent: Vector2 = (sb - sa).normalized()
+					result = {"crossed": true, "point": p1 + d1 * t, "normal": seg_normal, "tangent": seg_tangent, "poly_idx": _poly_idx, "t": t}
 	return result
 
 func remove_polyline_near(pos: Vector2, radius: float = 16.0) -> void:

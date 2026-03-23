@@ -37,6 +37,10 @@ var jumpCount: int = 0
 var lastJumpMs: float = -99999.0
 var is_god_mode: bool = false
 var is_grounded: bool = false
+var is_wedged: bool = false  # Touching 2+ curves — frozen, jump straight up
+var _wedge_wall_poly: int = -1  # Poly idx of the wall that caused wedge
+var _wedge_wall_seg: int = -1  # Seg idx of the wall segment
+var _wedge_protect: int = 0  # Ticks of post-wedge protection
 var on_rotated_block: bool = false
 var in_valley: bool = false
 var valley_jump: bool = false
@@ -47,6 +51,9 @@ var _prev_push_normal: Vector2 = Vector2.ZERO
 var _prev_poly_normal: Vector2 = Vector2.ZERO  # Polyline push from last tick
 var _stick_poly_idx: int = -1  # Polyline index player is currently on
 var _stick_poly_ticks: int = 0  # Ticks since last contact with stuck poly
+var _poly_segs: Array = []  # Cached nearby non-stick polyline segments
+var _poly_active: bool = false
+var _poly_thresh2: float = 16.5
 var _valley_ticks: int = 0
 var _flip_count: int = 0
 var _jump_cooldown: int = 0
@@ -124,6 +131,7 @@ func tick(input_h: int, input_v: int, space_just: bool, space_held: bool) -> voi
 		_jump_cooldown -= 1
 	# Reset grounded each tick - will be recomputed by _check_grounded later
 	is_grounded = false
+	# Don't reset is_wedged here — it persists until player escapes
 
 	if is_god_mode:
 		on_dot = true
@@ -219,13 +227,27 @@ func tick(input_h: int, input_v: int, space_just: bool, space_held: bool) -> voi
 		_speedX = 0
 
 	# 7. Step position
+	# If wedged, suppress all speed — only jump can escape
+	if is_wedged:
+		if space_just:
+			is_wedged = false
+			is_grounded = true
+			_surface_normal = Vector2(0, -1)
+			jumpCount = 0
+		elif _stick_poly_idx < 0:
+			# Left the curve (jumped) — clear wedge
+			is_wedged = false
+		else:
+			_speedX = 0
+			_speedY = 0
+			is_grounded = true
 	var _pre_step_x: float = x
 	var _pre_step_y: float = y
 	_step_position()
 
 
 
-	# 7.15 Polyline collision — also check pre-step position for tunneling
+	# 7.15 Polyline collision with tunneling detection
 	if not is_god_mode and WorldManager.polylines.size() > 0:
 		var _poly_any_hit: bool = false
 		var _poly_hit_normal: Vector2 = Vector2.ZERO
@@ -259,20 +281,15 @@ func tick(input_h: int, input_v: int, space_just: bool, space_held: bool) -> voi
 		var poly2: Dictionary = WorldManager.check_polyline_collision(x, y, 16.0, 16.0, _prev_poly_normal, -1, _stick_poly_idx)
 		if poly2.hit and poly2.push.length() > 0.1:
 			if _poly_any_hit and poly2.normal.dot(_poly_hit_normal) < -0.3:
-				# Opposing curve at intersection — apply push but re-resolve stick curve
-				x += poly2.push.x
-				y += poly2.push.y
-				# Zero speed into the opposing surface
-				var into_wall: float = Vector2(_speedX, _speedY).dot(-poly2.normal)
-				if into_wall > 0:
-					_speedX += poly2.normal.x * into_wall
-					_speedY += poly2.normal.y * into_wall
-				# Re-resolve stick curve (pass 3)
-				if _stick_poly_idx >= 0:
-					var poly3: Dictionary = WorldManager.check_polyline_collision(x, y, 16.0, 16.0, _prev_poly_normal, _stick_poly_idx)
-					if poly3.hit and poly3.push.length() > 0.01:
-						x += poly3.push.x
-						y += poly3.push.y
+				# Opposing curves = sandwiched at intersection — wedge and stop
+				x += poly2.push.x * 0.5
+				y += poly2.push.y * 0.5
+				_speedX = 0
+				_speedY = 0
+				is_wedged = true
+				in_valley = true
+				is_grounded = true
+				_surface_normal = Vector2(0, -1)  # Straight up jump
 			else:
 				# Same direction or no pass 1 — apply normally
 				x += poly2.push.x
@@ -289,6 +306,26 @@ func tick(input_h: int, input_v: int, space_just: bool, space_held: bool) -> voi
 					_poly_hit_normal = poly2.normal
 					_poly_hit_tangent = poly2.tangent
 					_prev_poly_normal = poly2.normal
+		# Pass 4: Safety — catch any remaining penetration from ALL curves
+		# This prevents clipping through intersecting curves
+		for _safety_pass in range(3):
+			var poly4: Dictionary = WorldManager.check_polyline_collision(x, y, 16.0, 16.0, _prev_poly_normal)
+			if not poly4.hit or poly4.push.length() < 0.1:
+				break
+			x += poly4.push.x
+			y += poly4.push.y
+			if not _poly_any_hit:
+				_poly_any_hit = true
+				_stick_poly_idx = poly4.poly_idx
+				_stick_poly_ticks = 0
+				var poly_grav_n4: Vector2 = Vector2(mox, moy)
+				if poly_grav_n4.length() < 0.01:
+					poly_grav_n4 = Vector2(0, 1)
+				poly_grav_n4 = poly_grav_n4.normalized()
+				_poly_hit_against = -poly4.normal.dot(poly_grav_n4)
+				_poly_hit_normal = poly4.normal
+				_poly_hit_tangent = poly4.tangent
+				_prev_poly_normal = poly4.normal
 		# Apply grounding/speed from the hit surface
 		if _poly_any_hit and _poly_hit_against > -0.3:
 			on_rotated_block = true
@@ -595,6 +632,41 @@ func tick(input_h: int, input_v: int, space_just: bool, space_held: bool) -> voi
 	# 9. Jump
 	_handle_jump(space_just, space_held)
 
+	# 10. HARD CONSTRAINT: can't overlap curve walls
+	if not is_god_mode and WorldManager.polylines.size() > 0:
+		if _wedge_protect > 0:
+			_wedge_protect -= 1
+		# Find stick segment for wall exclusion
+		var _hc_stick_seg: int = -1
+		if _stick_poly_idx >= 0 and _stick_poly_idx < WorldManager.polylines.size():
+			var _sp: Dictionary = WorldManager.polylines[_stick_poly_idx]
+			var _sp_pts: PackedVector2Array = _sp.points
+			var _sp_best: float = 999999.0
+			for _si4 in range(_sp_pts.size() - 1):
+				var _d4: float = _dist_to_seg(x + 8, y + 8, _sp_pts[_si4], _sp_pts[_si4 + 1])
+				if _d4 < _sp_best:
+					_sp_best = _d4
+					_hc_stick_seg = _si4
+		# Check wall distance — runs when on a curve OR during post-wedge protection
+		var _do_wall_check: bool = _stick_poly_idx >= 0 or _wedge_protect > 0
+		if _do_wall_check:
+			var _wp: int = _stick_poly_idx if _stick_poly_idx >= 0 else _wedge_wall_poly
+			var _ws: int = _hc_stick_seg if _stick_poly_idx >= 0 else _wedge_wall_seg
+			var _wall_d: float = WorldManager.dist_to_wall_segments(x + 8, y + 8, _wp, _ws)
+			if _wall_d < 16.5 and not (space_just or space_held):
+				x = _pre_step_x
+				y = _pre_step_y
+				_speedX = 0
+				_speedY = 0
+				is_wedged = true
+				is_grounded = true
+				_surface_normal = Vector2(0, -1)
+				_wedge_wall_poly = _wp
+				_wedge_wall_seg = _ws
+				_wedge_protect = 50  # 0.5s of protection after wedge
+			elif _wall_d >= 16.5 and is_wedged:
+				is_wedged = false
+
 func _arrow_dir_to_vec(dir: int) -> Vector2:
 	match dir:
 		0: return Vector2(0, _gravity)
@@ -736,6 +808,14 @@ func _handle_jump(space_just: bool, space_held: bool) -> void:
 		else:
 			lastJumpMs = _now_ms
 
+func _dist_to_seg(cx: float, cy: float, sa: Vector2, sb: Vector2) -> float:
+	var ab: Vector2 = sb - sa
+	var ap: Vector2 = Vector2(cx, cy) - sa
+	var ab_dot: float = ab.dot(ab)
+	var t: float = clampf(ap.dot(ab) / maxf(ab_dot, 0.001), 0.0, 1.0)
+	var on_pt: Vector2 = sa + ab * t
+	return Vector2(cx, cy).distance_to(on_pt)
+
 func _step_position() -> void:
 	var currentSX: float = _speedX
 	var currentSY: float = _speedY
@@ -746,6 +826,7 @@ func _step_position() -> void:
 	var donex: bool = false
 	var doney: bool = false
 	var ox: float; var oy: float; var osx: float; var osy: float
+
 
 	var guard: int = 0
 	while ((currentSX != 0 and not donex) or (currentSY != 0 and not doney)) and guard < 64:
@@ -785,6 +866,7 @@ func _step_position() -> void:
 			if ry < 0: ry += 1.0
 			if _collides_px(x, y):
 				y = oy; _speedY = 0; currentSY = osy; doney = true
+
 
 func _collides_px(px: float, py: float) -> bool:
 	if is_god_mode:

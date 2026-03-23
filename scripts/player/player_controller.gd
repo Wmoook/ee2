@@ -302,11 +302,16 @@ func _physics_process(delta: float) -> void:
 				_anim_facing = 0
 		# Map state to texture: 0=sprite1, 1=sprite2, 2=sprite3, 3=sprite2
 		var tex_idx: int = 0
-		match _anim_frame:
-			0: tex_idx = 0
-			1: tex_idx = 1
-			2: tex_idx = 2
-			3: tex_idx = 1
+		if physics.is_wedged:
+			tex_idx = 0  # Idle when wedged
+			_anim_frame = 0
+			_anim_facing = 0
+		else:
+			match _anim_frame:
+				0: tex_idx = 0
+				1: tex_idx = 1
+				2: tex_idx = 2
+				3: tex_idx = 1
 		_smiley_sprite.texture = _anim_textures[tex_idx]
 		# sprite3 faces right. Mirror for left. sprite2 also mirrors for left.
 		if _anim_facing == -1:
@@ -316,7 +321,10 @@ func _physics_process(delta: float) -> void:
 
 	# Smiley rotation
 	if _use_anim_sprite and _smiley_sprite:
-		if physics.is_god_mode:
+		if physics.is_wedged:
+			# Wedged between curves: perfectly upright, no rolling
+			_smiley_sprite.rotation = lerp_angle(_smiley_sprite.rotation, 0.0, 0.5)
+		elif physics.is_god_mode:
 			# God mode: no rolling, stay upright (animation handles direction)
 			_smiley_sprite.rotation = lerp_angle(_smiley_sprite.rotation, 0.0, 0.3)
 		else:
