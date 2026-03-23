@@ -191,7 +191,7 @@ func _physics_process(delta: float) -> void:
 		elif physics.in_valley:
 			_smiley_sprite.rotation = 0.0
 			_valley_smiley_ticks = 10
-		elif not physics.on_rotated_block:
+		elif not physics.on_rotated_block or not physics.is_grounded:
 			# In air or on grid: clear flip state and lerp back to upright
 			_last_normal = Vector2(0, -1)
 			_valley_smiley_ticks = 0
