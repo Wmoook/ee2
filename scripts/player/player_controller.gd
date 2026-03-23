@@ -45,6 +45,8 @@ var _was_grounded: bool = false
 var _space_held: bool = false
 var _cbf_consumed_jump: bool = false  # Prevents re-latch after CBF
 var _show_hitboxes: bool = false
+var _idle_timer: float = 0.0  # Time at zero velocity
+var _name_fade: float = 0.0   # 0=hidden, 1=fully visible
 
 # Smooth visual position
 var _visual_pos: Vector2 = Vector2.ZERO
@@ -470,6 +472,18 @@ func _physics_process(delta: float) -> void:
 			_smiley_sprite.rotation = lerp_angle(_smiley_sprite.rotation, 0.0, 0.2)
 
 	# Camera updated inside tick loop above
+
+	# Name label: hide when moving, fade in after 3s idle
+	var _total_speed: float = absf(physics._speedX) + absf(physics._speedY)
+	if _total_speed > 0.3:
+		_idle_timer = 0.0
+		_name_fade = 0.0
+	else:
+		_idle_timer += delta
+		if _idle_timer > 3.0:
+			_name_fade = minf(_name_fade + delta * 2.0, 1.0)  # Fade in over 0.5s
+	if _name_label:
+		_name_label.modulate = Color(1, 1, 1, _name_fade)
 
 	# Hazard check
 	if not physics.is_god_mode:
