@@ -194,7 +194,7 @@ func check_polyline_collision(px: float, py: float, pw: float, ph: float, prefer
 	## Check if axis-aligned box (px,py,pw,ph) collides with any polyline.
 	## Returns {hit, push, normal, tangent, poly_idx} with interpolated normal at closest point.
 	## stick_poly: when >= 0 and sandwiched, only collide with this polyline index.
-	var result: Dictionary = {"hit": false, "push": Vector2.ZERO, "normal": Vector2(0, -1), "tangent": Vector2(1, 0), "poly_idx": -1}
+	var result: Dictionary = {"hit": false, "push": Vector2.ZERO, "normal": Vector2(0, -1), "tangent": Vector2(1, 0), "poly_idx": -1, "seg": -1}
 	var pcx: float = px + pw * 0.5
 	var pcy: float = py + ph * 0.5
 	var best_pen: float = -999.0  # Most positive = deepest penetration
@@ -293,7 +293,7 @@ func check_polyline_collision(px: float, py: float, pw: float, ph: float, prefer
 	# Select best hit: handle opposing curves (sandwich)
 	if _dbg_hits.size() == 1:
 		var h: Dictionary = _dbg_hits[0]
-		result = {"hit": true, "push": h.push_dir * h.pen, "normal": h.push_dir, "tangent": h.tangent, "poly_idx": h.poly}
+		result = {"hit": true, "push": h.push_dir * h.pen, "normal": h.push_dir, "tangent": h.tangent, "poly_idx": h.poly, "seg": h.seg}
 	elif _dbg_hits.size() >= 2:
 		# Detect sandwich: opposing normals OR deep penetration from different polylines
 		# (deep pen = player center crossed curve line, push_dir may have flipped)
@@ -323,21 +323,21 @@ func check_polyline_collision(px: float, py: float, pw: float, ph: float, prefer
 				for h in _dbg_hits:
 					if h.pen > best_h.pen:
 						best_h = h
-			result = {"hit": true, "push": best_h.push_dir * best_h.pen, "normal": best_h.push_dir, "tangent": best_h.tangent, "poly_idx": best_h.poly}
+			result = {"hit": true, "push": best_h.push_dir * best_h.pen, "normal": best_h.push_dir, "tangent": best_h.tangent, "poly_idx": best_h.poly, "seg": best_h.seg}
 		elif has_opposing:
 			# Sandwich but no stick: pick deepest (the surface player is closest to)
 			var best_h: Dictionary = _dbg_hits[0]
 			for h in _dbg_hits:
 				if h.pen > best_h.pen:
 					best_h = h
-			result = {"hit": true, "push": best_h.push_dir * best_h.pen, "normal": best_h.push_dir, "tangent": best_h.tangent, "poly_idx": best_h.poly}
+			result = {"hit": true, "push": best_h.push_dir * best_h.pen, "normal": best_h.push_dir, "tangent": best_h.tangent, "poly_idx": best_h.poly, "seg": best_h.seg}
 		else:
 			# Same-side hits: use deepest penetration (standard behavior)
 			var best_h: Dictionary = _dbg_hits[0]
 			for h in _dbg_hits:
 				if h.pen > best_h.pen:
 					best_h = h
-			result = {"hit": true, "push": best_h.push_dir * best_h.pen, "normal": best_h.push_dir, "tangent": best_h.tangent, "poly_idx": best_h.poly}
+			result = {"hit": true, "push": best_h.push_dir * best_h.pen, "normal": best_h.push_dir, "tangent": best_h.tangent, "poly_idx": best_h.poly, "seg": best_h.seg}
 	return result
 
 func enforce_polyline_hard_constraint(px: float, py: float, prev_px: float, prev_py: float, exclude_poly: int = -1) -> Dictionary:
@@ -420,6 +420,57 @@ func enforce_polyline_hard_constraint(px: float, py: float, prev_px: float, prev
 		total_push += iter_push
 		pushed = true
 	return {"pushed": pushed, "x": cx - 8.0, "y": cy - 8.0, "push": total_push, "normal": best_normal, "tangent": best_tangent, "poly_count": touching_polys.size()}
+
+func check_curve_wall(cx: float, cy: float, stick_poly: int, stick_arc: float, arc_exclude: float = 40.0) -> Dictionary:
+	## Check if player center (cx,cy) is within 16.5px of any "wall" polyline segment.
+	## Uses arc-length distance to exclude the riding zone on the stick poly.
+	## stick_poly=-1 means no exclusion (everything is a wall).
+	## Returns {blocked: bool, push: Vector2}
+	var min_dist: float = 16.5
+	var best_pen: float = 0.0
+	var best_push: Vector2 = Vector2.ZERO
+	var _pidx: int = -1
+	for poly in polylines:
+		_pidx += 1
+		var bb_min: Vector2 = poly.bbox_min
+		var bb_max: Vector2 = poly.bbox_max
+		if cx < bb_min.x - 20 or cx > bb_max.x + 20 or cy < bb_min.y - 20 or cy > bb_max.y + 20:
+			continue
+		var pts: PackedVector2Array = poly.points
+		var rd: Array = poly.render_dists
+		var shash: Dictionary = poly.get("spatial_hash", {})
+		var cs: int = shash.get("cell_size", 32)
+		var gx: int = int(floor(cx / cs))
+		var gy: int = int(floor(cy / cs))
+		var checked: Dictionary = {}
+		for dx2 in range(-2, 3):
+			for dy2 in range(-2, 3):
+				var key: int = (gx + dx2) * 10000 + (gy + dy2)
+				if not shash.has(key):
+					continue
+				for si in shash[key]:
+					if checked.has(si):
+						continue
+					checked[si] = true
+					# Arc-length exclusion: skip segments in riding zone on stick poly
+					if _pidx == stick_poly and stick_arc >= 0 and si < rd.size():
+						if absf(rd[si] - stick_arc) < arc_exclude:
+							continue
+					var sa: Vector2 = pts[si]
+					var sb: Vector2 = pts[si + 1]
+					var ab: Vector2 = sb - sa
+					var ap: Vector2 = Vector2(cx, cy) - sa
+					var ab_dot: float = ab.dot(ab)
+					var seg_t: float = clampf(ap.dot(ab) / maxf(ab_dot, 0.001), 0.0, 1.0)
+					var on_pt: Vector2 = sa + ab * seg_t
+					var dist: float = Vector2(cx, cy).distance_to(on_pt)
+					if dist < min_dist:
+						var pen: float = min_dist - dist
+						if pen > best_pen:
+							best_pen = pen
+							var to_p: Vector2 = Vector2(cx, cy) - on_pt
+							best_push = to_p.normalized() * pen if to_p.length() > 0.01 else Vector2(0, -1) * pen
+	return {"blocked": best_pen > 0.01, "push": best_push}
 
 func dist_to_wall_segments(cx: float, cy: float, stick_poly: int, stick_seg: int) -> float:
 	## Distance to nearest "wall" segment — excludes ±20 segments around stick_seg on stick_poly.

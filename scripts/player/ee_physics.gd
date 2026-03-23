@@ -51,6 +51,7 @@ var _prev_push_normal: Vector2 = Vector2.ZERO
 var _prev_poly_normal: Vector2 = Vector2.ZERO  # Polyline push from last tick
 var _stick_poly_idx: int = -1  # Polyline index player is currently on
 var _stick_poly_ticks: int = 0  # Ticks since last contact with stuck poly
+var _stick_arc_pos: float = -1.0  # Arc-length position on stick poly
 var _poly_segs: Array = []  # Cached nearby non-stick polyline segments
 var _poly_active: bool = false
 var _poly_thresh2: float = 16.5
@@ -261,7 +262,7 @@ func tick(input_h: int, input_v: int, space_just: bool, space_held: bool) -> voi
 		var _poly_hit_against: float = -999.0
 		# Decay stick tracking: release after 5 ticks without contact
 		_stick_poly_ticks += 1
-		if _stick_poly_ticks > 5:
+		if _stick_poly_ticks > 10:
 			_stick_poly_idx = -1
 		# Pass 1: resolve stick polyline (stay on your curve)
 		var poly_result: Dictionary = WorldManager.check_polyline_collision(x, y, 16.0, 16.0, _prev_poly_normal, _stick_poly_idx)
@@ -275,6 +276,11 @@ func tick(input_h: int, input_v: int, space_just: bool, space_held: bool) -> voi
 				y += poly_result.push.y
 				_stick_poly_idx = poly_result.poly_idx
 				_stick_poly_ticks = 0
+				# Store arc position for wall exclusion
+				if poly_result.poly_idx >= 0 and poly_result.seg >= 0:
+					var _sp_rd: Array = WorldManager.polylines[poly_result.poly_idx].render_dists
+					if poly_result.seg < _sp_rd.size():
+						_stick_arc_pos = _sp_rd[poly_result.seg]
 				var poly_grav_n: Vector2 = Vector2(mox, moy)
 				if poly_grav_n.length() < 0.01:
 					poly_grav_n = Vector2(0, 1)
@@ -638,21 +644,22 @@ func tick(input_h: int, input_v: int, space_just: bool, space_held: bool) -> voi
 	# 9. Jump
 	_handle_jump(space_just, space_held)
 
-	# 10. HARD CONSTRAINT: can't overlap curve walls
-	# Also runs when airborne near a recent wedge position (prevents clip on re-entry)
-	var _near_wedge: bool = _wedge_protect > 0 and Vector2(x, y).distance_to(_wedge_pos) < 60.0
-	if not is_god_mode and (_stick_poly_idx >= 0 or _near_wedge) and WorldManager.polylines.size() > 0:
-		var _hc_stick_seg: int = -1
-		var _sp: Dictionary = WorldManager.polylines[_stick_poly_idx]
-		var _sp_pts: PackedVector2Array = _sp.points
-		var _sp_best: float = 999999.0
-		for _si4 in range(_sp_pts.size() - 1):
-			var _d4: float = _dist_to_seg(x + 8, y + 8, _sp_pts[_si4], _sp_pts[_si4 + 1])
-			if _d4 < _sp_best:
-				_sp_best = _d4
-				_hc_stick_seg = _si4
-		var _wall_d: float = WorldManager.dist_to_wall_segments(x + 8, y + 8, _stick_poly_idx, _hc_stick_seg)
-		if _wall_d < 16.5:
+	# 10. HARD CONSTRAINT: can't overlap any curve wall (runs ALWAYS)
+	# Uses arc-length exclusion: only segments near the riding point are permeable
+	if not is_god_mode and WorldManager.polylines.size() > 0:
+		if _wedge_protect > 0:
+			_wedge_protect -= 1
+		# Exclusion logic:
+		# - On a curve (stick>=0): arc-length exclusion (40px around riding point)
+		# - Airborne (stick<0): exclude entire last-ridden poly
+		#   Only DIFFERENT polylines can block when airborne
+		var _s_poly: int = _stick_poly_idx
+		var _s_arc: float = _stick_arc_pos
+		var _arc_excl: float = 80.0
+		if _stick_poly_idx < 0:
+			_arc_excl = 99999.0  # Exclude entire last poly when airborne
+		var _wall: Dictionary = WorldManager.check_curve_wall(x + 8, y + 8, _s_poly, _s_arc, _arc_excl)
+		if _wall.blocked:
 			x = _wedge_safe_pos.x
 			y = _wedge_safe_pos.y
 			_speedX = 0
@@ -662,8 +669,8 @@ func tick(input_h: int, input_v: int, space_just: bool, space_held: bool) -> voi
 			_surface_normal = Vector2(0, -1)
 			_wedge_pos = Vector2(x, y)
 			_wedge_protect = 100
-	elif is_wedged and _stick_poly_idx < 0 and not _near_wedge:
-		is_wedged = false
+		elif is_wedged:
+			is_wedged = false
 
 func _arrow_dir_to_vec(dir: int) -> Vector2:
 	match dir:
