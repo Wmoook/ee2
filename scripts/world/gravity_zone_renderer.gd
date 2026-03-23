@@ -82,10 +82,12 @@ func _draw() -> void:
 						var a_angle: float = TAU * float(ai) / float(layer_count) + time * speed + float(layer) * 0.5
 						var wobble: float = sin(a_angle * 3.0 + time * 2.5 + float(layer)) * (1.0 + layer_t)
 						var a_r: float = layer_r + wobble
-						# Most layers normal squash, ~30% get extra horizontal stretch
+						# 40% normal, 30% stretched X (wider), 30% stretched Y (taller)
 						var squash: float = 0.45
 						if layer % 3 == 0:
-							squash = lerpf(0.35, 0.2, layer_t)
+							squash = lerpf(0.3, 0.18, layer_t)  # Wider (stretch X)
+						elif layer % 3 == 1:
+							squash = lerpf(0.7, 0.85, layer_t)  # Taller (stretch Y)
 						var a_pos: Vector2 = center + Vector2(cos(a_angle) * a_r, sin(a_angle) * a_r * squash)
 						if pass_idx == 0 and a_pos.y > center.y:
 							continue
