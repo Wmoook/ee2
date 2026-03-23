@@ -44,8 +44,8 @@ func _draw() -> void:
 			var b_pos: Vector2 = center + Vector2(cos(b_angle), sin(b_angle)) * (radius + b_wobble)
 			# Swirling brightness pattern
 			var b_bright: float = 0.3 + 0.7 * maxf(0, sin(b_angle * 3.0 - time * 1.5))
-			var b_alpha: float = b_bright * (0.5 if edit else 0.2)
-			draw_rect(Rect2(floor(b_pos.x), floor(b_pos.y), px_size, px_size), Color(0.5, 0.2, 0.9, b_alpha))
+			var b_alpha: float = b_bright * (0.7 if edit else 0.35)
+			draw_rect(Rect2(floor(b_pos.x), floor(b_pos.y), px_size, px_size), Color(0.6, 0.3, 1.0, b_alpha))
 
 		# Pulsing inward rings (pixel dots)
 		for i in range(4):
@@ -153,7 +153,7 @@ func _draw() -> void:
 			var line_len: int = int(radius * 0.08) + 3
 			# Match border's swirling color at this angle
 			var border_bright: float = 0.3 + 0.7 * maxf(0, sin(line_angle * 3.0 - time * 1.5))
-			var line_alpha: float = (1.0 - flow_phase * 0.5) * border_bright * 0.6 * bright
+			var line_alpha: float = (1.0 - flow_phase * 0.5) * border_bright * 0.8 * bright
 			var dir: Vector2 = Vector2(cos(line_angle), sin(line_angle))
 			for li in range(line_len):
 				var lr: float = head_r + float(li)
@@ -161,4 +161,4 @@ func _draw() -> void:
 					continue
 				var l_pos: Vector2 = center + dir * lr
 				# Color matches border: purple, brightness synced
-				draw_rect(Rect2(floor(l_pos.x), floor(l_pos.y), px_size, px_size), Color(0.5, 0.2, 0.9, line_alpha * (1.0 - float(li) / float(line_len))))
+				draw_rect(Rect2(floor(l_pos.x), floor(l_pos.y), px_size, px_size), Color(0.6, 0.3, 1.0, line_alpha * (1.0 - float(li) / float(line_len))))
