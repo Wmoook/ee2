@@ -715,7 +715,17 @@ func _step_position() -> void:
 			ry = fmod(y, 1.0)
 			if ry < 0: ry += 1.0
 			if _collides_px(x, y):
-				y = oy; _speedY = 0; currentSY = osy; doney = true
+				if currentSY > 0:
+					# Landing: snap to exact tile boundary above the block
+					var block_top: float = float(int(floor(y + 15)) / 16 * 16)
+					var snapped: float = block_top - 16.0
+					if snapped >= 0 and not _collides_px(x, snapped):
+						y = snapped
+					else:
+						y = oy
+				else:
+					y = oy
+				_speedY = 0; currentSY = osy; doney = true
 
 func _collides_px(px: float, py: float) -> bool:
 	if is_god_mode:
