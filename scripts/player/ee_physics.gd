@@ -596,13 +596,15 @@ func _compute_gravity() -> void:
 	mox = del_vec.x
 	moy = del_vec.y
 
-	# Gravity zone override: pull toward zone center
+	# Gravity zone override: works like arrows pointing toward center
 	var gz_result: Dictionary = WorldManager.gravity_zones.get_gravity_at(x + 8.0, y + 8.0)
 	if gz_result.in_zone:
 		morx = gz_result.direction.x
 		mory = gz_result.direction.y
 		mox = gz_result.direction.x
 		moy = gz_result.direction.y
+		# Set active_arrow_dir so diagonal input + jump logic works like arrow fields
+		_active_arrow_dir = 4  # Special value = gravity zone (not 0-3 cardinal)
 
 func _handle_jump(space_just: bool, space_held: bool) -> void:
 	var do_jump: bool = false
