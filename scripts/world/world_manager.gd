@@ -36,7 +36,7 @@ var polylines: Array = []
 signal polylines_changed()
 
 # Gravity zones (circular areas with inward gravity)
-var gravity_zones: GravityZoneManager = GravityZoneManager.new()
+var gravity_zones = preload("res://scripts/world/gravity_zone_manager.gd").new()
 
 func create_group(name: String = "") -> int:
 	var gid: int = _next_group_id
