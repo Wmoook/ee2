@@ -97,14 +97,14 @@ func _draw() -> void:
 					var e_pulse: float = 0.6 + 0.4 * sin(e_angle * 2.0 + time * 3.0)
 					draw_rect(Rect2(floor(e_pos.x), floor(e_pos.y), 1, 1), Color(1.0, 0.6 * e_pulse, 0.2 * e_pulse, e_pulse * bright))
 
-		# 4. Spiral streams — start at BORDER, spiral INWARD to center
+		# 4. Spiral streams — cool logarithmic spiral flowing INWARD
 		for si in range(24):
-			var s_angle: float = TAU * float(si) / 24.0 - time * 0.8
+			var s_angle: float = TAU * float(si) / 24.0 + time * 1.0
 			var s_phase: float = fmod(time * 0.5 + float(si) * 0.042, 1.0)
-			# phase 0 = at border, phase 1 = at center
-			var s_r: float = lerpf(radius * 0.8, float(void_r) + 2.0, s_phase * s_phase)
-			var spiral_twist: float = s_phase * 5.0  # Tighter spiral near center
-			var s_pos: Vector2 = center + Vector2(cos(s_angle - spiral_twist), sin(s_angle - spiral_twist)) * s_r
+			# Logarithmic spiral: starts wide at border, tightens into center
+			var s_r: float = radius * 0.8 * (1.0 - s_phase) * (1.0 - s_phase)  # Accelerates inward
+			var spiral_twist: float = s_phase * 6.0  # Lots of twist
+			var s_pos: Vector2 = center + Vector2(cos(s_angle + spiral_twist), sin(s_angle + spiral_twist)) * s_r
 			if s_pos.distance_to(center) < float(void_r) + 1.0:
 				continue
 			var s_alpha: float = s_phase * (1.0 - s_phase * 0.5) * 2.5 * bright
