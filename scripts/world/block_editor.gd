@@ -1206,7 +1206,8 @@ func _process(_delta: float) -> void:
 						var _rd_max: float = round(_rd_total / 16.0) * 16.0
 						push_warning("ENDCAP spline_end=(%.1f,%.1f) cap_pos=(%.1f,%.1f) render_dist_total=%.1f render_max=%.1f" % [spline_pts[-1].x, spline_pts[-1].y, e_pos.x, e_pos.y, _rd_total, _rd_max])
 						var e_rot: float = rad_to_deg(atan2(e_dir.y, e_dir.x))
-						var tile_count: int = int(_tlen / 16.0)
+						# Use renderer's tile count (round, same as mesh truncation)
+						var tile_count: int = int(round(_rd_total / 16.0))
 						var end_fb: Dictionary = {"pos": e_pos, "id": GameState.selected_block_id, "rotation": e_rot}
 						if tile_count % 2 == 0:
 							end_fb["flip_h"] = true
