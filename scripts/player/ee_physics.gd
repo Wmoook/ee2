@@ -225,24 +225,28 @@ func tick(input_h: int, input_v: int, space_just: bool, space_held: bool) -> voi
 
 	# 7.05 Gap-assist: when falling past a 1x1 gap while holding toward it, ALWAYS enter
 	# Check ALL tile rows between pre-step and post-step Y (catches high-speed falls)
-	# 7.05 Gap-assist: when falling along a wall holding toward it, snap into any opening
+	# 7.05 Gap-assist: when moving toward a wall, snap into any opening passed through
 	if not is_god_mode and absf(_last_input_h) > 0.01 and _collides_fn.is_valid():
 		var dir: int = 1 if _last_input_h > 0 else -1
-		var ptx: int = int(floor((x + 8) / 16.0))
-		var side_tx: int = ptx + dir
-		# Only assist when the player is actually against a wall (blocked in that direction)
-		if _collides_px(x + dir, y):
-			# Scan every tile row between pre-step and post-step
-			var ty_start: int = int(floor(minf(_pre_step_y, y) / 16.0))
-			var ty_end: int = int(floor(maxf(_pre_step_y + 15, y + 15) / 16.0))
-			for ty in range(ty_start, ty_end + 1):
-				# Check if this row has an opening on the side (player could fit through)
-				var can_fit: bool = not _collides_fn.call(side_tx, ty)
-				if can_fit:
-					var aligned_y: float = float(ty) * 16.0
-					# Check if player WOULD fit at this Y (no collision)
-					if not _collides_px(x + dir * 2, aligned_y):
-						y = aligned_y
+		# Check if wall exists in that direction (within 4px)
+		var wall_blocked: bool = _collides_px(x + dir, y) or _collides_px(x + dir * 2, y) or _collides_px(x + dir * 4, y)
+		if wall_blocked:
+			# Find the wall tile column
+			var wall_tx: int
+			if dir > 0:
+				wall_tx = int(floor((x + 15) / 16.0)) + 1  # Tile to the right of player
+			else:
+				wall_tx = int(floor(x / 16.0)) - 1  # Tile to the left of player
+			# Scan tile rows the player passed through
+			var ty_min: int = int(floor(minf(_pre_step_y, y) / 16.0))
+			var ty_max: int = int(floor(maxf(_pre_step_y + 15, y + 15) / 16.0))
+			for ty in range(ty_min, ty_max + 1):
+				# Is this tile in the wall empty? (gap)
+				if not _collides_fn.call(wall_tx, ty):
+					var snap_y: float = float(ty) * 16.0
+					# Would player fit there? (check full collision at snapped position)
+					if not _collides_px(x, snap_y):
+						y = snap_y
 						_speedY = 0
 						break
 
