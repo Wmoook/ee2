@@ -37,10 +37,10 @@ var jumpCount: int = 0
 var lastJumpMs: float = -99999.0
 var is_god_mode: bool = false
 var is_grounded: bool = false
-var is_wedged: bool = false  # Touching 2+ curves — frozen, jump straight up
-var _wedge_wall_poly: int = -1  # Poly idx of the wall that caused wedge
-var _wedge_wall_seg: int = -1  # Seg idx of the wall segment
+var is_wedged: bool = false  # Touching curve wall — frozen, jump straight up
+var _wedge_pos: Vector2 = Vector2(-9999, -9999)  # Position where wedge occurred
 var _wedge_protect: int = 0  # Ticks of post-wedge protection
+var _wedge_safe_pos: Vector2 = Vector2(0, 0)  # Last position where NOT wedged
 var on_rotated_block: bool = false
 var in_valley: bool = false
 var valley_jump: bool = false
@@ -112,6 +112,10 @@ func _get_speed_mult() -> float:
 	return 1.0
 
 func tick(input_h: int, input_v: int, space_just: bool, space_held: bool) -> void:
+	# Wedge: suppress ALL directional input. Only jump works.
+	if is_wedged:
+		input_h = 0
+		input_v = 0
 	_now_ms += MS_PER_TICK
 	# Track speed in gravity direction to prevent jump during launch
 	var _pre_tick_speedY: float = _speedY
@@ -131,7 +135,9 @@ func tick(input_h: int, input_v: int, space_just: bool, space_held: bool) -> voi
 		_jump_cooldown -= 1
 	# Reset grounded each tick - will be recomputed by _check_grounded later
 	is_grounded = false
-	# Don't reset is_wedged here — it persists until player escapes
+	# Save safe position when not wedged
+	if not is_wedged:
+		_wedge_safe_pos = Vector2(x, y)
 
 	if is_god_mode:
 		on_dot = true
@@ -228,15 +234,15 @@ func tick(input_h: int, input_v: int, space_just: bool, space_held: bool) -> voi
 
 	# 7. Step position
 	# If wedged, suppress all speed — only jump can escape
+	if _wedge_protect > 0:
+		_wedge_protect -= 1
 	if is_wedged:
 		if space_just:
+			# Jump escape — keep protect active so re-entry is caught
 			is_wedged = false
 			is_grounded = true
 			_surface_normal = Vector2(0, -1)
 			jumpCount = 0
-		elif _stick_poly_idx < 0:
-			# Left the curve (jumped) — clear wedge
-			is_wedged = false
 		else:
 			_speedX = 0
 			_speedY = 0
@@ -633,39 +639,31 @@ func tick(input_h: int, input_v: int, space_just: bool, space_held: bool) -> voi
 	_handle_jump(space_just, space_held)
 
 	# 10. HARD CONSTRAINT: can't overlap curve walls
-	if not is_god_mode and WorldManager.polylines.size() > 0:
-		if _wedge_protect > 0:
-			_wedge_protect -= 1
-		# Find stick segment for wall exclusion
+	# Also runs when airborne near a recent wedge position (prevents clip on re-entry)
+	var _near_wedge: bool = _wedge_protect > 0 and Vector2(x, y).distance_to(_wedge_pos) < 60.0
+	if not is_god_mode and (_stick_poly_idx >= 0 or _near_wedge) and WorldManager.polylines.size() > 0:
 		var _hc_stick_seg: int = -1
-		if _stick_poly_idx >= 0 and _stick_poly_idx < WorldManager.polylines.size():
-			var _sp: Dictionary = WorldManager.polylines[_stick_poly_idx]
-			var _sp_pts: PackedVector2Array = _sp.points
-			var _sp_best: float = 999999.0
-			for _si4 in range(_sp_pts.size() - 1):
-				var _d4: float = _dist_to_seg(x + 8, y + 8, _sp_pts[_si4], _sp_pts[_si4 + 1])
-				if _d4 < _sp_best:
-					_sp_best = _d4
-					_hc_stick_seg = _si4
-		# Check wall distance — runs when on a curve OR during post-wedge protection
-		var _do_wall_check: bool = _stick_poly_idx >= 0 or _wedge_protect > 0
-		if _do_wall_check:
-			var _wp: int = _stick_poly_idx if _stick_poly_idx >= 0 else _wedge_wall_poly
-			var _ws: int = _hc_stick_seg if _stick_poly_idx >= 0 else _wedge_wall_seg
-			var _wall_d: float = WorldManager.dist_to_wall_segments(x + 8, y + 8, _wp, _ws)
-			if _wall_d < 16.5 and not (space_just or space_held):
-				x = _pre_step_x
-				y = _pre_step_y
-				_speedX = 0
-				_speedY = 0
-				is_wedged = true
-				is_grounded = true
-				_surface_normal = Vector2(0, -1)
-				_wedge_wall_poly = _wp
-				_wedge_wall_seg = _ws
-				_wedge_protect = 50  # 0.5s of protection after wedge
-			elif _wall_d >= 16.5 and is_wedged:
-				is_wedged = false
+		var _sp: Dictionary = WorldManager.polylines[_stick_poly_idx]
+		var _sp_pts: PackedVector2Array = _sp.points
+		var _sp_best: float = 999999.0
+		for _si4 in range(_sp_pts.size() - 1):
+			var _d4: float = _dist_to_seg(x + 8, y + 8, _sp_pts[_si4], _sp_pts[_si4 + 1])
+			if _d4 < _sp_best:
+				_sp_best = _d4
+				_hc_stick_seg = _si4
+		var _wall_d: float = WorldManager.dist_to_wall_segments(x + 8, y + 8, _stick_poly_idx, _hc_stick_seg)
+		if _wall_d < 16.5:
+			x = _wedge_safe_pos.x
+			y = _wedge_safe_pos.y
+			_speedX = 0
+			_speedY = 0
+			is_wedged = true
+			is_grounded = true
+			_surface_normal = Vector2(0, -1)
+			_wedge_pos = Vector2(x, y)
+			_wedge_protect = 100
+	elif is_wedged and _stick_poly_idx < 0 and not _near_wedge:
+		is_wedged = false
 
 func _arrow_dir_to_vec(dir: int) -> Vector2:
 	match dir:
