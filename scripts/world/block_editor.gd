@@ -616,18 +616,17 @@ func _input(event: InputEvent) -> void:
 			queue_redraw()
 			return
 		if event.is_action_released("place_block") and _grav_zone_dragging:
-			if _grav_zone_phase == 1:
-				# Still in center phase — set center size and switch to radius
-				_grav_zone_center_r = maxf(4.0, _grav_zone_center.distance_to(get_global_mouse_position()))
-				_grav_zone_phase = 2
-				queue_redraw()
-				return
 			var r: float = _grav_zone_center.distance_to(get_global_mouse_position())
-			if r > _grav_zone_center_r + 5:
+			if _grav_zone_phase == 2 and r > _grav_zone_center_r + 5:
 				_save_undo()
 				WorldManager.gravity_zones.add_zone(_grav_zone_center, r, 2.0, _grav_zone_center_r)
-			_grav_zone_dragging = false
-			_grav_zone_phase = 0
+				_grav_zone_dragging = false
+				_grav_zone_phase = 0
+			elif _grav_zone_phase == 2 and r <= _grav_zone_center_r + 5:
+				# Too small radius, cancel
+				_grav_zone_dragging = false
+				_grav_zone_phase = 0
+			# Phase 1 release: just stay in phase 2 (shift released handles transition)
 			queue_redraw()
 			return
 		if event.is_action_pressed("remove_block"):
@@ -642,8 +641,17 @@ func _input(event: InputEvent) -> void:
 		if event is InputEventMouseMotion and _grav_zone_dragging:
 			if _grav_zone_phase == 1:
 				_grav_zone_center_r = maxf(4.0, _grav_zone_center.distance_to(get_global_mouse_position()))
+				# Check if shift released — transition to phase 2
+				if not Input.is_key_pressed(KEY_SHIFT):
+					_grav_zone_phase = 2
 			queue_redraw()
 			return
+		# Also check shift release via key event
+		if event is InputEventKey and _grav_zone_dragging and _grav_zone_phase == 1:
+			if not Input.is_key_pressed(KEY_SHIFT):
+				_grav_zone_phase = 2
+				queue_redraw()
+				return
 
 	# Curve mode (before align/selection so it gets clicks)
 	if _curve_mode:
