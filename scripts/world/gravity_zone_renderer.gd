@@ -53,10 +53,11 @@ func _draw() -> void:
 		for pass_idx in range(3):  # 0=back ring, 1=void+glow, 2=front ring
 			if pass_idx == 0 or pass_idx == 2:
 				# Accretion disk — circumference-matched particle count (no gaps)
-				# Ring thickness is FIXED ~10px regardless of hole size
-				var ring_thick: float = 10.0
-				for layer in range(4):
-					var layer_t: float = float(layer) / 3.0
+				# Ring thickness scales with hole but stays proportional (35% of void radius)
+				var ring_thick: float = maxf(8.0, float(void_r) * 0.35)
+				var num_layers: int = maxi(4, int(ring_thick / 2.5))  # More layers for thicker rings
+				for layer in range(num_layers):
+					var layer_t: float = float(layer) / float(maxi(num_layers - 1, 1))
 					var layer_r: float = float(void_r) + 1.0 + layer_t * ring_thick
 					# Enough particles to fill the ellipse circumference
 					var layer_count: int = int(layer_r * 4.0)
