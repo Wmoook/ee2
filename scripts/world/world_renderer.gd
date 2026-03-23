@@ -134,12 +134,26 @@ func _draw() -> void:
 					var cmesh: ArrayMesh = ArrayMesh.new()
 					var mverts: PackedVector2Array = PackedVector2Array()
 					var muvs: PackedVector2Array = PackedVector2Array()
+					# Truncate at last full 16px tile boundary
+					var total_d: float = r_dists[-1] if r_dists.size() > 0 else 0.0
+					var max_d: float = floor(total_d / 16.0) * 16.0
+					if max_d < 16.0:
+						max_d = total_d  # Too short, show everything
 					var prev_mt: Vector2 = r_top[0]
 					var prev_mb: Vector2 = r_bot[0]
 					var prev_md: float = 0.0
 					for mi in range(1, r_top.size()):
 						var md: float = r_dists[mi] if mi < r_dists.size() else prev_md + 1.0
-						if md - prev_md < 0.5 and mi < r_top.size() - 1:
+						if md > max_d:
+							# Interpolate to exact cutoff point
+							var cut_t: float = (max_d - prev_md) / maxf(md - prev_md, 0.001)
+							var cut_top: Vector2 = prev_mt.lerp(r_top[mi], cut_t)
+							var cut_bot: Vector2 = prev_mb.lerp(r_bot[mi], cut_t)
+							md = max_d
+							# Use these as the final points (will be processed below)
+							r_top[mi] = cut_top
+							r_bot[mi] = cut_bot
+						if md - prev_md < 0.5 and md < max_d:
 							continue
 						# Tiling UV: repeat every 16px, mirror every other tile for seamless pattern
 						var tile_num_l: int = int(prev_md / 16.0)
@@ -183,6 +197,8 @@ func _draw() -> void:
 						prev_mt = r_top[mi]
 						prev_mb = r_bot[mi]
 						prev_md = md
+						if md >= max_d:
+							break
 					if mverts.size() >= 3:
 						var arrays: Array = []
 						arrays.resize(Mesh.ARRAY_MAX)
@@ -317,18 +333,16 @@ func _draw_free_block(fb: Dictionary) -> void:
 	var bid: int = fb.id
 	var rot: float = fb.rotation
 	var render_id: int = _get_visual_id(bid)
-	# Custom blocks: draw with scaling + optional horizontal flip
+	# Custom blocks: same draw method as grid blocks but with rotation + optional mirror
 	if GameState.is_custom_block(render_id):
 		var ctex: Texture2D = GameState.get_custom_block_texture(render_id)
 		if ctex:
 			var center: Vector2 = pos + Vector2(8, 8)
-			var sx: float = 16.0 / ctex.get_width()
-			var sy: float = 16.0 / ctex.get_height()
+			draw_set_transform(center, deg_to_rad(rot), Vector2.ONE)
 			if fb.get("flip_h", false):
-				sx = -sx  # Mirror horizontally
-			draw_set_transform(center, deg_to_rad(rot), Vector2(sx, sy))
-			var half: float = ctex.get_width() * 0.5
-			draw_texture(ctex, Vector2(-half, -half))
+				draw_texture_rect(ctex, Rect2(8, -8, -16, 16), false)  # Negative width = mirror
+			else:
+				draw_texture_rect(ctex, Rect2(-8, -8, 16, 16), false)
 			draw_set_transform(Vector2.ZERO, 0, Vector2.ONE)
 		return
 	var info: Dictionary = GameState.get_block_info(render_id)

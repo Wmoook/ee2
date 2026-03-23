@@ -1165,6 +1165,25 @@ func _process(_delta: float) -> void:
 					if spline_pts.size() > 0 and spline_pts[-1].distance_to(cpts[-1]) > 0.5:
 						spline_pts.append(cpts[-1])
 					if spline_pts.size() >= 2:
+						# Truncate spline to last full 16px tile boundary
+						var _tlen: float = 0.0
+						for _ti in range(1, spline_pts.size()):
+							_tlen += spline_pts[_ti].distance_to(spline_pts[_ti - 1])
+						var _tmax: float = floor(_tlen / 16.0) * 16.0
+						var _orig_pts: int = spline_pts.size()
+						push_warning("CURVE_TRUNC len=%.1f max=%.1f remainder=%.1f pts=%d" % [_tlen, _tmax, _tlen - _tmax, spline_pts.size()])
+						if _tmax >= 16.0:
+							var _taccum: float = 0.0
+							for _ti in range(1, spline_pts.size()):
+								var _tseg: float = spline_pts[_ti].distance_to(spline_pts[_ti - 1])
+								if _taccum + _tseg >= _tmax:
+									var _tt: float = (_tmax - _taccum) / maxf(_tseg, 0.001)
+									var _tcut: Vector2 = spline_pts[_ti - 1].lerp(spline_pts[_ti], _tt)
+									spline_pts.resize(_ti)
+									spline_pts.append(_tcut)
+									push_warning("CURVE_TRUNC CUT at idx=%d new_pts=%d cut_pos=(%.1f,%.1f)" % [_ti, spline_pts.size(), _tcut.x, _tcut.y])
+									break
+								_taccum += _tseg
 						WorldManager.add_polyline(spline_pts, "both", GameState.selected_block_id)
 						# End cap blocks: centered at endpoints, rotated to tangent
 						# Start cap: direction from point 0 toward point 1
@@ -1172,26 +1191,16 @@ func _process(_delta: float) -> void:
 						var s_pos: Vector2 = spline_pts[0] - s_dir * 7.0 - Vector2(8, 8)
 						var s_rot: float = rad_to_deg(atan2(s_dir.y, s_dir.x))
 						WorldManager.free_blocks.append({"pos": s_pos, "id": GameState.selected_block_id, "rotation": s_rot})
-						# End cap: use the POLYLINE's actual last point + tangent
-						var poly_data: Dictionary = WorldManager.polylines[-1] if WorldManager.polylines.size() > 0 else {}
-						var poly_pts: PackedVector2Array = poly_data.get("points", PackedVector2Array())
-						if poly_pts.size() >= 2:
-							var e_end: Vector2 = poly_pts[-1]
-							# Direction from 4+ px back
-							var e_ref: Vector2 = poly_pts[maxi(0, poly_pts.size() - 2)]
-							for _ei in range(poly_pts.size() - 2, -1, -1):
-								if e_end.distance_to(poly_pts[_ei]) >= 4.0:
-									e_ref = poly_pts[_ei]
-									break
-							var e_dir: Vector2 = (e_end - e_ref).normalized()
-							var e_pos: Vector2 = e_end + e_dir * 7.0 - Vector2(8, 8)
-							var e_rot: float = rad_to_deg(atan2(e_dir.y, e_dir.x))
-							# Count tiles in curve — if odd, mirror the end cap
-							var curve_len: float = 0.0
-							for _pi in range(1, poly_pts.size()):
-								curve_len += poly_pts[_pi].distance_to(poly_pts[_pi - 1])
-							var tile_count: int = int(curve_len / 16.0)
-							WorldManager.free_blocks.append({"pos": e_pos, "id": GameState.selected_block_id, "rotation": e_rot})
+						# End cap: spline already truncated to 16px boundary
+						var e_dir: Vector2 = (spline_pts[-1] - spline_pts[-2]).normalized()
+						var e_pos: Vector2 = spline_pts[-1] + e_dir * 8.0 - Vector2(8, 8)
+						push_warning("ENDCAP spline_end=(%.1f,%.1f) dir=(%.2f,%.2f) cap_pos=(%.1f,%.1f) pts=%d" % [spline_pts[-1].x, spline_pts[-1].y, e_dir.x, e_dir.y, e_pos.x, e_pos.y, spline_pts.size()])
+						var e_rot: float = rad_to_deg(atan2(e_dir.y, e_dir.x))
+						var tile_count: int = int(_tlen / 16.0)
+						var end_fb: Dictionary = {"pos": e_pos, "id": GameState.selected_block_id, "rotation": e_rot}
+						if tile_count % 2 == 1:
+							end_fb["flip_h"] = true
+						WorldManager.free_blocks.append(end_fb)
 				_curve_points.clear()
 				_curve_preview.clear()
 				_curve_mode = false
