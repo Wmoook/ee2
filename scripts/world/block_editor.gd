@@ -636,7 +636,7 @@ func _input(event: InputEvent) -> void:
 		if (event is InputEventMouseMotion or event is InputEventKey) and _grav_zone_dragging:
 			# Phase 1: sizing center (shift held)
 			if _grav_zone_phase == 1:
-				_grav_zone_center_r = maxf(4.0, _grav_zone_center.distance_to(get_global_mouse_position()))
+				_grav_zone_center_r = clampf(_grav_zone_center.distance_to(get_global_mouse_position()), 4.0, 400.0)  # Max 25 blocks
 				if not Input.is_key_pressed(KEY_SHIFT):
 					_grav_zone_phase = 2
 			queue_redraw()
