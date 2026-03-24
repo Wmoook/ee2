@@ -665,6 +665,51 @@ func is_near_polyline(cx: float, cy: float, threshold: float, exclude_poly: int 
 						return true
 	return false
 
+func does_step_enter_polyline(cx: float, cy: float, ocx: float, ocy: float, threshold: float = 16.0) -> bool:
+	## Check if moving from (ocx,ocy) to (cx,cy) enters within threshold of any collision_only polyline.
+	## Only blocks when getting closer (entering the zone, not already inside).
+	for poly in polylines:
+		if poly.get("render_only", false):
+			continue
+		if not poly.get("collision_only", false):
+			continue  # Only check split halves
+		var bb_min: Vector2 = poly.bbox_min
+		var bb_max: Vector2 = poly.bbox_max
+		if cx < bb_min.x - threshold or cx > bb_max.x + threshold or cy < bb_min.y - threshold or cy > bb_max.y + threshold:
+			continue
+		var pts: PackedVector2Array = poly.points
+		var shash: Dictionary = poly.get("spatial_hash", {})
+		var cs2: int = shash.get("cell_size", 32)
+		var gx2: int = int(floor(cx / cs2))
+		var gy2: int = int(floor(cy / cs2))
+		var checked: Dictionary = {}
+		for dx2 in range(-2, 3):
+			for dy2 in range(-2, 3):
+				var key: int = (gx2 + dx2) * 10000 + (gy2 + dy2)
+				if not shash.has(key):
+					continue
+				for si in shash[key]:
+					if checked.has(si):
+						continue
+					checked[si] = true
+					var sa: Vector2 = pts[si]
+					var sb: Vector2 = pts[si + 1]
+					var ab: Vector2 = sb - sa
+					# Distance from NEW position to segment
+					var ap_new: Vector2 = Vector2(cx, cy) - sa
+					var t_new: float = clampf(ap_new.dot(ab) / maxf(ab.dot(ab), 0.001), 0.0, 1.0)
+					var on_new: Vector2 = sa + ab * t_new
+					var d_new: float = Vector2(cx, cy).distance_to(on_new)
+					if d_new < threshold:
+						# Distance from OLD position
+						var ap_old: Vector2 = Vector2(ocx, ocy) - sa
+						var t_old: float = clampf(ap_old.dot(ab) / maxf(ab.dot(ab), 0.001), 0.0, 1.0)
+						var on_old: Vector2 = sa + ab * t_old
+						var d_old: float = Vector2(ocx, ocy).distance_to(on_old)
+						if d_new < d_old:  # Getting closer = entering
+							return true
+	return false
+
 func does_step_cross_polyline(x1: float, y1: float, x2: float, y2: float) -> bool:
 	## Fast check: does a small step from (x1,y1) to (x2,y2) cross any polyline segment?
 	## Coordinates are player CENTER positions.

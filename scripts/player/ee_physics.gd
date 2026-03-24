@@ -358,12 +358,6 @@ func tick(input_h: int, input_v: int, space_just: bool, space_held: bool) -> voi
 				poly_spd_along += poly_grav_tang
 				_speedX = _poly_hit_tangent.x * poly_spd_along
 				_speedY = _poly_hit_tangent.y * poly_spd_along
-			else:
-				# Wall-like hit: zero speed component into the wall
-				var _wall_into: float = Vector2(_speedX, _speedY).dot(-_poly_hit_normal)
-				if _wall_into > 0:
-					_speedX += _poly_hit_normal.x * _wall_into
-					_speedY += _poly_hit_normal.y * _wall_into
 
 
 	# 7.5 Line collision
@@ -842,7 +836,7 @@ func _step_position() -> void:
 					x += currentSX; currentSX = 0
 			rx = fmod(x, 1.0)
 			if rx < 0: rx += 1.0
-			if _collides_px(x, y) or (not is_god_mode and WorldManager.does_step_cross_polyline(ox + 8, oy + 8, x + 8, y + 8)):
+			if _collides_px(x, y):
 				x = ox; _speedX = 0; currentSX = osx; donex = true
 
 		# Step Y
@@ -859,7 +853,7 @@ func _step_position() -> void:
 					y += currentSY; currentSY = 0
 			ry = fmod(y, 1.0)
 			if ry < 0: ry += 1.0
-			if _collides_px(x, y) or (not is_god_mode and WorldManager.does_step_cross_polyline(x + 8, oy + 8, x + 8, y + 8)):
+			if _collides_px(x, y):
 				y = oy; _speedY = 0; currentSY = osy; doney = true
 
 
