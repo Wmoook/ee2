@@ -268,7 +268,10 @@ func tick(input_h: int, input_v: int, space_just: bool, space_held: bool) -> voi
 			_speedX = 0
 			_speedY = 0
 			is_grounded = true
-			_stick_poly_ticks = 0  # Prevent stick decay while wedged
+			_stick_poly_ticks = 0
+			# Clamp to wedge point — can't drift away
+			x = _wedge_safe_pos.x
+			y = _wedge_safe_pos.y
 	var _pre_step_x: float = x
 	var _pre_step_y: float = y
 	_step_position()
@@ -329,7 +332,7 @@ func tick(input_h: int, input_v: int, space_just: bool, space_held: bool) -> voi
 		var _p2_exclude: int = poly_result.poly_idx if poly_result.hit else _stick_poly_idx
 		var poly2: Dictionary = WorldManager.check_polyline_collision(x, y, 16.0, 16.0, _prev_poly_normal, -1, _p2_exclude)
 		if poly2.hit and poly2.push.length() > 0.1:
-			if _poly_any_hit and poly2.normal.dot(_poly_hit_normal) < -0.3:
+			if _poly_any_hit and poly2.normal.dot(_poly_hit_normal) < 0.3:  # Wide U shapes too
 				# Opposing curves = sandwiched — full freeze, jump to escape
 				x += poly2.push.x * 0.5
 				y += poly2.push.y * 0.5
@@ -692,6 +695,28 @@ func tick(input_h: int, input_v: int, space_just: bool, space_held: bool) -> voi
 
 	_was_on_rotated = on_rotated_block
 
+	# 8.5 Pre-computed wedge points: if player center is near a wedge point, freeze
+	if not is_god_mode and not is_wedged:
+		var _pcx: float = x + 8.0
+		var _pcy: float = y + 8.0
+		for _wp in WorldManager.wedge_points:
+			var _wp_dist: float = Vector2(_pcx, _pcy).distance_to(_wp.pos)
+			var _wp_radius: float = 16.0  # Generous radius — the sandwich/collision handles the rest
+			if _wp_dist < _wp_radius:
+				is_wedged = true
+				is_grounded = true
+				_surface_normal = Vector2(0, -1)
+				_speedX = 0
+				_speedY = 0
+				_wedge_safe_pos = Vector2(x, y)  # Save position for clamping
+				# Compute allowed directions at wedge point
+				var _wr2: float = 20.0
+				var _wd_c: float = WorldManager.dist_to_nearest_polyline(_pcx, _pcy)
+				_wedge_allow_left = WorldManager.dist_to_nearest_polyline(_pcx - _wr2, _pcy) > _wd_c
+				_wedge_allow_right = WorldManager.dist_to_nearest_polyline(_pcx + _wr2, _pcy) > _wd_c
+				_wedge_allow_up = WorldManager.dist_to_nearest_polyline(_pcx, _pcy - _wr2) > _wd_c
+				_wedge_allow_down = WorldManager.dist_to_nearest_polyline(_pcx, _pcy + _wr2) > _wd_c
+				break
 
 	# 9. Jump
 	_handle_jump(space_just, space_held)

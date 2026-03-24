@@ -33,6 +33,7 @@ var active_group_filter: int = 0  # 0 = All, >0 = specific group ID
 # Each: {points: PackedVector2Array, normals: Array[Vector2], side: String,
 #         bbox_min: Vector2, bbox_max: Vector2}
 var polylines: Array = []
+var wedge_points: Array = []  # [{pos: Vector2, gap: float}] — pre-computed V/U wedge positions
 signal polylines_changed()
 
 # Gravity zones (circular areas with inward gravity)
@@ -62,13 +63,13 @@ func remove_group(gid: int) -> void:
 					fb["group"] = -1
 			break
 
-func _find_pinch_point(pts: PackedVector2Array) -> int:
+func _find_pinch_point(pts: PackedVector2Array) -> Dictionary:
 	## Find where a polyline self-narrows (two non-adjacent parts within 17px).
 	## Returns the midpoint split index, or -1 if no pinch found.
 	const PINCH_DIST: float = 32.0  # Player can't fit when centerlines < 2*(8+8) apart
 	const MIN_SEG_GAP: int = 15  # Skip adjacent segments on same smooth section
 	if pts.size() < MIN_SEG_GAP * 2 + 1:
-		return -1  # Too short to self-intersect
+		return {"idx": -1}  # Too short to self-intersect
 	# Spatial hash for efficiency
 	var cell_size: int = 32  # Must be >= PINCH_DIST for reliable neighbor search
 	var buckets: Dictionary = {}
@@ -105,7 +106,24 @@ func _find_pinch_point(pts: PackedVector2Array) -> int:
 						if balance < best_balance:
 							best_balance = balance
 							best_mid = mid
-	return best_mid
+	if best_mid < 0:
+		return {"idx": -1}
+	# Compute wedge point: walk from split toward the pinch, find where gap < 32px
+	# The wedge is where the player physically can't fit between the two arms
+	var _wedge_pt: Vector2 = pts[best_mid]
+	# Search near the split for the tightest point
+	var _tight_dist: float = 999.0
+	var _tight_pos: Vector2 = pts[best_mid]
+	for _wi in range(maxi(0, best_mid - 30), mini(pts.size(), best_mid + 30)):
+		# Find the closest point on the OTHER arm
+		for _wj in range(pts.size()):
+			if abs(_wj - _wi) <= MIN_SEG_GAP:
+				continue
+			var _wd: float = pts[_wi].distance_to(pts[_wj])
+			if _wd < _tight_dist:
+				_tight_dist = _wd
+				_tight_pos = (pts[_wi] + pts[_wj]) * 0.5  # Midpoint between the two arms
+	return {"idx": best_mid, "wedge_pos": _tight_pos, "wedge_gap": _tight_dist}
 
 func add_polyline(points: PackedVector2Array, side: String = "top", block_id: int = 9, uv_offset: float = 0.0, _no_split: bool = false) -> void:
 	if points.size() < 2:
@@ -113,9 +131,13 @@ func add_polyline(points: PackedVector2Array, side: String = "top", block_id: in
 	# Auto-split: detect self-intersecting (V/U) curves
 	# Visual: keep ONE full curve mesh. Collision: split into two polys for sandwich detection.
 	if not _no_split:
-		var _split_at: int = _find_pinch_point(points)
+		var _pinch: Dictionary = _find_pinch_point(points)
+		var _split_at: int = _pinch.get("idx", -1)
 		if _split_at > 1 and _split_at < points.size() - 2:
-			push_warning("PINCH_SPLIT at idx=%d of %d pts. ArmA=%d pts, ArmB=%d pts" % [_split_at, points.size(), _split_at + 1, points.size() - _split_at])
+			var _wp: Vector2 = _pinch.get("wedge_pos", points[_split_at])
+			var _wg: float = _pinch.get("wedge_gap", 0.0)
+			wedge_points.append({"pos": _wp, "gap": _wg})
+			push_warning("PINCH_SPLIT at idx=%d of %d pts. Wedge=(%.0f,%.0f) gap=%.1f" % [_split_at, points.size(), _wp.x, _wp.y, _wg])
 			# Add the FULL curve for rendering (collision_only=false, render_only=true)
 			add_polyline(points, side, block_id, 0.0, true)
 			polylines[-1]["render_only"] = true  # Skip in collision
@@ -1196,6 +1218,7 @@ func deserialize_world(data: Dictionary) -> void:
 		block_groups.append({"id": int(g.id), "name": str(g.name)})
 		_next_group_id = maxi(_next_group_id, int(g.id) + 1)
 	polylines.clear()
+	wedge_points.clear()
 	for pd in data.get("polylines", []):
 		var packed_pts: PackedVector2Array = PackedVector2Array()
 		for pt in pd.get("points", []):
