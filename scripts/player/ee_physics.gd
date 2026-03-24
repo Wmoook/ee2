@@ -42,6 +42,7 @@ var debug_text: String = ""  # On-screen debug info
 var _wedge_pos: Vector2 = Vector2(-9999, -9999)  # Position where wedge occurred
 var _wedge_protect: int = 0  # Ticks of post-wedge protection
 var _wedge_safe_pos: Vector2 = Vector2(0, 0)  # Last position where NOT wedged
+var _poly_cross_cooldown: int = 0  # Ticks after crossing placement (prevent jitter)
 var _wedge_clear_ticks: int = 0  # Ticks wall has been NOT blocked (need 3 to clear)
 var _wedge_arc: float = -1.0  # Arc position when wedge was set (preserved while wedged)
 var on_rotated_block: bool = false
@@ -261,8 +262,7 @@ func tick(input_h: int, input_v: int, space_just: bool, space_held: bool) -> voi
 	_step_position()
 
 
-
-	# 7.15 Polyline collision with tunneling detection
+	# 7.15 Polyline collision
 	if not is_god_mode and WorldManager.polylines.size() > 0:
 		var _poly_any_hit: bool = false
 		var _poly_hit_normal: Vector2 = Vector2.ZERO
@@ -274,6 +274,7 @@ func tick(input_h: int, input_v: int, space_just: bool, space_held: bool) -> voi
 			_stick_poly_idx = -1
 		# Pass 1: resolve stick polyline (stay on your curve)
 		var poly_result: Dictionary = WorldManager.check_polyline_collision(x, y, 16.0, 16.0, _prev_poly_normal, _stick_poly_idx)
+		push_warning("P1: hit=%s poly=%d push=%.1f stick=%d pos=(%.0f,%.0f) spd=(%.1f,%.1f)" % [poly_result.hit, poly_result.poly_idx, poly_result.push.length(), _stick_poly_idx, x, y, _speedX, _speedY])
 		if poly_result.hit:
 			var poly_vel: Vector2 = Vector2(_speedX, _speedY)
 			var vel_toward: float = poly_vel.dot(-poly_result.normal)
@@ -358,6 +359,12 @@ func tick(input_h: int, input_v: int, space_just: bool, space_held: bool) -> voi
 				poly_spd_along += poly_grav_tang
 				_speedX = _poly_hit_tangent.x * poly_spd_along
 				_speedY = _poly_hit_tangent.y * poly_spd_along
+			else:
+				# Wall-like hit: zero speed into the wall so gravity doesn't push through
+				var _w_into: float = Vector2(_speedX, _speedY).dot(-_poly_hit_normal)
+				if _w_into > 0:
+					_speedX += _poly_hit_normal.x * _w_into
+					_speedY += _poly_hit_normal.y * _w_into
 
 
 	# 7.5 Line collision
@@ -806,6 +813,8 @@ func _dist_to_seg(cx: float, cy: float, sa: Vector2, sb: Vector2) -> float:
 	return Vector2(cx, cy).distance_to(on_pt)
 
 func _step_position() -> void:
+	if _poly_cross_cooldown > 0:
+		_poly_cross_cooldown -= 1
 	var currentSX: float = _speedX
 	var currentSY: float = _speedY
 	var rx: float = fmod(x, 1.0)
@@ -855,6 +864,18 @@ func _step_position() -> void:
 			if ry < 0: ry += 1.0
 			if _collides_px(x, y):
 				y = oy; _speedY = 0; currentSY = osy; doney = true
+
+		# Combined X+Y crossing check (catches diagonal crossings of steep segments)
+		# Exclude stick poly so normal riding doesn't trigger
+		if not is_god_mode and (x != ox or y != oy):
+			if _poly_cross_cooldown <= 0:
+				var _cc_res: Dictionary = WorldManager.does_step_cross_collision_only(ox + 8, oy + 8, x + 8, y + 8, _stick_poly_idx)
+				if _cc_res.crossed:
+					x = _cc_res.point.x + _cc_res.normal.x * 15.5 - 8.0
+					y = _cc_res.point.y + _cc_res.normal.y * 15.5 - 8.0
+					_speedX = 0; _speedY = 0
+					donex = true; doney = true
+					_poly_cross_cooldown = 10  # Don't re-trigger for 10 ticks
 
 
 func _collides_px(px: float, py: float) -> bool:

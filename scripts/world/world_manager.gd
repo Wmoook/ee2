@@ -115,7 +115,7 @@ func add_polyline(points: PackedVector2Array, side: String = "top", block_id: in
 	if not _no_split:
 		var _split_at: int = _find_pinch_point(points)
 		if _split_at > 1 and _split_at < points.size() - 2:
-			push_warning("PINCH_SPLIT at idx=%d of %d points" % [_split_at, points.size()])
+			push_warning("PINCH_SPLIT at idx=%d of %d pts. ArmA=%d pts, ArmB=%d pts" % [_split_at, points.size(), _split_at + 1, points.size() - _split_at])
 			# Add the FULL curve for rendering (collision_only=false, render_only=true)
 			add_polyline(points, side, block_id, 0.0, true)
 			polylines[-1]["render_only"] = true  # Skip in collision
@@ -123,9 +123,15 @@ func add_polyline(points: PackedVector2Array, side: String = "top", block_id: in
 			var pts_a: PackedVector2Array = points.slice(0, _split_at + 1)
 			var pts_b: PackedVector2Array = points.slice(_split_at)
 			add_polyline(pts_a, side, block_id, 0.0, true)
-			polylines[-1]["collision_only"] = true  # Skip in renderer
+			polylines[-1]["collision_only"] = true
+			var _bba: Vector2 = polylines[-1].bbox_min
+			var _bxa: Vector2 = polylines[-1].bbox_max
+			push_warning("  ArmA idx=%d bb=(%.0f,%.0f)-(%.0f,%.0f)" % [polylines.size()-1, _bba.x, _bba.y, _bxa.x, _bxa.y])
 			add_polyline(pts_b, side, block_id, 0.0, true)
 			polylines[-1]["collision_only"] = true
+			var _bbb: Vector2 = polylines[-1].bbox_min
+			var _bxb: Vector2 = polylines[-1].bbox_max
+			push_warning("  ArmB idx=%d bb=(%.0f,%.0f)-(%.0f,%.0f)" % [polylines.size()-1, _bbb.x, _bbb.y, _bxb.x, _bxb.y])
 			return
 	# Compute per-vertex normals by averaging adjacent segment normals
 	var vert_normals: Array = []
@@ -664,6 +670,180 @@ func is_near_polyline(cx: float, cy: float, threshold: float, exclude_poly: int 
 					if dist < threshold:
 						return true
 	return false
+
+func intercept_polyline_tunneling(pre_cx: float, pre_cy: float, post_cx: float, post_cy: float, stick_poly: int = -1) -> Dictionary:
+	## Anti-tunnel: sample movement path, detect if any point enters within 16px of a collision_only poly.
+	## Places player at 15.5px from nearest segment on the approach side.
+	var result: Dictionary = {"intercepted": false, "x": 0.0, "y": 0.0, "normal": Vector2.ZERO, "tangent": Vector2.ZERO, "poly_idx": -1}
+	var dx: float = post_cx - pre_cx
+	var dy: float = post_cy - pre_cy
+	var move_len: float = sqrt(dx * dx + dy * dy)
+	if move_len < 0.1:
+		return result
+	var sample_count: int = int(ceil(move_len / 2.0))  # Sample every 2px
+	for poly in polylines:
+		if poly.get("render_only", false):
+			continue
+		if not poly.get("collision_only", false):
+			continue  # Only check split halves
+		var bb_min: Vector2 = poly.bbox_min
+		var bb_max: Vector2 = poly.bbox_max
+		var mx0: float = minf(pre_cx, post_cx)
+		var mx1: float = maxf(pre_cx, post_cx)
+		var my0: float = minf(pre_cy, post_cy)
+		var my1: float = maxf(pre_cy, post_cy)
+		if mx1 < bb_min.x - 20 or mx0 > bb_max.x + 20 or my1 < bb_min.y - 20 or my0 > bb_max.y + 20:
+			continue
+		var pts: PackedVector2Array = poly.points
+		var norms: Array = poly.normals
+		# Check pre-step distance — skip if already close (riding this arm)
+		var _pre_best_d: float = 99999.0
+		var shash: Dictionary = poly.get("spatial_hash", {})
+		var cs2: int = shash.get("cell_size", 32)
+		var pgx: int = int(floor(pre_cx / cs2))
+		var pgy: int = int(floor(pre_cy / cs2))
+		var pchecked: Dictionary = {}
+		for pdx in range(-2, 3):
+			for pdy in range(-2, 3):
+				var pkey: int = (pgx + pdx) * 10000 + (pgy + pdy)
+				if not shash.has(pkey):
+					continue
+				for psi in shash[pkey]:
+					if pchecked.has(psi):
+						continue
+					pchecked[psi] = true
+					var psa: Vector2 = pts[psi]
+					var psb: Vector2 = pts[psi + 1]
+					var pab: Vector2 = psb - psa
+					var pap: Vector2 = Vector2(pre_cx, pre_cy) - psa
+					var pt2: float = clampf(pap.dot(pab) / maxf(pab.dot(pab), 0.001), 0.0, 1.0)
+					var pon: Vector2 = psa + pab * pt2
+					var pd: float = Vector2(pre_cx, pre_cy).distance_to(pon)
+					if pd < _pre_best_d:
+						_pre_best_d = pd
+		# Check if player is moving TOWARD this arm (post closer than pre)
+		var _post_best_d: float = 99999.0
+		var pchecked2: Dictionary = {}
+		var pgx2: int = int(floor(post_cx / cs2))
+		var pgy2: int = int(floor(post_cy / cs2))
+		for pdx2 in range(-2, 3):
+			for pdy2 in range(-2, 3):
+				var pkey2: int = (pgx2 + pdx2) * 10000 + (pgy2 + pdy2)
+				if not shash.has(pkey2):
+					continue
+				for psi2 in shash[pkey2]:
+					if pchecked2.has(psi2):
+						continue
+					pchecked2[psi2] = true
+					var psa2: Vector2 = pts[psi2]
+					var psb2: Vector2 = pts[psi2 + 1]
+					var pab2: Vector2 = psb2 - psa2
+					var pap2: Vector2 = Vector2(post_cx, post_cy) - psa2
+					var pt22: float = clampf(pap2.dot(pab2) / maxf(pab2.dot(pab2), 0.001), 0.0, 1.0)
+					var pon2: Vector2 = psa2 + pab2 * pt22
+					var pd2: float = Vector2(post_cx, post_cy).distance_to(pon2)
+					if pd2 < _post_best_d:
+						_post_best_d = pd2
+		if _post_best_d >= _pre_best_d:
+			continue  # Moving away or parallel — skip
+		# Sample along the path
+		for si in range(1, sample_count + 1):
+			var frac: float = float(si) / float(sample_count)
+			var sx: float = pre_cx + dx * frac
+			var sy: float = pre_cy + dy * frac
+			# Find nearest segment at this sample point
+			var sgx: int = int(floor(sx / cs2))
+			var sgy: int = int(floor(sy / cs2))
+			var schecked: Dictionary = {}
+			for sdx in range(-2, 3):
+				for sdy in range(-2, 3):
+					var skey: int = (sgx + sdx) * 10000 + (sgy + sdy)
+					if not shash.has(skey):
+						continue
+					for ssi in shash[skey]:
+						if schecked.has(ssi):
+							continue
+						schecked[ssi] = true
+						var ssa: Vector2 = pts[ssi]
+						var ssb: Vector2 = pts[ssi + 1]
+						var sab: Vector2 = ssb - ssa
+						var sap: Vector2 = Vector2(sx, sy) - ssa
+						var st: float = clampf(sap.dot(sab) / maxf(sab.dot(sab), 0.001), 0.0, 1.0)
+						var son: Vector2 = ssa + sab * st
+						var sd: float = Vector2(sx, sy).distance_to(son)
+						if sd < 16.0:
+							# Found entry point — place player 15.5px from segment
+							var prev_frac: float = maxf(0.0, float(si - 1) / float(sample_count))
+							var interp_n: Vector2 = (norms[ssi] * (1.0 - st) + norms[ssi + 1] * st).normalized()
+							if interp_n.length() < 0.01:
+								interp_n = norms[ssi]
+							# Orient toward pre-step side
+							if (Vector2(pre_cx, pre_cy) - son).dot(interp_n) < 0:
+								interp_n = -interp_n
+							return {
+								"intercepted": true,
+								"x": son.x + interp_n.x * 15.5,
+								"y": son.y + interp_n.y * 15.5,
+								"normal": interp_n,
+								"tangent": (ssb - ssa).normalized(),
+								"poly_idx": -1
+							}
+	return result
+
+func does_step_cross_collision_only(x1: float, y1: float, x2: float, y2: float, exclude_poly: int = -1) -> Dictionary:
+	## Check if step crosses any COLLISION_ONLY polyline centerline (excluding one).
+	## Returns {crossed, point, normal} or {crossed: false}
+	var _pidx: int = -1
+	for poly in polylines:
+		_pidx += 1
+		if _pidx == exclude_poly:
+			continue
+		if not poly.get("collision_only", false):
+			continue
+		var bb_min: Vector2 = poly.bbox_min
+		var bb_max: Vector2 = poly.bbox_max
+		if maxf(x1, x2) < bb_min.x - 2 or minf(x1, x2) > bb_max.x + 2:
+			continue
+		if maxf(y1, y2) < bb_min.y - 2 or minf(y1, y2) > bb_max.y + 2:
+			continue
+		var pts: PackedVector2Array = poly.points
+		var shash: Dictionary = poly.get("spatial_hash", {})
+		var cs2: int = shash.get("cell_size", 32)
+		var gx: int = int(floor((x1 + x2) * 0.5 / cs2))
+		var gy: int = int(floor((y1 + y2) * 0.5 / cs2))
+		var checked: Dictionary = {}
+		for dx2 in range(-1, 2):
+			for dy2 in range(-1, 2):
+				var key: int = (gx + dx2) * 10000 + (gy + dy2)
+				if not shash.has(key):
+					continue
+				for si in shash[key]:
+					if checked.has(si):
+						continue
+					checked[si] = true
+					var sa: Vector2 = pts[si]
+					var sb: Vector2 = pts[si + 1]
+					var d1x: float = x2 - x1
+					var d1y: float = y2 - y1
+					var d2x: float = sb.x - sa.x
+					var d2y: float = sb.y - sa.y
+					var denom: float = d1x * d2y - d1y * d2x
+					if absf(denom) < 0.0001:
+						continue
+					var d3x: float = sa.x - x1
+					var d3y: float = sa.y - y1
+					var t: float = (d3x * d2y - d3y * d2x) / denom
+					var u: float = (d3x * d1y - d3y * d1x) / denom
+					if t >= 0.0 and t <= 1.0 and u >= 0.0 and u <= 1.0:
+						var norms: Array = poly.normals
+						var interp_n: Vector2 = (norms[si] * (1.0 - u) + norms[si + 1] * u).normalized()
+						if interp_n.length() < 0.01:
+							interp_n = norms[si]
+						var on_seg: Vector2 = sa + (sb - sa) * u
+						if (Vector2(x1, y1) - on_seg).dot(interp_n) < 0:
+							interp_n = -interp_n
+						return {"crossed": true, "point": on_seg, "normal": interp_n}
+	return {"crossed": false}
 
 func does_step_enter_polyline(cx: float, cy: float, ocx: float, ocy: float, threshold: float = 16.0) -> bool:
 	## Check if moving from (ocx,ocy) to (cx,cy) enters within threshold of any collision_only polyline.
