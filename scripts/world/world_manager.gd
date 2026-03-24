@@ -412,6 +412,8 @@ func enforce_polyline_hard_constraint(px: float, py: float, prev_px: float, prev
 			_pidx += 1
 			if _pidx == exclude_poly:
 				continue
+			if poly.get("render_only", false):
+				continue
 			var bb_min: Vector2 = poly.bbox_min
 			var bb_max: Vector2 = poly.bbox_max
 			if cx + 8 < bb_min.x - 20 or cx - 8 > bb_max.x + 20 or cy + 8 < bb_min.y - 20 or cy - 8 > bb_max.y + 20:
@@ -484,6 +486,8 @@ func check_curve_wall(cx: float, cy: float, stick_poly: int, stick_arc: float, a
 	var _pidx: int = -1
 	for poly in polylines:
 		_pidx += 1
+		if poly.get("render_only", false):
+			continue
 		if only_poly >= 0 and _pidx != only_poly:
 			continue  # Only check specific poly
 		var bb_min: Vector2 = poly.bbox_min
@@ -535,6 +539,8 @@ func dist_to_wall_segments(cx: float, cy: float, stick_poly: int, stick_seg: int
 	var _pidx: int = -1
 	for poly in polylines:
 		_pidx += 1
+		if poly.get("render_only", false):
+			continue
 		var bb_min: Vector2 = poly.bbox_min
 		var bb_max: Vector2 = poly.bbox_max
 		if cx < bb_min.x - 20 or cx > bb_max.x + 20 or cy < bb_min.y - 20 or cy > bb_max.y + 20:
@@ -561,6 +567,8 @@ func find_nearest_polyline_segment(cx: float, cy: float, exclude_poly: int = -1)
 	var _pidx: int = -1
 	for poly in polylines:
 		_pidx += 1
+		if poly.get("render_only", false):
+			continue
 		if _pidx == exclude_poly:
 			continue
 		var bb_min: Vector2 = poly.bbox_min
@@ -588,6 +596,8 @@ func dist_to_nearest_polyline(cx: float, cy: float, exclude_poly: int = -1) -> f
 	var _pidx: int = -1
 	for poly in polylines:
 		_pidx += 1
+		if poly.get("render_only", false):
+			continue
 		if _pidx == exclude_poly:
 			continue
 		var bb_min: Vector2 = poly.bbox_min
@@ -619,6 +629,8 @@ func is_near_polyline(cx: float, cy: float, threshold: float, exclude_poly: int 
 	var _pidx: int = -1
 	for poly in polylines:
 		_pidx += 1
+		if poly.get("render_only", false):
+			continue
 		if _pidx == exclude_poly:
 			continue
 		var bb_min: Vector2 = poly.bbox_min
@@ -657,6 +669,8 @@ func does_step_cross_polyline(x1: float, y1: float, x2: float, y2: float) -> boo
 	if polylines.is_empty():
 		return false
 	for poly in polylines:
+		if poly.get("render_only", false):
+			continue
 		var bb_min: Vector2 = poly.bbox_min
 		var bb_max: Vector2 = poly.bbox_max
 		if maxf(x1, x2) < bb_min.x - 10 or minf(x1, x2) > bb_max.x + 10:
@@ -712,6 +726,8 @@ func check_polyline_crossing(x1: float, y1: float, x2: float, y2: float, player_
 	var _poly_idx: int = -1
 	for poly in polylines:
 		_poly_idx += 1
+		if poly.get("render_only", false):
+			continue
 		var bb: Vector2 = poly.bbox_min
 		var bx: Vector2 = poly.bbox_max
 		# Broad phase: movement AABB vs polyline AABB (with margin)
@@ -894,6 +910,11 @@ func serialize_world() -> Dictionary:
 		groups_data.append({"id": g.id, "name": g.name})
 	var poly_data: Array = []
 	for poly in polylines:
+		if poly.get("collision_only", false):
+			continue  # Don't save split halves — they're recreated on load
+		if poly.get("render_only", false):
+			# Save the original full curve (not the render_only version)
+			pass  # Fall through to save it
 		var pts_arr: Array = []
 		for pt in poly.points:
 			pts_arr.append([pt.x, pt.y])
