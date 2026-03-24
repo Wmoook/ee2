@@ -117,10 +117,10 @@ func _get_speed_mult() -> float:
 	return 1.0
 
 func tick(input_h: int, input_v: int, space_just: bool, space_held: bool) -> void:
-	# Wedge: suppress directional input (currently disabled — V-shape detection removed)
-	#if is_wedged:
-	#	input_h = 0
-	#	input_v = 0
+	# Wedge: suppress directional input. Only jump works.
+	if is_wedged:
+		input_h = 0
+		input_v = 0
 	_now_ms += MS_PER_TICK
 	# Track speed in gravity direction to prevent jump during launch
 	var _pre_tick_speedY: float = _speedY
@@ -654,8 +654,7 @@ func tick(input_h: int, input_v: int, space_just: bool, space_held: bool) -> voi
 	_handle_jump(space_just, space_held)
 
 	# 10. Debug info (P key overlay)
-	debug_text = "stick=%d pos=(%.0f,%.0f) spd=(%.1f,%.1f) grnd=%s" % [_stick_poly_idx, x, y, _speedX, _speedY, is_grounded]
-	is_wedged = false
+	debug_text = "stick=%d polys=%d pos=(%.0f,%.0f) spd=(%.1f,%.1f) grnd=%s wedge=%s" % [_stick_poly_idx, WorldManager.polylines.size(), x, y, _speedX, _speedY, is_grounded, is_wedged]
 
 func _arrow_dir_to_vec(dir: int) -> Vector2:
 	match dir:

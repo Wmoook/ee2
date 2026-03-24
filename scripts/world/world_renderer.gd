@@ -81,6 +81,8 @@ func _draw() -> void:
 	# Draw polyline curves FIRST (so end cap blocks render on top)
 	# Draw polyline curves: textured quads every 16px (no triangulation artifacts)
 	for poly in WorldManager.polylines:
+		if poly.get("collision_only", false):
+			continue  # Skip collision-only polylines (no visual)
 		var poly_pts: PackedVector2Array = poly.points
 		var poly_norms: Array = poly.normals
 		if poly_pts.size() >= 2:

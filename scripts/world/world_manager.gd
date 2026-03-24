@@ -62,9 +62,69 @@ func remove_group(gid: int) -> void:
 					fb["group"] = -1
 			break
 
-func add_polyline(points: PackedVector2Array, side: String = "top", block_id: int = 9) -> void:
+func _find_pinch_point(pts: PackedVector2Array) -> int:
+	## Find where a polyline self-narrows (two non-adjacent parts within 17px).
+	## Returns the midpoint split index, or -1 if no pinch found.
+	const PINCH_DIST: float = 32.0  # Player can't fit when centerlines < 2*(8+8) apart
+	const MIN_SEG_GAP: int = 15  # Skip adjacent segments on same smooth section
+	if pts.size() < MIN_SEG_GAP * 2 + 1:
+		return -1  # Too short to self-intersect
+	# Spatial hash for efficiency
+	var cell_size: int = 32  # Must be >= PINCH_DIST for reliable neighbor search
+	var buckets: Dictionary = {}
+	for i in range(pts.size()):
+		var key: int = int(floor(pts[i].x / cell_size)) * 10000 + int(floor(pts[i].y / cell_size))
+		if not buckets.has(key):
+			buckets[key] = []
+		buckets[key].append(i)
+	# Find closest non-adjacent pair
+	var best_dist: float = PINCH_DIST
+	var best_i: int = -1
+	var best_j: int = -1
+	for i in range(pts.size()):
+		var gx: int = int(floor(pts[i].x / cell_size))
+		var gy: int = int(floor(pts[i].y / cell_size))
+		for dx in range(-1, 2):
+			for dy in range(-1, 2):
+				var key: int = (gx + dx) * 10000 + (gy + dy)
+				if not buckets.has(key):
+					continue
+				for j in buckets[key]:
+					if abs(j - i) <= MIN_SEG_GAP:
+						continue
+					var d: float = pts[i].distance_to(pts[j])
+					if d < best_dist:
+						best_dist = d
+						best_i = i
+						best_j = j
+	if best_i < 0:
+		return -1
+	# Split at midpoint between the two closest points (bottom of U/V)
+	if best_i > best_j:
+		var tmp: int = best_i
+		best_i = best_j
+		best_j = tmp
+	return int((best_i + best_j) / 2)
+
+func add_polyline(points: PackedVector2Array, side: String = "top", block_id: int = 9, uv_offset: float = 0.0, _no_split: bool = false) -> void:
 	if points.size() < 2:
 		return
+	# Auto-split: detect self-intersecting (V/U) curves
+	# Visual: keep ONE full curve mesh. Collision: split into two polys for sandwich detection.
+	if not _no_split:
+		var _split_at: int = _find_pinch_point(points)
+		if _split_at > 1 and _split_at < points.size() - 2:
+			# Add the FULL curve for rendering (collision_only=false, render_only=true)
+			add_polyline(points, side, block_id, 0.0, true)
+			polylines[-1]["render_only"] = true  # Skip in collision
+			# Add split halves for collision only (no mesh needed)
+			var pts_a: PackedVector2Array = points.slice(0, _split_at + 1)
+			var pts_b: PackedVector2Array = points.slice(_split_at)
+			add_polyline(pts_a, side, block_id, 0.0, true)
+			polylines[-1]["collision_only"] = true  # Skip in renderer
+			add_polyline(pts_b, side, block_id, 0.0, true)
+			polylines[-1]["collision_only"] = true
+			return
 	# Compute per-vertex normals by averaging adjacent segment normals
 	var vert_normals: Array = []
 	var seg_count: int = points.size() - 1
@@ -169,7 +229,9 @@ func add_polyline(points: PackedVector2Array, side: String = "top", block_id: in
 		"render_bot": render_bot,
 		"render_dists": render_dists,
 		"mesh": mesh,
-		"spatial_hash": _build_spatial_hash(points, 32)
+		"spatial_hash": _build_spatial_hash(points, 32),
+		"uv_offset": uv_offset,
+		"from_split": uv_offset != 0.0  # Part of a split — skip mesh truncation
 	})
 	polylines_changed.emit()
 
@@ -203,7 +265,9 @@ func check_polyline_collision(px: float, py: float, pw: float, ph: float, prefer
 	for poly in polylines:
 		_dbg_poly_idx += 1
 		if _dbg_poly_idx == exclude_poly:
-			continue  # Skip excluded polyline (pass 2 excludes stick poly)
+			continue
+		if poly.get("render_only", false):
+			continue  # Skip render-only polylines (no collision)
 		# AABB broad phase
 		var bb_min: Vector2 = poly.bbox_min
 		var bb_max: Vector2 = poly.bbox_max
