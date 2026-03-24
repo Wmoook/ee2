@@ -50,6 +50,7 @@ var _wedge_allow_down: bool = false
 var _wedge_freeze_pos: Vector2 = Vector2(0, 0)  # Position where wedge was set
 var _wedge_freeze_dir: Vector2 = Vector2(0, 0)  # Direction player can't move past (into the V)
 var _poly_cross_cooldown: int = 0  # Ticks after crossing placement (prevent jitter)
+var _last_good_pos: Vector2 = Vector2(-99999, -99999)  # Last position NOT inside any purple line
 var _wedge_clear_ticks: int = 0  # Ticks wall has been NOT blocked (need 3 to clear)
 var _wedge_arc: float = -1.0  # Arc position when wedge was set (preserved while wedged)
 var on_rotated_block: bool = false
@@ -277,12 +278,13 @@ func tick(input_h: int, input_v: int, space_just: bool, space_held: bool) -> voi
 	var _pre_step_y: float = y
 	_step_position()
 
-	# 7.1 CCD backup: if step_position missed a crossing, catch it here
-	# Only when airborne (stick<0) — when riding a curve, let sandwich detection handle V bottom
-	if not is_god_mode and _stick_poly_idx < 0 and WorldManager.polylines.size() > 0:
-		var _ccd_res: Dictionary = WorldManager.does_step_cross_collision_only(
-			_pre_step_x + 8, _pre_step_y + 8, x + 8, y + 8, -1)
-		if _ccd_res.crossed:
+	# 7.1 CCD backup: render edge check ALWAYS (exclude stick), centerline only when airborne
+	if not is_god_mode and WorldManager.polylines.size() > 0:
+		var _ccd_edge: bool = WorldManager.does_step_cross_render_edge(
+			_pre_step_x + 8, _pre_step_y + 8, x + 8, y + 8, _stick_poly_idx, _stick_arc_pos)
+		var _ccd_center: bool = _stick_poly_idx < 0 and WorldManager.does_step_cross_collision_only(
+			_pre_step_x + 8, _pre_step_y + 8, x + 8, y + 8, -1).crossed
+		if _ccd_edge or _ccd_center:
 			x = _pre_step_x
 			y = _pre_step_y
 			_speedX = 0
@@ -305,7 +307,6 @@ func tick(input_h: int, input_v: int, space_just: bool, space_held: bool) -> voi
 			_poly_cross_cooldown = 0
 		# Pass 1: resolve stick polyline (stay on your curve)
 		var poly_result: Dictionary = WorldManager.check_polyline_collision(x, y, 16.0, 16.0, _prev_poly_normal, _stick_poly_idx)
-		push_warning("P1: hit=%s poly=%d push=%.1f stick=%d pos=(%.0f,%.0f) spd=(%.1f,%.1f)" % [poly_result.hit, poly_result.poly_idx, poly_result.push.length(), _stick_poly_idx, x, y, _speedX, _speedY])
 		if poly_result.hit:
 			_poly_any_hit = true
 			# Always set hit info (needed for sandwich even if push is skipped)
@@ -333,8 +334,8 @@ func tick(input_h: int, input_v: int, space_just: bool, space_held: bool) -> voi
 		var _p2_exclude: int = poly_result.poly_idx if poly_result.hit else _stick_poly_idx
 		var poly2: Dictionary = WorldManager.check_polyline_collision(x, y, 16.0, 16.0, _prev_poly_normal, -1, _p2_exclude)
 		if poly2.hit and poly2.push.length() > 0.1:
-			if _poly_any_hit and poly2.normal.dot(_poly_hit_normal) < 0.3:  # Wide U shapes too
-				# Opposing curves = sandwiched — full freeze, jump to escape
+			if _poly_any_hit and poly2.normal.dot(_poly_hit_normal) < 0.3 and poly2.push.length() > 2.0:
+				# Opposing curves = sandwiched — only wedge if deep contact with BOTH arms
 				x += poly2.push.x * 0.5
 				y += poly2.push.y * 0.5
 				_speedX = 0
@@ -697,36 +698,109 @@ func tick(input_h: int, input_v: int, space_just: bool, space_held: bool) -> voi
 
 	_was_on_rotated = on_rotated_block
 
-	# 8.5 Pre-computed wedge points: if player center is near a wedge point, freeze
+	# 8.5 Dual-arm wedge detection: player sprite edge touches both split curve arms
 	if _wedge_escape_cooldown > 0:
 		_wedge_escape_cooldown -= 1
 	if not is_god_mode and not is_wedged and _wedge_escape_cooldown <= 0:
 		var _pcx: float = x + 8.0
 		var _pcy: float = y + 8.0
-		for _wp in WorldManager.wedge_points:
-			var _wp_dist: float = Vector2(_pcx, _pcy).distance_to(_wp.pos)
-			var _wp_radius: float = 40.0  # Very generous — different approach angles
-			if _wp_dist < _wp_radius:
-				is_wedged = true
-				is_grounded = true
-				_surface_normal = Vector2(0, -1)
-				_speedX = 0
-				_speedY = 0
-				_wedge_safe_pos = Vector2(x, y)  # Save position for clamping
-				# Allowed directions: check actual space around the wedge point
-				# A direction is open if moving 24px that way gets FURTHER from curves
-				var _wr2: float = 24.0
-				var _wd_c: float = WorldManager.dist_to_nearest_polyline(_pcx, _pcy)
-				_wedge_allow_left = WorldManager.dist_to_nearest_polyline(_pcx - _wr2, _pcy) > _wd_c + 2.0
-				_wedge_allow_right = WorldManager.dist_to_nearest_polyline(_pcx + _wr2, _pcy) > _wd_c + 2.0
-				_wedge_allow_up = true  # Always allow up (jump direction)
-				_wedge_allow_down = WorldManager.dist_to_nearest_polyline(_pcx, _pcy + _wr2) > _wd_c + 2.0
-				break
+		var _wedge_threshold: float = 16.35  # 8px half-sprite + 8.35px curve render edge
+		# Find consecutive collision_only pairs in polylines
+		var _polys: Array = WorldManager.polylines
+		var _pi: int = 0
+		while _pi < _polys.size() - 1:
+			var _pa: Dictionary = _polys[_pi]
+			if not _pa.get("collision_only", false):
+				_pi += 1
+				continue
+			var _pb: Dictionary = _polys[_pi + 1]
+			if not _pb.get("collision_only", false):
+				_pi += 2
+				continue
+			# Found a collision_only pair (arm A = _pa, arm B = _pb)
+			# AABB broad phase: skip if player center is far from either arm
+			var _margin: float = _wedge_threshold + 2.0
+			var _in_a: bool = _pcx >= _pa.bbox_min.x - _margin and _pcx <= _pa.bbox_max.x + _margin \
+				and _pcy >= _pa.bbox_min.y - _margin and _pcy <= _pa.bbox_max.y + _margin
+			var _in_b: bool = _pcx >= _pb.bbox_min.x - _margin and _pcx <= _pb.bbox_max.x + _margin \
+				and _pcy >= _pb.bbox_min.y - _margin and _pcy <= _pb.bbox_max.y + _margin
+			if not _in_a or not _in_b:
+				_pi += 2
+				continue
+			# Spatial hash lookup for arm A: find min distance to nearby segments
+			var _dist_a: float = 99999.0
+			var _sha: Dictionary = _pa.get("spatial_hash", {})
+			var _csa: int = _sha.get("cell_size", 32)
+			var _gxa: int = int(floor(_pcx / _csa))
+			var _gya: int = int(floor(_pcy / _csa))
+			var _pts_a: PackedVector2Array = _pa.points
+			for _dx in range(-1, 2):
+				for _dy in range(-1, 2):
+					var _key_a: int = (_gxa + _dx) * 10000 + (_gya + _dy)
+					var _segs_a: Variant = _sha.get(_key_a)
+					if _segs_a == null:
+						continue
+					for _si in _segs_a:
+						var _da: float = _dist_to_seg(_pcx, _pcy, _pts_a[_si], _pts_a[_si + 1])
+						if _da < _dist_a:
+							_dist_a = _da
+			if _dist_a >= _wedge_threshold:
+				_pi += 2
+				continue
+			# Spatial hash lookup for arm B: find min distance to nearby segments
+			var _dist_b: float = 99999.0
+			var _shb: Dictionary = _pb.get("spatial_hash", {})
+			var _csb: int = _shb.get("cell_size", 32)
+			var _gxb: int = int(floor(_pcx / _csb))
+			var _gyb: int = int(floor(_pcy / _csb))
+			var _pts_b: PackedVector2Array = _pb.points
+			for _dx in range(-1, 2):
+				for _dy in range(-1, 2):
+					var _key_b: int = (_gxb + _dx) * 10000 + (_gyb + _dy)
+					var _segs_b: Variant = _shb.get(_key_b)
+					if _segs_b == null:
+						continue
+					for _si in _segs_b:
+						var _db: float = _dist_to_seg(_pcx, _pcy, _pts_b[_si], _pts_b[_si + 1])
+						if _db < _dist_b:
+							_dist_b = _db
+			if _dist_b >= _wedge_threshold:
+				_pi += 2
+				continue
+			# Both arms within threshold — player is wedged
+			is_wedged = true
+			is_grounded = true
+			_surface_normal = Vector2(0, -1)
+			_speedX = 0
+			_speedY = 0
+			_wedge_safe_pos = Vector2(x, y)
+			# Allowed directions: check if moving 24px opens distance from BOTH arms
+			var _wr2: float = 24.0
+			var _wd_c: float = WorldManager.dist_to_nearest_polyline(_pcx, _pcy)
+			_wedge_allow_left = WorldManager.dist_to_nearest_polyline(_pcx - _wr2, _pcy) > _wd_c + 2.0
+			_wedge_allow_right = WorldManager.dist_to_nearest_polyline(_pcx + _wr2, _pcy) > _wd_c + 2.0
+			_wedge_allow_up = true  # Always allow up (jump direction)
+			_wedge_allow_down = WorldManager.dist_to_nearest_polyline(_pcx, _pcy + _wr2) > _wd_c + 2.0
+			break
 
 	# 9. Jump
 	_handle_jump(space_just, space_held)
 
-	# 10. Debug info (P key overlay)
+	# 10. ABSOLUTE PURPLE LINE FAILSAFE — OVERRIDES EVERYTHING
+	# Check distance from player center to ACTUAL purple line segments (render_top/render_bot).
+	# Riding = ~8px from nearest purple line. If < 7px: BREACHED. Teleport back.
+	# No exclusions. No stick poly. No conditions. Just physics reality.
+	if not is_god_mode:
+		if WorldManager.is_past_any_purple_line(x + 8, y + 8):
+			if _last_good_pos.x > -99990:
+				x = _last_good_pos.x
+				y = _last_good_pos.y
+			_speedX = 0
+			_speedY = 0
+		else:
+			_last_good_pos = Vector2(x, y)
+
+	# 11. Debug info (P key overlay)
 	debug_text = "stick=%d polys=%d pos=(%.0f,%.0f) spd=(%.1f,%.1f) grnd=%s wedge=%s tick=%d" % [_stick_poly_idx, WorldManager.polylines.size(), x, y, _speedX, _speedY, is_grounded, is_wedged, _stick_poly_ticks]
 
 func _arrow_dir_to_vec(dir: int) -> Vector2:
@@ -919,8 +993,9 @@ func _step_position() -> void:
 					x += currentSX; currentSX = 0
 			rx = fmod(x, 1.0)
 			if rx < 0: rx += 1.0
-			var _cx_block: bool = not is_god_mode and _stick_poly_idx < 0 and _poly_cross_cooldown <= 0 and WorldManager.does_step_cross_collision_only(ox + 8, oy + 8, x + 8, y + 8, -1).crossed
-			if _collides_px(x, y) or _cx_block:
+			var _cx_edge: bool = not is_god_mode and WorldManager.does_step_cross_render_edge(ox + 8, oy + 8, x + 8, y + 8, _stick_poly_idx, _stick_arc_pos)
+			var _cx_center: bool = not is_god_mode and _stick_poly_idx < 0 and _poly_cross_cooldown <= 0 and WorldManager.does_step_cross_collision_only(ox + 8, oy + 8, x + 8, y + 8, -1).crossed
+			if _collides_px(x, y) or _cx_edge or _cx_center:
 				x = ox; _speedX = 0; currentSX = osx; donex = true
 
 		# Step Y
@@ -937,13 +1012,16 @@ func _step_position() -> void:
 					y += currentSY; currentSY = 0
 			ry = fmod(y, 1.0)
 			if ry < 0: ry += 1.0
-			var _cy_block: bool = not is_god_mode and _stick_poly_idx < 0 and _poly_cross_cooldown <= 0 and WorldManager.does_step_cross_collision_only(x + 8, oy + 8, x + 8, y + 8, -1).crossed
-			if _collides_px(x, y) or _cy_block:
+			var _cy_edge: bool = not is_god_mode and WorldManager.does_step_cross_render_edge(x + 8, oy + 8, x + 8, y + 8, _stick_poly_idx, _stick_arc_pos)
+			var _cy_center: bool = not is_god_mode and _stick_poly_idx < 0 and _poly_cross_cooldown <= 0 and WorldManager.does_step_cross_collision_only(x + 8, oy + 8, x + 8, y + 8, -1).crossed
+			if _collides_px(x, y) or _cy_edge or _cy_center:
 				y = oy; _speedY = 0; currentSY = osy; doney = true
 
-		# Combined diagonal crossing check (only airborne — riding uses sandwich detection)
-		if not is_god_mode and _stick_poly_idx < 0 and _poly_cross_cooldown <= 0 and (x != ox or y != oy):
-			if WorldManager.does_step_cross_collision_only(ox + 8, oy + 8, x + 8, y + 8, -1).crossed:
+		# Combined diagonal crossing check — render edges ALWAYS checked, centerline only when airborne
+		if not is_god_mode and (x != ox or y != oy):
+			var _cd_edge: bool = WorldManager.does_step_cross_render_edge(ox + 8, oy + 8, x + 8, y + 8, _stick_poly_idx, _stick_arc_pos)
+			var _cd_center: bool = _stick_poly_idx < 0 and _poly_cross_cooldown <= 0 and WorldManager.does_step_cross_collision_only(ox + 8, oy + 8, x + 8, y + 8, -1).crossed
+			if _cd_edge or _cd_center:
 				x = ox; _speedX = 0; donex = true
 				y = oy; _speedY = 0; doney = true
 

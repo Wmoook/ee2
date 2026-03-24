@@ -33,7 +33,6 @@ var active_group_filter: int = 0  # 0 = All, >0 = specific group ID
 # Each: {points: PackedVector2Array, normals: Array[Vector2], side: String,
 #         bbox_min: Vector2, bbox_max: Vector2}
 var polylines: Array = []
-var wedge_points: Array = []  # [{pos: Vector2, gap: float}] — pre-computed V/U wedge positions
 signal polylines_changed()
 
 # Gravity zones (circular areas with inward gravity)
@@ -66,8 +65,8 @@ func remove_group(gid: int) -> void:
 func _find_pinch_point(pts: PackedVector2Array) -> Dictionary:
 	## Find where a polyline self-narrows (two non-adjacent parts within 17px).
 	## Returns the midpoint split index, or -1 if no pinch found.
-	const PINCH_DIST: float = 32.0  # Player can't fit when centerlines < 2*(8+8) apart
-	const MIN_SEG_GAP: int = 15  # Skip adjacent segments on same smooth section
+	const PINCH_DIST: float = 50.0  # Aggressively split U/V curves
+	const MIN_SEG_GAP: int = 8  # Allow tighter U bottoms to split
 	if pts.size() < MIN_SEG_GAP * 2 + 1:
 		return {"idx": -1}  # Too short to self-intersect
 	# Spatial hash for efficiency
@@ -108,27 +107,7 @@ func _find_pinch_point(pts: PackedVector2Array) -> Dictionary:
 							best_mid = mid
 	if best_mid < 0:
 		return {"idx": -1}
-	# Wedge point = where the inner sprite edges leave a gap < 16px (smiley can't fit)
-	# Use the actual curve points + 8.35px visual half-width on each side
-	# Inner edge gap = centerline_dist - 2*8.35. Player fits when gap >= 16.
-	# So wedge is where centerline_dist < 16 + 2*8.35 = 32.7
-	var _wedge_pos: Vector2 = pts[best_mid]
-	var _wedge_gap: float = 0.0
-	var _visual_thresh: float = 16.0 + 2.0 * 8.35  # 32.7 — smiley hitbox + curve sprite edges
-	for _step in range(1, 80):
-		var _ia: int = best_mid - _step
-		var _ib: int = best_mid + _step
-		if _ia < 0 or _ib >= pts.size():
-			break
-		var _gap: float = pts[_ia].distance_to(pts[_ib])
-		if _gap >= _visual_thresh:
-			# This is where the smiley just barely fits between the sprite edges
-			_wedge_pos = (pts[_ia] + pts[_ib]) * 0.5
-			_wedge_gap = _gap
-			break
-		_wedge_pos = (pts[_ia] + pts[_ib]) * 0.5
-		_wedge_gap = _gap
-	return {"idx": best_mid, "wedge_pos": _wedge_pos, "wedge_gap": _wedge_gap}
+	return {"idx": best_mid}
 
 func add_polyline(points: PackedVector2Array, side: String = "top", block_id: int = 9, uv_offset: float = 0.0, _no_split: bool = false) -> void:
 	if points.size() < 2:
@@ -139,10 +118,7 @@ func add_polyline(points: PackedVector2Array, side: String = "top", block_id: in
 		var _pinch: Dictionary = _find_pinch_point(points)
 		var _split_at: int = _pinch.get("idx", -1)
 		if _split_at > 1 and _split_at < points.size() - 2:
-			var _wp: Vector2 = _pinch.get("wedge_pos", points[_split_at])
-			var _wg: float = _pinch.get("wedge_gap", 0.0)
-			wedge_points.append({"pos": _wp, "gap": _wg})
-			push_warning("PINCH_SPLIT at idx=%d of %d pts. Wedge=(%.0f,%.0f) gap=%.1f" % [_split_at, points.size(), _wp.x, _wp.y, _wg])
+			push_warning("PINCH_SPLIT at idx=%d of %d pts" % [_split_at, points.size()])
 			# Add the FULL curve for rendering (collision_only=false, render_only=true)
 			add_polyline(points, side, block_id, 0.0, true)
 			polylines[-1]["render_only"] = true  # Skip in collision
@@ -151,14 +127,13 @@ func add_polyline(points: PackedVector2Array, side: String = "top", block_id: in
 			var pts_b: PackedVector2Array = points.slice(_split_at)
 			add_polyline(pts_a, side, block_id, 0.0, true)
 			polylines[-1]["collision_only"] = true
-			var _bba: Vector2 = polylines[-1].bbox_min
-			var _bxa: Vector2 = polylines[-1].bbox_max
-			push_warning("  ArmA idx=%d bb=(%.0f,%.0f)-(%.0f,%.0f)" % [polylines.size()-1, _bba.x, _bba.y, _bxa.x, _bxa.y])
 			add_polyline(pts_b, side, block_id, 0.0, true)
 			polylines[-1]["collision_only"] = true
-			var _bbb: Vector2 = polylines[-1].bbox_min
-			var _bxb: Vector2 = polylines[-1].bbox_max
-			push_warning("  ArmB idx=%d bb=(%.0f,%.0f)-(%.0f,%.0f)" % [polylines.size()-1, _bbb.x, _bbb.y, _bxb.x, _bxb.y])
+			# Tag pairs so physics can find them
+			var _arm_a_idx: int = polylines.size() - 2
+			var _arm_b_idx: int = polylines.size() - 1
+			polylines[_arm_a_idx]["split_pair"] = _arm_b_idx
+			polylines[_arm_b_idx]["split_pair"] = _arm_a_idx
 			return
 	# Compute per-vertex normals by averaging adjacent segment normals
 	var vert_normals: Array = []
@@ -318,7 +293,7 @@ func check_polyline_collision(px: float, py: float, pw: float, ph: float, prefer
 		var second_t: float = 0.0
 		var second_dist: float = 999999.0
 		var eff_radius: float = 8.0
-		var block_half: float = 8.0  # Curve collision half-width
+		var block_half: float = 8.35  # Match render edge (purple line) exactly
 		for si in range(pts.size() - 1):
 			var sa: Vector2 = pts[si]
 			var sb: Vector2 = pts[si + 1]
@@ -374,6 +349,20 @@ func check_polyline_collision(px: float, py: float, pw: float, ph: float, prefer
 		if penetration > 0 and dist_to_line < eff_radius + block_half + 2.0:
 			var seg_tangent: Vector2 = (seg_b - seg_a).normalized()
 			_dbg_hits.append({"poly": _dbg_poly_idx, "seg": closest_seg, "pen": penetration, "dist": dist_to_line, "push_dir": push_dir, "on_seg": on_seg, "tangent": seg_tangent})
+			# Same-poly sandwich: if second branch also in collision range with opposing push,
+			# add it as a virtual "other poly" so sandwich detection triggers
+			if second_seg >= 0 and second_dist < eff_radius + block_half + 2.0:
+				var seg_a2: Vector2 = pts[second_seg]
+				var seg_b2: Vector2 = pts[second_seg + 1]
+				var on2: Vector2 = seg_a2 + (seg_b2 - seg_a2) * second_t
+				var to_p2: Vector2 = Vector2(pcx, pcy) - on2
+				var d2: float = to_p2.length()
+				var pd2: Vector2 = to_p2.normalized() if d2 > 0.01 else interp_normal
+				var pen2: float = minf((eff_radius + block_half) - d2, 4.0)
+				if pen2 > 0 and pd2.dot(push_dir) < 0.3:
+					# Opposing push = same-poly U sandwich. Use virtual poly ID.
+					var tan2: Vector2 = (seg_b2 - seg_a2).normalized()
+					_dbg_hits.append({"poly": -900 - _dbg_poly_idx, "seg": second_seg, "pen": pen2, "dist": d2, "push_dir": pd2, "on_seg": on2, "tangent": tan2})
 	# Select best hit: handle opposing curves (sandwich)
 	if _dbg_hits.size() == 1:
 		var h: Dictionary = _dbg_hits[0]
@@ -396,9 +385,11 @@ func check_polyline_collision(px: float, py: float, pw: float, ph: float, prefer
 				break
 		if has_opposing and stick_poly >= 0:
 			# Sandwich with known surface: ONLY collide with the stuck polyline
+			# Also match virtual poly IDs (negative = same-poly sandwich: -900 - real_idx)
 			var best_h: Dictionary = {}
 			for h in _dbg_hits:
-				if h.poly == stick_poly:
+				var real_poly: int = h.poly if h.poly >= 0 else (-900 - h.poly)
+				if real_poly == stick_poly:
 					best_h = h
 					break
 			if best_h.is_empty():
@@ -624,6 +615,68 @@ func find_nearest_polyline_segment(cx: float, cy: float, exclude_poly: int = -1)
 				best = {"dist": dist, "point": on_pt, "seg_a": sa, "seg_b": sb, "poly_idx": _pidx}
 	return best
 
+func dist_to_polyline_idx(poly_idx: int, cx: float, cy: float) -> float:
+	## Distance from (cx,cy) to a SPECIFIC polyline's centerline, using spatial hash.
+	if poly_idx < 0 or poly_idx >= polylines.size():
+		return 99999.0
+	var poly: Dictionary = polylines[poly_idx]
+	var bb_min: Vector2 = poly.bbox_min
+	var bb_max: Vector2 = poly.bbox_max
+	if cx < bb_min.x - 20 or cx > bb_max.x + 20 or cy < bb_min.y - 20 or cy > bb_max.y + 20:
+		return 99999.0
+	var best_dist: float = 99999.0
+	var shash: Dictionary = poly.get("spatial_hash", {})
+	var cs: int = shash.get("cell_size", 32)
+	var gx: int = int(floor(cx / cs))
+	var gy: int = int(floor(cy / cs))
+	var checked: Dictionary = {}
+	for dx in range(-2, 3):
+		for dy in range(-2, 3):
+			var key: int = (gx + dx) * 10000 + (gy + dy)
+			if not shash.has(key):
+				continue
+			for si in shash[key]:
+				if checked.has(si):
+					continue
+				checked[si] = true
+				var pts: PackedVector2Array = poly.points
+				var sa: Vector2 = pts[si]
+				var sb: Vector2 = pts[si + 1]
+				var ab: Vector2 = sb - sa
+				var ap: Vector2 = Vector2(cx, cy) - sa
+				var ab_dot: float = ab.dot(ab)
+				var seg_t: float = clampf(ap.dot(ab) / maxf(ab_dot, 0.001), 0.0, 1.0)
+				var on_pt: Vector2 = sa + ab * seg_t
+				var dist: float = Vector2(cx, cy).distance_to(on_pt)
+				if dist < best_dist:
+					best_dist = dist
+	return best_dist
+
+func is_past_any_purple_line(cx: float, cy: float) -> bool:
+	## BRUTE FORCE against ACTUAL purple lines (render_top + render_bot).
+	## When riding normally, player center is ~8px from nearest purple line.
+	## If center is within 7.0px of ANY purple line segment: VIOLATION.
+	## No exclusions. No stick poly. Checks EVERYTHING.
+	var thresh_sq: float = 7.0 * 7.0
+	for poly in polylines:
+		if poly.get("render_only", false):
+			continue
+		var rt: PackedVector2Array = poly.render_top
+		for si in range(rt.size() - 1):
+			var ab: Vector2 = rt[si + 1] - rt[si]
+			var ap: Vector2 = Vector2(cx, cy) - rt[si]
+			var t: float = clampf(ap.dot(ab) / maxf(ab.dot(ab), 0.001), 0.0, 1.0)
+			if Vector2(cx, cy).distance_squared_to(rt[si] + ab * t) < thresh_sq:
+				return true
+		var rb: PackedVector2Array = poly.render_bot
+		for si in range(rb.size() - 1):
+			var ab: Vector2 = rb[si + 1] - rb[si]
+			var ap: Vector2 = Vector2(cx, cy) - rb[si]
+			var t: float = clampf(ap.dot(ab) / maxf(ab.dot(ab), 0.001), 0.0, 1.0)
+			if Vector2(cx, cy).distance_squared_to(rb[si] + ab * t) < thresh_sq:
+				return true
+	return false
+
 func dist_to_nearest_polyline(cx: float, cy: float, exclude_poly: int = -1) -> float:
 	## Returns the distance from point (cx,cy) to the nearest polyline segment, excluding one.
 	## Uses brute force within bbox for reliability (spatial hash can miss edge cases).
@@ -816,6 +869,65 @@ func intercept_polyline_tunneling(pre_cx: float, pre_cy: float, post_cx: float, 
 								"poly_idx": -1
 							}
 	return result
+
+func does_step_cross_render_edge(x1: float, y1: float, x2: float, y2: float, stick_poly: int = -1, stick_arc: float = -1.0) -> bool:
+	## Check if step crosses any render_top or render_bot edge of ANY polyline.
+	## These are the VISUAL sprite edges (the purple lines). IMPASSABLE.
+	## For stick poly: only skip segments near the riding position (arc < 40px).
+	var _pidx: int = -1
+	for poly in polylines:
+		_pidx += 1
+		if poly.get("render_only", false):
+			continue
+		var bb_min: Vector2 = poly.bbox_min
+		var bb_max: Vector2 = poly.bbox_max
+		if maxf(x1, x2) < bb_min.x - 10 or minf(x1, x2) > bb_max.x + 10:
+			continue
+		if maxf(y1, y2) < bb_min.y - 10 or minf(y1, y2) > bb_max.y + 10:
+			continue
+		var is_stick: bool = (_pidx == stick_poly)
+		var rd: Array = poly.get("render_dists", [])
+		# Check render_top edges
+		var rt: PackedVector2Array = poly.render_top
+		for si in range(rt.size() - 1):
+			if is_stick and stick_arc >= 0 and si < rd.size() and absf(rd[si] - stick_arc) < 40.0:
+				continue
+			var sa: Vector2 = rt[si]
+			var sb: Vector2 = rt[si + 1]
+			var d1x: float = x2 - x1
+			var d1y: float = y2 - y1
+			var d2x: float = sb.x - sa.x
+			var d2y: float = sb.y - sa.y
+			var denom: float = d1x * d2y - d1y * d2x
+			if absf(denom) < 0.0001:
+				continue
+			var d3x: float = sa.x - x1
+			var d3y: float = sa.y - y1
+			var t: float = (d3x * d2y - d3y * d2x) / denom
+			var u: float = (d3x * d1y - d3y * d1x) / denom
+			if t >= 0.0 and t <= 1.0 and u >= 0.0 and u <= 1.0:
+				return true
+		# Check render_bot edges
+		var rb: PackedVector2Array = poly.render_bot
+		for si in range(rb.size() - 1):
+			if is_stick and stick_arc >= 0 and si < rd.size() and absf(rd[si] - stick_arc) < 40.0:
+				continue
+			var sa: Vector2 = rb[si]
+			var sb: Vector2 = rb[si + 1]
+			var d1x: float = x2 - x1
+			var d1y: float = y2 - y1
+			var d2x: float = sb.x - sa.x
+			var d2y: float = sb.y - sa.y
+			var denom: float = d1x * d2y - d1y * d2x
+			if absf(denom) < 0.0001:
+				continue
+			var d3x: float = sa.x - x1
+			var d3y: float = sa.y - y1
+			var t: float = (d3x * d2y - d3y * d2x) / denom
+			var u: float = (d3x * d1y - d3y * d1x) / denom
+			if t >= 0.0 and t <= 1.0 and u >= 0.0 and u <= 1.0:
+				return true
+	return false
 
 func does_step_cross_collision_only(x1: float, y1: float, x2: float, y2: float, exclude_poly: int = -1) -> Dictionary:
 	## Check if step crosses any COLLISION_ONLY polyline centerline (excluding one).
@@ -1223,7 +1335,6 @@ func deserialize_world(data: Dictionary) -> void:
 		block_groups.append({"id": int(g.id), "name": str(g.name)})
 		_next_group_id = maxi(_next_group_id, int(g.id) + 1)
 	polylines.clear()
-	wedge_points.clear()
 	for pd in data.get("polylines", []):
 		var packed_pts: PackedVector2Array = PackedVector2Array()
 		for pt in pd.get("points", []):

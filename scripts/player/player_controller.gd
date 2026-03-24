@@ -619,6 +619,23 @@ func _draw() -> void:
 		draw_colored_polygon(PackedVector2Array(corners), Color(1, 0, 0, 0.3))
 		for i in range(4):
 			draw_line(corners[i], corners[(i + 1) % 4], Color(1, 0, 0, 0.8), 1.0)
+	# Draw collision_only polyline centerlines (blue) and sprite edges (cyan)
+	for _poly in WorldManager.polylines:
+		if not _poly.get("collision_only", false):
+			continue
+		var _pts: PackedVector2Array = _poly.points
+		var _norms: Array = _poly.normals
+		for _si in range(_pts.size() - 1):
+			var _a: Vector2 = _pts[_si] - position
+			var _b: Vector2 = _pts[_si + 1] - position
+			# Centerline
+			draw_line(_a, _b, Color(0, 0.5, 1, 0.3), 1.0)
+		# Draw sprite edges (render_top/render_bot) to show the actual visual boundary
+		var _rt: PackedVector2Array = _poly.render_top
+		var _rb: PackedVector2Array = _poly.render_bot
+		for _si in range(mini(_rt.size(), _rb.size()) - 1):
+			draw_line(_rt[_si] - position, _rt[_si + 1] - position, Color(0.7, 0, 1, 0.6), 1.0)
+			draw_line(_rb[_si] - position, _rb[_si + 1] - position, Color(0.7, 0, 1, 0.6), 1.0)
 
 func _input(event: InputEvent) -> void:
 	if not is_local:
