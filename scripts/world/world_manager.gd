@@ -77,10 +77,10 @@ func _find_pinch_point(pts: PackedVector2Array) -> int:
 		if not buckets.has(key):
 			buckets[key] = []
 		buckets[key].append(i)
-	# Find closest non-adjacent pair
-	var best_dist: float = PINCH_DIST
-	var best_i: int = -1
-	var best_j: int = -1
+	# Find pinch pairs and pick the one that splits most evenly
+	var _min_pts: int = int(pts.size() * 0.15)  # Each half must be at least 15% of total
+	var best_mid: int = -1
+	var best_balance: float = 999999.0  # Lower = more balanced
 	for i in range(pts.size()):
 		var gx: int = int(floor(pts[i].x / cell_size))
 		var gy: int = int(floor(pts[i].y / cell_size))
@@ -93,18 +93,19 @@ func _find_pinch_point(pts: PackedVector2Array) -> int:
 					if abs(j - i) <= MIN_SEG_GAP:
 						continue
 					var d: float = pts[i].distance_to(pts[j])
-					if d < best_dist:
-						best_dist = d
-						best_i = i
-						best_j = j
-	if best_i < 0:
-		return -1
-	# Split at midpoint between the two closest points (bottom of U/V)
-	if best_i > best_j:
-		var tmp: int = best_i
-		best_i = best_j
-		best_j = tmp
-	return int((best_i + best_j) / 2)
+					if d < PINCH_DIST:
+						var lo: int = mini(i, j)
+						var hi: int = maxi(i, j)
+						var mid: int = int((lo + hi) / 2)
+						# Reject splits too close to edges
+						if mid <= _min_pts or mid >= pts.size() - _min_pts:
+							continue
+						# Prefer most balanced split (mid closest to center)
+						var balance: float = absf(float(mid) - float(pts.size()) / 2.0)
+						if balance < best_balance:
+							best_balance = balance
+							best_mid = mid
+	return best_mid
 
 func add_polyline(points: PackedVector2Array, side: String = "top", block_id: int = 9, uv_offset: float = 0.0, _no_split: bool = false) -> void:
 	if points.size() < 2:
@@ -114,6 +115,7 @@ func add_polyline(points: PackedVector2Array, side: String = "top", block_id: in
 	if not _no_split:
 		var _split_at: int = _find_pinch_point(points)
 		if _split_at > 1 and _split_at < points.size() - 2:
+			push_warning("PINCH_SPLIT at idx=%d of %d points" % [_split_at, points.size()])
 			# Add the FULL curve for rendering (collision_only=false, render_only=true)
 			add_polyline(points, side, block_id, 0.0, true)
 			polylines[-1]["render_only"] = true  # Skip in collision
@@ -335,7 +337,7 @@ func check_polyline_collision(px: float, py: float, pw: float, ph: float, prefer
 		var to_player: Vector2 = Vector2(pcx, pcy) - on_seg
 		var dist_to_line: float = to_player.length()
 		var push_dir: Vector2 = to_player.normalized() if dist_to_line > 0.01 else interp_normal
-		var penetration: float = (eff_radius + block_half) - dist_to_line  # No cap — full push for deep penetration
+		var penetration: float = minf((eff_radius + block_half) - dist_to_line, 4.0)
 		if penetration > 0 and dist_to_line < eff_radius + block_half + 2.0:
 			var seg_tangent: Vector2 = (seg_b - seg_a).normalized()
 			_dbg_hits.append({"poly": _dbg_poly_idx, "seg": closest_seg, "pen": penetration, "dist": dist_to_line, "push_dir": push_dir, "on_seg": on_seg, "tangent": seg_tangent})
