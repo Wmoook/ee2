@@ -38,6 +38,7 @@ var lastJumpMs: float = -99999.0
 var is_god_mode: bool = false
 var is_grounded: bool = false
 var is_wedged: bool = false  # Touching curve wall — frozen, jump straight up
+var purple_pushed: bool = false  # True when purple line push is active (for visual smoothing)
 var debug_text: String = ""  # On-screen debug info
 var _wedge_pos: Vector2 = Vector2(-9999, -9999)  # Position where wedge occurred
 var _wedge_protect: int = 0  # Ticks of post-wedge protection
@@ -793,6 +794,7 @@ func tick(input_h: int, input_v: int, space_just: bool, space_held: bool) -> voi
 	# 10. ABSOLUTE PURPLE LINE FAILSAFE — OVERRIDES EVERYTHING
 	# If player center is within 7px of any purple line, push to 8px away (1px buffer).
 	# Runs every tick. No exclusions. Keeps player 1px outside purple lines at all times.
+	purple_pushed = false
 	if not is_god_mode:
 		var _pp_push: Vector2 = WorldManager.get_purple_line_push(x + 8, y + 8)
 		if _pp_push.length() > 0.01:
@@ -800,6 +802,7 @@ func tick(input_h: int, input_v: int, space_just: bool, space_held: bool) -> voi
 			y += _pp_push.y
 			_speedX = 0
 			_speedY = 0
+			purple_pushed = true
 
 	# 11. Debug info (P key overlay)
 	debug_text = "stick=%d polys=%d pos=(%.0f,%.0f) spd=(%.1f,%.1f) grnd=%s wedge=%s tick=%d" % [_stick_poly_idx, WorldManager.polylines.size(), x, y, _speedX, _speedY, is_grounded, is_wedged, _stick_poly_ticks]

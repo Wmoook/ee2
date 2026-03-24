@@ -266,6 +266,8 @@ func _physics_process(delta: float) -> void:
 	if _snap_to_grid:
 		_visual_pos = Vector2(floor(_phys_pos.x), floor(_phys_pos.y))
 		# (Y nudge removed — warp handles alignment now)
+	elif physics.purple_pushed:
+		_visual_pos = Vector2(floor(_phys_pos.x), floor(_phys_pos.y))  # Snap to kill oscillation flicker
 	elif physics.on_rotated_block:
 		_visual_pos = _phys_pos  # Sub-pixel = smooth diagonal on curves/slopes
 	else:
