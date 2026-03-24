@@ -108,22 +108,27 @@ func _find_pinch_point(pts: PackedVector2Array) -> Dictionary:
 							best_mid = mid
 	if best_mid < 0:
 		return {"idx": -1}
-	# Compute wedge point: walk from split toward the pinch, find where gap < 32px
-	# The wedge is where the player physically can't fit between the two arms
-	var _wedge_pt: Vector2 = pts[best_mid]
-	# Search near the split for the tightest point
-	var _tight_dist: float = 999.0
-	var _tight_pos: Vector2 = pts[best_mid]
-	for _wi in range(maxi(0, best_mid - 30), mini(pts.size(), best_mid + 30)):
-		# Find the closest point on the OTHER arm
-		for _wj in range(pts.size()):
-			if abs(_wj - _wi) <= MIN_SEG_GAP:
-				continue
-			var _wd: float = pts[_wi].distance_to(pts[_wj])
-			if _wd < _tight_dist:
-				_tight_dist = _wd
-				_tight_pos = (pts[_wi] + pts[_wj]) * 0.5  # Midpoint between the two arms
-	return {"idx": best_mid, "wedge_pos": _tight_pos, "wedge_gap": _tight_dist}
+	# Wedge point = where the inner sprite edges leave a gap < 16px (smiley can't fit)
+	# Use the actual curve points + 8.35px visual half-width on each side
+	# Inner edge gap = centerline_dist - 2*8.35. Player fits when gap >= 16.
+	# So wedge is where centerline_dist < 16 + 2*8.35 = 32.7
+	var _wedge_pos: Vector2 = pts[best_mid]
+	var _wedge_gap: float = 0.0
+	var _visual_thresh: float = 16.0 + 2.0 * 8.35  # 32.7 — smiley hitbox + curve sprite edges
+	for _step in range(1, 80):
+		var _ia: int = best_mid - _step
+		var _ib: int = best_mid + _step
+		if _ia < 0 or _ib >= pts.size():
+			break
+		var _gap: float = pts[_ia].distance_to(pts[_ib])
+		if _gap >= _visual_thresh:
+			# This is where the smiley just barely fits between the sprite edges
+			_wedge_pos = (pts[_ia] + pts[_ib]) * 0.5
+			_wedge_gap = _gap
+			break
+		_wedge_pos = (pts[_ia] + pts[_ib]) * 0.5
+		_wedge_gap = _gap
+	return {"idx": best_mid, "wedge_pos": _wedge_pos, "wedge_gap": _wedge_gap}
 
 func add_polyline(points: PackedVector2Array, side: String = "top", block_id: int = 9, uv_offset: float = 0.0, _no_split: bool = false) -> void:
 	if points.size() < 2:

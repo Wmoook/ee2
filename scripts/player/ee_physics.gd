@@ -393,14 +393,14 @@ func tick(input_h: int, input_v: int, space_just: bool, space_held: bool) -> voi
 			on_rotated_block = true
 			_surface_normal = _poly_hit_normal
 			if _poly_hit_against > 0.2 and _pre_tick_grav_speed >= 0:
-				is_grounded = true  # Only ground on floor-like surfaces
-			if _poly_hit_against > 0.2:
+				is_grounded = true
+				# Only do tangent projection when falling/grounded (not when jumping up)
 				var poly_spd_along: float = Vector2(_speedX, _speedY).dot(_poly_hit_tangent)
 				var poly_grav_tang: float = Vector2(mox, moy).dot(_poly_hit_tangent) * _get_grav_mult() / MULT * 0.5
 				poly_spd_along += poly_grav_tang
 				_speedX = _poly_hit_tangent.x * poly_spd_along
 				_speedY = _poly_hit_tangent.y * poly_spd_along
-			else:
+			elif _poly_hit_against <= 0.2 or _pre_tick_grav_speed < 0:
 				# Wall-like: zero speed into wall
 				var _w_into: float = Vector2(_speedX, _speedY).dot(-_poly_hit_normal)
 				if _w_into > 0:
@@ -705,7 +705,8 @@ func tick(input_h: int, input_v: int, space_just: bool, space_held: bool) -> voi
 		var _pcy: float = y + 8.0
 		for _wp in WorldManager.wedge_points:
 			var _wp_dist: float = Vector2(_pcx, _pcy).distance_to(_wp.pos)
-			var _wp_radius: float = 16.0  # Generous radius — the sandwich/collision handles the rest
+			var _wp_radius: float = 28.0  # Generous — player stops before reaching exact center
+			push_warning("WP_CHECK: dist=%.1f radius=%.1f wp=(%.0f,%.0f) player=(%.0f,%.0f)" % [_wp_dist, _wp_radius, _wp.pos.x, _wp.pos.y, _pcx, _pcy])
 			if _wp_dist < _wp_radius:
 				is_wedged = true
 				is_grounded = true
