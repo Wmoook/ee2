@@ -276,11 +276,11 @@ func tick(input_h: int, input_v: int, space_just: bool, space_held: bool) -> voi
 		var poly_result: Dictionary = WorldManager.check_polyline_collision(x, y, 16.0, 16.0, _prev_poly_normal, _stick_poly_idx)
 		push_warning("P1: hit=%s poly=%d push=%.1f stick=%d pos=(%.0f,%.0f) spd=(%.1f,%.1f)" % [poly_result.hit, poly_result.poly_idx, poly_result.push.length(), _stick_poly_idx, x, y, _speedX, _speedY])
 		if poly_result.hit:
-			_poly_any_hit = true
 			var poly_vel: Vector2 = Vector2(_speedX, _speedY)
 			var vel_toward: float = poly_vel.dot(-poly_result.normal)
 			var _skip_poly: bool = vel_toward < -3.0 and poly_result.push.length() < 1.0
 			if not _skip_poly:
+				_poly_any_hit = true
 				x += poly_result.push.x
 				y += poly_result.push.y
 				_stick_poly_idx = poly_result.poly_idx
@@ -352,15 +352,19 @@ func tick(input_h: int, input_v: int, space_just: bool, space_held: bool) -> voi
 		if _poly_any_hit and _poly_hit_against > -0.3:
 			on_rotated_block = true
 			_surface_normal = _poly_hit_normal
-			is_grounded = true
-			# Project speed onto tangent (sliding along surface)
-			var poly_spd_along: float = Vector2(_speedX, _speedY).dot(_poly_hit_tangent)
-			if _poly_hit_against > 0.05:
-				# Floor/slope: add gravity tangent component for sliding
+			if _poly_hit_against > 0.2 and _pre_tick_grav_speed >= 0:
+				is_grounded = true
+				var poly_spd_along: float = Vector2(_speedX, _speedY).dot(_poly_hit_tangent)
 				var poly_grav_tang: float = Vector2(mox, moy).dot(_poly_hit_tangent) * _get_grav_mult() / MULT * 0.5
 				poly_spd_along += poly_grav_tang
-			_speedX = _poly_hit_tangent.x * poly_spd_along
-			_speedY = _poly_hit_tangent.y * poly_spd_along
+				_speedX = _poly_hit_tangent.x * poly_spd_along
+				_speedY = _poly_hit_tangent.y * poly_spd_along
+			else:
+				# Wall-like hit: zero speed into the wall so gravity doesn't push through
+				var _w_into: float = Vector2(_speedX, _speedY).dot(-_poly_hit_normal)
+				if _w_into > 0:
+					_speedX += _poly_hit_normal.x * _w_into
+					_speedY += _poly_hit_normal.y * _w_into
 
 
 	# 7.5 Line collision
@@ -795,6 +799,14 @@ func _handle_jump(space_just: bool, space_held: bool) -> void:
 			did_jump = true
 
 	if did_jump:
+		# Reset ALL polyline state — clean slate like landing on a block
+		_stick_poly_idx = -1
+		_stick_poly_ticks = 99
+		_last_stick_poly = -1
+		_stick_arc_pos = -1.0
+		_prev_poly_normal = Vector2.ZERO
+		on_rotated_block = false
+		_poly_cross_cooldown = 0
 		if mod < 0:
 			lastJumpMs = -_now_ms
 		else:
@@ -841,7 +853,8 @@ func _step_position() -> void:
 					x += currentSX; currentSX = 0
 			rx = fmod(x, 1.0)
 			if rx < 0: rx += 1.0
-			if _collides_px(x, y):
+			var _cx_block: bool = not is_god_mode and _poly_cross_cooldown <= 0 and WorldManager.does_step_cross_collision_only(ox + 8, oy + 8, x + 8, y + 8, -1).crossed
+			if _collides_px(x, y) or _cx_block:
 				x = ox; _speedX = 0; currentSX = osx; donex = true
 
 		# Step Y
@@ -858,25 +871,15 @@ func _step_position() -> void:
 					y += currentSY; currentSY = 0
 			ry = fmod(y, 1.0)
 			if ry < 0: ry += 1.0
-			if _collides_px(x, y):
+			var _cy_block: bool = not is_god_mode and _poly_cross_cooldown <= 0 and WorldManager.does_step_cross_collision_only(x + 8, oy + 8, x + 8, y + 8, -1).crossed
+			if _collides_px(x, y) or _cy_block:
 				y = oy; _speedY = 0; currentSY = osy; doney = true
 
-		# Combined X+Y crossing check (catches diagonal crossings of steep segments)
-		# Exclude stick poly so normal riding doesn't trigger
-		if not is_god_mode and (x != ox or y != oy):
-			if _poly_cross_cooldown <= 0:
-				var _cc_res: Dictionary = WorldManager.does_step_cross_collision_only(ox + 8, oy + 8, x + 8, y + 8, _stick_poly_idx)
-				if _cc_res.crossed:
-					# Bounce: place at visual edge, reverse speed away from wall
-					x = _cc_res.point.x + _cc_res.normal.x * 15.5 - 8.0
-					y = _cc_res.point.y + _cc_res.normal.y * 15.5 - 8.0
-					# Reflect speed off the surface (bounce)
-					var _into_spd: float = Vector2(_speedX, _speedY).dot(-_cc_res.normal)
-					if _into_spd > 0:
-						_speedX += _cc_res.normal.x * _into_spd  # Cancel into-wall speed
-						_speedY += _cc_res.normal.y * _into_spd
-					donex = true; doney = true
-					_poly_cross_cooldown = 5
+		# Combined diagonal crossing check (catches steep segments missed by individual X/Y)
+		if not is_god_mode and _poly_cross_cooldown <= 0 and (x != ox or y != oy):
+			if WorldManager.does_step_cross_collision_only(ox + 8, oy + 8, x + 8, y + 8, -1).crossed:
+				x = ox; _speedX = 0; donex = true
+				y = oy; _speedY = 0; doney = true
 
 
 func _collides_px(px: float, py: float) -> bool:
