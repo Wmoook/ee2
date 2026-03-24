@@ -129,23 +129,12 @@ func tick(input_h: int, input_v: int, space_just: bool, space_held: bool) -> voi
 	# Vertical V (gravity into wedge): only jump escapes
 	# Horizontal V (gravity perpendicular): directional input escapes
 	if is_wedged and (input_h != 0 or input_v != 0):
-		var _grav_dir: Vector2 = Vector2(mox, moy)
-		if _grav_dir.length() < 0.01: _grav_dir = Vector2(0, 1)
-		_grav_dir = _grav_dir.normalized()
-		var _input_dir: Vector2 = Vector2(float(input_h), float(input_v)).normalized()
-		# Only escape if input direction OPPOSES gravity (going up/against gravity)
-		# or is perpendicular to gravity (going sideways)
-		if _input_dir.dot(_grav_dir) < 0.3:  # Not going WITH gravity
-			is_wedged = false
-			_wedge_escape_cooldown = 30
-			_stick_poly_idx = -1
-			_stick_poly_ticks = 99
-			_last_stick_poly = -1
-			on_rotated_block = false
-		else:
-			# Input goes with gravity (deeper into V) — block it
-			input_h = 0
-			input_v = 0
+		is_wedged = false
+		_wedge_escape_cooldown = 30
+		_stick_poly_idx = -1
+		_stick_poly_ticks = 99
+		_last_stick_poly = -1
+		on_rotated_block = false
 	_now_ms += MS_PER_TICK
 	# Track speed in gravity direction to prevent jump during launch
 	var _pre_tick_speedY: float = _speedY
