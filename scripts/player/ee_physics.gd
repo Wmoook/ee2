@@ -393,7 +393,7 @@ func tick(input_h: int, input_v: int, space_just: bool, space_held: bool) -> voi
 		if _poly_any_hit and _poly_hit_against > -0.3:
 			on_rotated_block = true
 			_surface_normal = _poly_hit_normal
-			if _poly_hit_against > 0.2 and _pre_tick_grav_speed >= 0:
+			if _poly_hit_against > 0.4 and _pre_tick_grav_speed >= 0:
 				is_grounded = true
 				# Only do tangent projection when falling/grounded (not when jumping up)
 				var poly_spd_along: float = Vector2(_speedX, _speedY).dot(_poly_hit_tangent)
@@ -401,7 +401,7 @@ func tick(input_h: int, input_v: int, space_just: bool, space_held: bool) -> voi
 				poly_spd_along += poly_grav_tang
 				_speedX = _poly_hit_tangent.x * poly_spd_along
 				_speedY = _poly_hit_tangent.y * poly_spd_along
-			elif _poly_hit_against <= 0.2 or _pre_tick_grav_speed < 0:
+			elif _poly_hit_against <= 0.4 or _pre_tick_grav_speed < 0:
 				# Wall-like: zero speed into wall
 				var _w_into: float = Vector2(_speedX, _speedY).dot(-_poly_hit_normal)
 				if _w_into > 0:
@@ -783,22 +783,23 @@ func tick(input_h: int, input_v: int, space_just: bool, space_held: bool) -> voi
 			_wedge_allow_down = WorldManager.dist_to_nearest_polyline(_pcx, _pcy + _wr2) > _wd_c + 2.0
 			break
 
-	# 9. Jump
+	# 9. Jump — if wedged, always allow straight up jump
+	if is_wedged and space_just:
+		is_grounded = true
+		_surface_normal = Vector2(0, -1)
+		jumpCount = 0
 	_handle_jump(space_just, space_held)
 
 	# 10. ABSOLUTE PURPLE LINE FAILSAFE — OVERRIDES EVERYTHING
-	# Check distance from player center to ACTUAL purple line segments (render_top/render_bot).
-	# Riding = ~8px from nearest purple line. If < 7px: BREACHED. Teleport back.
-	# No exclusions. No stick poly. No conditions. Just physics reality.
+	# If player center is within 7px of any purple line, push to 8px away (1px buffer).
+	# Runs every tick. No exclusions. Keeps player 1px outside purple lines at all times.
 	if not is_god_mode:
-		if WorldManager.is_past_any_purple_line(x + 8, y + 8):
-			if _last_good_pos.x > -99990:
-				x = _last_good_pos.x
-				y = _last_good_pos.y
+		var _pp_push: Vector2 = WorldManager.get_purple_line_push(x + 8, y + 8)
+		if _pp_push.length() > 0.01:
+			x += _pp_push.x
+			y += _pp_push.y
 			_speedX = 0
 			_speedY = 0
-		else:
-			_last_good_pos = Vector2(x, y)
 
 	# 11. Debug info (P key overlay)
 	debug_text = "stick=%d polys=%d pos=(%.0f,%.0f) spd=(%.1f,%.1f) grnd=%s wedge=%s tick=%d" % [_stick_poly_idx, WorldManager.polylines.size(), x, y, _speedX, _speedY, is_grounded, is_wedged, _stick_poly_ticks]

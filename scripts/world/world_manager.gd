@@ -652,30 +652,29 @@ func dist_to_polyline_idx(poly_idx: int, cx: float, cy: float) -> float:
 					best_dist = dist
 	return best_dist
 
-func is_past_any_purple_line(cx: float, cy: float) -> bool:
-	## BRUTE FORCE against ACTUAL purple lines (render_top + render_bot).
-	## When riding normally, player center is ~8px from nearest purple line.
-	## If center is within 7.0px of ANY purple line segment: VIOLATION.
-	## No exclusions. No stick poly. Checks EVERYTHING.
-	var thresh_sq: float = 7.0 * 7.0
+func get_purple_line_push(cx: float, cy: float) -> Vector2:
+	## If player center is within 7px of ANY purple line segment, return push to 8px away.
+	## Returns Vector2.ZERO if no violation.
+	var thresh: float = 7.0
+	var push_to: float = 9.0  # Push to 9px = 2px buffer outside threshold
+	var best_dist: float = 99999.0
+	var best_push: Vector2 = Vector2.ZERO
+	var pos: Vector2 = Vector2(cx, cy)
 	for poly in polylines:
 		if poly.get("render_only", false):
 			continue
-		var rt: PackedVector2Array = poly.render_top
-		for si in range(rt.size() - 1):
-			var ab: Vector2 = rt[si + 1] - rt[si]
-			var ap: Vector2 = Vector2(cx, cy) - rt[si]
-			var t: float = clampf(ap.dot(ab) / maxf(ab.dot(ab), 0.001), 0.0, 1.0)
-			if Vector2(cx, cy).distance_squared_to(rt[si] + ab * t) < thresh_sq:
-				return true
-		var rb: PackedVector2Array = poly.render_bot
-		for si in range(rb.size() - 1):
-			var ab: Vector2 = rb[si + 1] - rb[si]
-			var ap: Vector2 = Vector2(cx, cy) - rb[si]
-			var t: float = clampf(ap.dot(ab) / maxf(ab.dot(ab), 0.001), 0.0, 1.0)
-			if Vector2(cx, cy).distance_squared_to(rb[si] + ab * t) < thresh_sq:
-				return true
-	return false
+		for edge in [poly.render_top, poly.render_bot]:
+			for si in range(edge.size() - 1):
+				var ab: Vector2 = edge[si + 1] - edge[si]
+				var ap: Vector2 = pos - edge[si]
+				var t: float = clampf(ap.dot(ab) / maxf(ab.dot(ab), 0.001), 0.0, 1.0)
+				var on_pt: Vector2 = edge[si] + ab * t
+				var to_player: Vector2 = pos - on_pt
+				var dist: float = to_player.length()
+				if dist < thresh and dist < best_dist and dist > 0.01:
+					best_dist = dist
+					best_push = to_player.normalized() * (push_to - dist)
+	return best_push
 
 func dist_to_nearest_polyline(cx: float, cy: float, exclude_poly: int = -1) -> float:
 	## Returns the distance from point (cx,cy) to the nearest polyline segment, excluding one.
