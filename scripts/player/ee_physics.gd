@@ -42,6 +42,10 @@ var debug_text: String = ""  # On-screen debug info
 var _wedge_pos: Vector2 = Vector2(-9999, -9999)  # Position where wedge occurred
 var _wedge_protect: int = 0  # Ticks of post-wedge protection
 var _wedge_safe_pos: Vector2 = Vector2(0, 0)  # Last position where NOT wedged
+var _wedge_allow_left: bool = false
+var _wedge_allow_right: bool = false
+var _wedge_allow_up: bool = false
+var _wedge_allow_down: bool = false
 var _wedge_freeze_pos: Vector2 = Vector2(0, 0)  # Position where wedge was set
 var _wedge_freeze_dir: Vector2 = Vector2(0, 0)  # Direction player can't move past (into the V)
 var _poly_cross_cooldown: int = 0  # Ticks after crossing placement (prevent jitter)
@@ -120,10 +124,16 @@ func _get_speed_mult() -> float:
 	return 1.0
 
 func tick(input_h: int, input_v: int, space_just: bool, space_held: bool) -> void:
-	# Wedge: fully frozen, only jump escapes
+	# Wedge: block directions with walls, allow directions with open space
 	if is_wedged:
-		input_h = 0
-		input_v = 0
+		if input_h < 0 and not _wedge_allow_left:
+			input_h = 0
+		if input_h > 0 and not _wedge_allow_right:
+			input_h = 0
+		if input_v < 0 and not _wedge_allow_up:
+			input_v = 0
+		if input_v > 0 and not _wedge_allow_down:
+			input_v = 0
 	_now_ms += MS_PER_TICK
 	# Track speed in gravity direction to prevent jump during launch
 	var _pre_tick_speedY: float = _speedY
@@ -293,31 +303,31 @@ func tick(input_h: int, input_v: int, space_just: bool, space_held: bool) -> voi
 		var poly_result: Dictionary = WorldManager.check_polyline_collision(x, y, 16.0, 16.0, _prev_poly_normal, _stick_poly_idx)
 		push_warning("P1: hit=%s poly=%d push=%.1f stick=%d pos=(%.0f,%.0f) spd=(%.1f,%.1f)" % [poly_result.hit, poly_result.poly_idx, poly_result.push.length(), _stick_poly_idx, x, y, _speedX, _speedY])
 		if poly_result.hit:
+			_poly_any_hit = true
+			# Always set hit info (needed for sandwich even if push is skipped)
+			var _p1_gn: Vector2 = Vector2(mox, moy)
+			if _p1_gn.length() < 0.01: _p1_gn = Vector2(0, 1)
+			_p1_gn = _p1_gn.normalized()
+			_poly_hit_against = -poly_result.normal.dot(_p1_gn)
+			_poly_hit_normal = poly_result.normal
+			_poly_hit_tangent = poly_result.tangent
 			var poly_vel: Vector2 = Vector2(_speedX, _speedY)
 			var vel_toward: float = poly_vel.dot(-poly_result.normal)
 			var _skip_poly: bool = vel_toward < -3.0 and poly_result.push.length() < 1.0
 			if not _skip_poly:
-				_poly_any_hit = true
 				x += poly_result.push.x
 				y += poly_result.push.y
 				_stick_poly_idx = poly_result.poly_idx
 				_stick_poly_ticks = 0
 				_last_stick_poly = poly_result.poly_idx
-				# Store arc position for wall exclusion
 				if poly_result.poly_idx >= 0 and poly_result.seg >= 0:
 					var _sp_rd: Array = WorldManager.polylines[poly_result.poly_idx].render_dists
 					if poly_result.seg < _sp_rd.size():
 						_stick_arc_pos = _sp_rd[poly_result.seg]
-				var poly_grav_n: Vector2 = Vector2(mox, moy)
-				if poly_grav_n.length() < 0.01:
-					poly_grav_n = Vector2(0, 1)
-				poly_grav_n = poly_grav_n.normalized()
-				_poly_hit_against = -poly_result.normal.dot(poly_grav_n)
-				_poly_hit_normal = poly_result.normal
-				_poly_hit_tangent = poly_result.tangent
 			_prev_poly_normal = poly_result.normal
-		# Pass 2: resolve OTHER curves (exclude stick poly to find intersecting ones)
-		var poly2: Dictionary = WorldManager.check_polyline_collision(x, y, 16.0, 16.0, _prev_poly_normal, -1, _stick_poly_idx)
+		# Pass 2: resolve OTHER curves (exclude the poly Pass 1 found)
+		var _p2_exclude: int = poly_result.poly_idx if poly_result.hit else _stick_poly_idx
+		var poly2: Dictionary = WorldManager.check_polyline_collision(x, y, 16.0, 16.0, _prev_poly_normal, -1, _p2_exclude)
 		if poly2.hit and poly2.push.length() > 0.1:
 			if _poly_any_hit and poly2.normal.dot(_poly_hit_normal) < -0.3:
 				# Opposing curves = sandwiched — full freeze, jump to escape
@@ -329,8 +339,15 @@ func tick(input_h: int, input_v: int, space_just: bool, space_held: bool) -> voi
 				is_grounded = true
 				in_valley = true
 				_surface_normal = Vector2(0, -1)
-				is_grounded = true
-				_surface_normal = Vector2(0, -1)  # Straight up jump
+				# Compute which directions are open at the freeze point
+				var _wcx: float = x + 8.0
+				var _wcy: float = y + 8.0
+				var _wr: float = 20.0
+				var _wd_cur: float = WorldManager.dist_to_nearest_polyline(_wcx, _wcy)
+				_wedge_allow_left = WorldManager.dist_to_nearest_polyline(_wcx - _wr, _wcy) > _wd_cur
+				_wedge_allow_right = WorldManager.dist_to_nearest_polyline(_wcx + _wr, _wcy) > _wd_cur
+				_wedge_allow_up = WorldManager.dist_to_nearest_polyline(_wcx, _wcy - _wr) > _wd_cur
+				_wedge_allow_down = WorldManager.dist_to_nearest_polyline(_wcx, _wcy + _wr) > _wd_cur
 			else:
 				# Same direction or no pass 1 — apply normally
 				x += poly2.push.x
