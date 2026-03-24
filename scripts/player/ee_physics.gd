@@ -42,6 +42,8 @@ var debug_text: String = ""  # On-screen debug info
 var _wedge_pos: Vector2 = Vector2(-9999, -9999)  # Position where wedge occurred
 var _wedge_protect: int = 0  # Ticks of post-wedge protection
 var _wedge_safe_pos: Vector2 = Vector2(0, 0)  # Last position where NOT wedged
+var _wedge_freeze_pos: Vector2 = Vector2(0, 0)  # Position where wedge was set
+var _wedge_freeze_dir: Vector2 = Vector2(0, 0)  # Direction player can't move past (into the V)
 var _poly_cross_cooldown: int = 0  # Ticks after crossing placement (prevent jitter)
 var _wedge_clear_ticks: int = 0  # Ticks wall has been NOT blocked (need 3 to clear)
 var _wedge_arc: float = -1.0  # Arc position when wedge was set (preserved while wedged)
@@ -118,7 +120,7 @@ func _get_speed_mult() -> float:
 	return 1.0
 
 func tick(input_h: int, input_v: int, space_just: bool, space_held: bool) -> void:
-	# Wedge: suppress directional input. Only jump works.
+	# Wedge: fully frozen, only jump escapes
 	if is_wedged:
 		input_h = 0
 		input_v = 0
@@ -261,6 +263,16 @@ func tick(input_h: int, input_v: int, space_just: bool, space_held: bool) -> voi
 	var _pre_step_y: float = y
 	_step_position()
 
+	# 7.1 CCD backup: if step_position missed a crossing, catch it here
+	# Only when airborne (stick<0) — when riding a curve, let sandwich detection handle V bottom
+	if not is_god_mode and _stick_poly_idx < 0 and WorldManager.polylines.size() > 0:
+		var _ccd_res: Dictionary = WorldManager.does_step_cross_collision_only(
+			_pre_step_x + 8, _pre_step_y + 8, x + 8, y + 8, -1)
+		if _ccd_res.crossed:
+			x = _pre_step_x
+			y = _pre_step_y
+			_speedX = 0
+			_speedY = 0
 
 	# 7.15 Polyline collision
 	if not is_god_mode and WorldManager.polylines.size() > 0:
@@ -270,8 +282,13 @@ func tick(input_h: int, input_v: int, space_just: bool, space_held: bool) -> voi
 		var _poly_hit_against: float = -999.0
 		# Decay stick tracking: release after 5 ticks without contact
 		_stick_poly_ticks += 1
-		if _stick_poly_ticks > 5:
+		if _stick_poly_ticks > 5 and _stick_poly_idx >= 0:
+			# Full reset when leaving a curve — clean slate
 			_stick_poly_idx = -1
+			_last_stick_poly = -1
+			_stick_arc_pos = -1.0
+			_prev_poly_normal = Vector2.ZERO
+			_poly_cross_cooldown = 0
 		# Pass 1: resolve stick polyline (stay on your curve)
 		var poly_result: Dictionary = WorldManager.check_polyline_collision(x, y, 16.0, 16.0, _prev_poly_normal, _stick_poly_idx)
 		push_warning("P1: hit=%s poly=%d push=%.1f stick=%d pos=(%.0f,%.0f) spd=(%.1f,%.1f)" % [poly_result.hit, poly_result.poly_idx, poly_result.push.length(), _stick_poly_idx, x, y, _speedX, _speedY])
@@ -303,13 +320,15 @@ func tick(input_h: int, input_v: int, space_just: bool, space_held: bool) -> voi
 		var poly2: Dictionary = WorldManager.check_polyline_collision(x, y, 16.0, 16.0, _prev_poly_normal, -1, _stick_poly_idx)
 		if poly2.hit and poly2.push.length() > 0.1:
 			if _poly_any_hit and poly2.normal.dot(_poly_hit_normal) < -0.3:
-				# Opposing curves = sandwiched at intersection — wedge and stop
+				# Opposing curves = sandwiched — full freeze, jump to escape
 				x += poly2.push.x * 0.5
 				y += poly2.push.y * 0.5
 				_speedX = 0
 				_speedY = 0
 				is_wedged = true
+				is_grounded = true
 				in_valley = true
+				_surface_normal = Vector2(0, -1)
 				is_grounded = true
 				_surface_normal = Vector2(0, -1)  # Straight up jump
 			else:
@@ -352,15 +371,15 @@ func tick(input_h: int, input_v: int, space_just: bool, space_held: bool) -> voi
 		if _poly_any_hit and _poly_hit_against > -0.3:
 			on_rotated_block = true
 			_surface_normal = _poly_hit_normal
-			if _poly_hit_against > 0.2 and _pre_tick_grav_speed >= 0:
-				is_grounded = true
+			is_grounded = true  # Any polyline hit = grounded (prevents V bottom fallthrough)
+			if _poly_hit_against > 0.2:
 				var poly_spd_along: float = Vector2(_speedX, _speedY).dot(_poly_hit_tangent)
 				var poly_grav_tang: float = Vector2(mox, moy).dot(_poly_hit_tangent) * _get_grav_mult() / MULT * 0.5
 				poly_spd_along += poly_grav_tang
 				_speedX = _poly_hit_tangent.x * poly_spd_along
 				_speedY = _poly_hit_tangent.y * poly_spd_along
 			else:
-				# Wall-like hit: zero speed into the wall so gravity doesn't push through
+				# Wall-like: zero speed into wall
 				var _w_into: float = Vector2(_speedX, _speedY).dot(-_poly_hit_normal)
 				if _w_into > 0:
 					_speedX += _poly_hit_normal.x * _w_into
@@ -661,7 +680,7 @@ func tick(input_h: int, input_v: int, space_just: bool, space_held: bool) -> voi
 	_handle_jump(space_just, space_held)
 
 	# 10. Debug info (P key overlay)
-	debug_text = "stick=%d polys=%d pos=(%.0f,%.0f) spd=(%.1f,%.1f) grnd=%s wedge=%s" % [_stick_poly_idx, WorldManager.polylines.size(), x, y, _speedX, _speedY, is_grounded, is_wedged]
+	debug_text = "stick=%d polys=%d pos=(%.0f,%.0f) spd=(%.1f,%.1f) grnd=%s wedge=%s tick=%d" % [_stick_poly_idx, WorldManager.polylines.size(), x, y, _speedX, _speedY, is_grounded, is_wedged, _stick_poly_ticks]
 
 func _arrow_dir_to_vec(dir: int) -> Vector2:
 	match dir:
@@ -853,7 +872,7 @@ func _step_position() -> void:
 					x += currentSX; currentSX = 0
 			rx = fmod(x, 1.0)
 			if rx < 0: rx += 1.0
-			var _cx_block: bool = not is_god_mode and _poly_cross_cooldown <= 0 and WorldManager.does_step_cross_collision_only(ox + 8, oy + 8, x + 8, y + 8, -1).crossed
+			var _cx_block: bool = not is_god_mode and _stick_poly_idx < 0 and _poly_cross_cooldown <= 0 and WorldManager.does_step_cross_collision_only(ox + 8, oy + 8, x + 8, y + 8, -1).crossed
 			if _collides_px(x, y) or _cx_block:
 				x = ox; _speedX = 0; currentSX = osx; donex = true
 
@@ -871,12 +890,12 @@ func _step_position() -> void:
 					y += currentSY; currentSY = 0
 			ry = fmod(y, 1.0)
 			if ry < 0: ry += 1.0
-			var _cy_block: bool = not is_god_mode and _poly_cross_cooldown <= 0 and WorldManager.does_step_cross_collision_only(x + 8, oy + 8, x + 8, y + 8, -1).crossed
+			var _cy_block: bool = not is_god_mode and _stick_poly_idx < 0 and _poly_cross_cooldown <= 0 and WorldManager.does_step_cross_collision_only(x + 8, oy + 8, x + 8, y + 8, -1).crossed
 			if _collides_px(x, y) or _cy_block:
 				y = oy; _speedY = 0; currentSY = osy; doney = true
 
-		# Combined diagonal crossing check (catches steep segments missed by individual X/Y)
-		if not is_god_mode and _poly_cross_cooldown <= 0 and (x != ox or y != oy):
+		# Combined diagonal crossing check (only airborne — riding uses sandwich detection)
+		if not is_god_mode and _stick_poly_idx < 0 and _poly_cross_cooldown <= 0 and (x != ox or y != oy):
 			if WorldManager.does_step_cross_collision_only(ox + 8, oy + 8, x + 8, y + 8, -1).crossed:
 				x = ox; _speedX = 0; donex = true
 				y = oy; _speedY = 0; doney = true
