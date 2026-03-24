@@ -705,8 +705,7 @@ func tick(input_h: int, input_v: int, space_just: bool, space_held: bool) -> voi
 		var _pcy: float = y + 8.0
 		for _wp in WorldManager.wedge_points:
 			var _wp_dist: float = Vector2(_pcx, _pcy).distance_to(_wp.pos)
-			var _wp_radius: float = 28.0  # Generous — player stops before reaching exact center
-			push_warning("WP_CHECK: dist=%.1f radius=%.1f wp=(%.0f,%.0f) player=(%.0f,%.0f)" % [_wp_dist, _wp_radius, _wp.pos.x, _wp.pos.y, _pcx, _pcy])
+			var _wp_radius: float = 40.0  # Very generous — different approach angles
 			if _wp_dist < _wp_radius:
 				is_wedged = true
 				is_grounded = true
