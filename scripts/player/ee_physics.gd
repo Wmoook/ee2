@@ -42,6 +42,7 @@ var debug_text: String = ""  # On-screen debug info
 var _wedge_pos: Vector2 = Vector2(-9999, -9999)  # Position where wedge occurred
 var _wedge_protect: int = 0  # Ticks of post-wedge protection
 var _wedge_safe_pos: Vector2 = Vector2(0, 0)  # Last position where NOT wedged
+var _wedge_escape_cooldown: int = 0  # Ticks after escape — don't re-wedge
 var _wedge_allow_left: bool = false
 var _wedge_allow_right: bool = false
 var _wedge_allow_up: bool = false
@@ -124,15 +125,26 @@ func _get_speed_mult() -> float:
 	return 1.0
 
 func tick(input_h: int, input_v: int, space_just: bool, space_held: bool) -> void:
-	# Wedge: block directions with walls, allow directions with open space
-	if is_wedged:
-		if input_h < 0 and not _wedge_allow_left:
+	# Wedge: allow escape only if gravity won't pull player back
+	# Vertical V (gravity into wedge): only jump escapes
+	# Horizontal V (gravity perpendicular): directional input escapes
+	if is_wedged and (input_h != 0 or input_v != 0):
+		var _grav_dir: Vector2 = Vector2(mox, moy)
+		if _grav_dir.length() < 0.01: _grav_dir = Vector2(0, 1)
+		_grav_dir = _grav_dir.normalized()
+		var _input_dir: Vector2 = Vector2(float(input_h), float(input_v)).normalized()
+		# Only escape if input direction OPPOSES gravity (going up/against gravity)
+		# or is perpendicular to gravity (going sideways)
+		if _input_dir.dot(_grav_dir) < 0.3:  # Not going WITH gravity
+			is_wedged = false
+			_wedge_escape_cooldown = 30
+			_stick_poly_idx = -1
+			_stick_poly_ticks = 99
+			_last_stick_poly = -1
+			on_rotated_block = false
+		else:
+			# Input goes with gravity (deeper into V) — block it
 			input_h = 0
-		if input_h > 0 and not _wedge_allow_right:
-			input_h = 0
-		if input_v < 0 and not _wedge_allow_up:
-			input_v = 0
-		if input_v > 0 and not _wedge_allow_down:
 			input_v = 0
 	_now_ms += MS_PER_TICK
 	# Track speed in gravity direction to prevent jump during launch
@@ -391,7 +403,8 @@ func tick(input_h: int, input_v: int, space_just: bool, space_held: bool) -> voi
 		if _poly_any_hit and _poly_hit_against > -0.3:
 			on_rotated_block = true
 			_surface_normal = _poly_hit_normal
-			is_grounded = true  # Any polyline hit = grounded (prevents V bottom fallthrough)
+			if _poly_hit_against > 0.2 and _pre_tick_grav_speed >= 0:
+				is_grounded = true  # Only ground on floor-like surfaces
 			if _poly_hit_against > 0.2:
 				var poly_spd_along: float = Vector2(_speedX, _speedY).dot(_poly_hit_tangent)
 				var poly_grav_tang: float = Vector2(mox, moy).dot(_poly_hit_tangent) * _get_grav_mult() / MULT * 0.5
@@ -696,7 +709,9 @@ func tick(input_h: int, input_v: int, space_just: bool, space_held: bool) -> voi
 	_was_on_rotated = on_rotated_block
 
 	# 8.5 Pre-computed wedge points: if player center is near a wedge point, freeze
-	if not is_god_mode and not is_wedged:
+	if _wedge_escape_cooldown > 0:
+		_wedge_escape_cooldown -= 1
+	if not is_god_mode and not is_wedged and _wedge_escape_cooldown <= 0:
 		var _pcx: float = x + 8.0
 		var _pcy: float = y + 8.0
 		for _wp in WorldManager.wedge_points:
@@ -709,13 +724,14 @@ func tick(input_h: int, input_v: int, space_just: bool, space_held: bool) -> voi
 				_speedX = 0
 				_speedY = 0
 				_wedge_safe_pos = Vector2(x, y)  # Save position for clamping
-				# Compute allowed directions at wedge point
-				var _wr2: float = 20.0
+				# Allowed directions: check actual space around the wedge point
+				# A direction is open if moving 24px that way gets FURTHER from curves
+				var _wr2: float = 24.0
 				var _wd_c: float = WorldManager.dist_to_nearest_polyline(_pcx, _pcy)
-				_wedge_allow_left = WorldManager.dist_to_nearest_polyline(_pcx - _wr2, _pcy) > _wd_c
-				_wedge_allow_right = WorldManager.dist_to_nearest_polyline(_pcx + _wr2, _pcy) > _wd_c
-				_wedge_allow_up = WorldManager.dist_to_nearest_polyline(_pcx, _pcy - _wr2) > _wd_c
-				_wedge_allow_down = WorldManager.dist_to_nearest_polyline(_pcx, _pcy + _wr2) > _wd_c
+				_wedge_allow_left = WorldManager.dist_to_nearest_polyline(_pcx - _wr2, _pcy) > _wd_c + 2.0
+				_wedge_allow_right = WorldManager.dist_to_nearest_polyline(_pcx + _wr2, _pcy) > _wd_c + 2.0
+				_wedge_allow_up = true  # Always allow up (jump direction)
+				_wedge_allow_down = WorldManager.dist_to_nearest_polyline(_pcx, _pcy + _wr2) > _wd_c + 2.0
 				break
 
 	# 9. Jump
