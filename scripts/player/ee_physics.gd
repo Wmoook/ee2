@@ -409,6 +409,9 @@ func tick(input_h: int, input_v: int, space_just: bool, space_held: bool) -> voi
 					_speedX += _poly_hit_normal.x * _w_into
 					_speedY += _poly_hit_normal.y * _w_into
 
+		# Ceiling hit: any curve above player while jumping up — kill upward speed
+		if _poly_any_hit and _poly_hit_normal.y > 0.3 and _speedY < 0:
+			_speedY = 0
 
 	# 7.5 Line collision
 	if not is_god_mode:
