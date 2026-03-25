@@ -54,13 +54,27 @@ func _on_zones_changed() -> void:
 	queue_redraw()
 
 func _try_load_from_disk() -> bool:
-	if not FileAccess.file_exists(DISK_CACHE_DIR + "/center/f0.png"):
-		return false
-	if not FileAccess.file_exists(DISK_CACHE_DIR + "/boundary/f0.png"):
+	# Try loading as Godot resources first (works in exported builds)
+	var test_path: String = DISK_CACHE_DIR + "/center/f0.png"
+	if not ResourceLoader.exists(test_path) and not FileAccess.file_exists(test_path):
 		return false
 	for i in range(CACHE_FRAMES):
-		var c_img: Image = Image.load_from_file(DISK_CACHE_DIR + "/center/f%d.png" % i)
-		var b_img: Image = Image.load_from_file(DISK_CACHE_DIR + "/boundary/f%d.png" % i)
+		var c_path: String = DISK_CACHE_DIR + "/center/f%d.png" % i
+		var b_path: String = DISK_CACHE_DIR + "/boundary/f%d.png" % i
+		var c_img: Image = null
+		var b_img: Image = null
+		# In export: load as resource (imported texture)
+		if ResourceLoader.exists(c_path):
+			var c_tex: Texture2D = load(c_path) as Texture2D
+			var b_tex: Texture2D = load(b_path) as Texture2D
+			if c_tex and b_tex:
+				_center_textures.append(c_tex)
+				_boundary_textures.append(b_tex)
+				continue
+			return false
+		# In editor: load as raw image file
+		c_img = Image.load_from_file(c_path)
+		b_img = Image.load_from_file(b_path)
 		if c_img == null or b_img == null:
 			return false
 		_center_textures.append(ImageTexture.create_from_image(c_img))

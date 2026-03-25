@@ -1,5 +1,5 @@
 extends Control
-## Main menu - Host/Join/Quit flow
+## Main menu - Host/Join/Quit flow with Cloudflare Tunnel support
 
 @onready var name_input: LineEdit = $VBox/NameInput
 @onready var smiley_input: SpinBox = $VBox/SmileyInput
@@ -17,8 +17,8 @@ func _ready() -> void:
 	NetworkManager.connection_succeeded.connect(_on_connected)
 	NetworkManager.connection_failed.connect(_on_connect_failed)
 	NetworkManager.server_disconnected.connect(_on_server_dc)
+	NetworkManager.tunnel_ready.connect(_on_tunnel_ready)
 
-	# Load saved preferences
 	name_input.text = GameState.player_name
 	smiley_input.value = GameState.player_smiley_id
 
@@ -30,42 +30,49 @@ func _on_host() -> void:
 	if err != OK:
 		status_label.text = "Failed to host: %s" % error_string(err)
 		return
-	status_label.text = "Hosting! Loading world..."
-	# Load or build the sample room
+	status_label.text = "Hosting! Starting tunnel..."
 	var load_err := WorldManager.load_from_file("user://world_save.json")
 	if load_err != OK:
 		WorldManager.build_sample_room()
-	# Switch to game scene
 	get_tree().change_scene_to_file("res://scenes/world/game.tscn")
 
 func _on_join() -> void:
 	_apply_settings()
-	var ip := ip_input.text.strip_edges()
-	if ip.is_empty():
-		ip = "127.0.0.1"
+	var address := ip_input.text.strip_edges()
+	if address.is_empty():
+		address = "127.0.0.1"
 	var port := int(port_input.text) if port_input.text.is_valid_int() else 7777
-	status_label.text = "Connecting to %s:%d..." % [ip, port]
-	var err := NetworkManager.join_game(ip, port)
+	# Detect if it's a tunnel URL or direct IP
+	if address.contains("trycloudflare.com") or address.begins_with("wss://"):
+		status_label.text = "Connecting to tunnel..."
+	else:
+		status_label.text = "Connecting to %s:%d..." % [address, port]
+	var err := NetworkManager.join_game(address, port)
 	if err != OK:
 		status_label.text = "Failed to connect: %s" % error_string(err)
 
 func _on_connected() -> void:
 	status_label.text = "Connected! Waiting for world data..."
-	# Disable buttons while loading
 	host_btn.disabled = true
 	join_btn.disabled = true
-	# Wait for world snapshot from server, then switch scene
 	WorldManager.world_loaded.connect(_on_world_received, CONNECT_ONE_SHOT)
 
 func _on_world_received() -> void:
 	status_label.text = "World loaded! Entering..."
 	get_tree().change_scene_to_file("res://scenes/world/game.tscn")
 
+func _on_tunnel_ready(url: String) -> void:
+	status_label.text = "Tunnel: " + url
+
 func _on_connect_failed() -> void:
 	status_label.text = "Connection failed! Is the server running?"
+	host_btn.disabled = false
+	join_btn.disabled = false
 
 func _on_server_dc() -> void:
 	status_label.text = "Disconnected from server."
+	host_btn.disabled = false
+	join_btn.disabled = false
 
 func _on_quit() -> void:
 	get_tree().quit()

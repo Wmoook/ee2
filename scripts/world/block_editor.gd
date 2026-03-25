@@ -112,19 +112,19 @@ func _do_undo() -> void:
 	if _undo_stack.is_empty():
 		return
 	var state: Dictionary = _undo_stack.pop_back()
-	# Restore free blocks
+	# Restore free blocks (bypass network — send full snapshot after)
 	WorldManager.free_blocks.clear()
 	for fb in state["free_blocks"]:
 		WorldManager.free_blocks.append(fb.duplicate())
-	# Clear all grid tiles first
+	# Clear all grid tiles
 	for y in range(WorldManager.world_height):
 		for x in range(1, WorldManager.world_width - 1):
 			if y > 0 and y < WorldManager.world_height - 1:
-				WorldManager.net_set_tile(x, y, 0)
+				WorldManager.set_fg_tile(x, y, 0)
 				WorldManager.set_rotation(x, y, 0)
 	# Restore saved tiles
 	for t in state["tiles"]:
-		WorldManager.net_set_tile(t.x, t.y, t.id)
+		WorldManager.set_fg_tile(t.x, t.y, t.id)
 		WorldManager.set_rotation(t.x, t.y, t.rot)
 	# Restore polylines
 	if state.has("polylines"):
@@ -134,6 +134,11 @@ func _do_undo() -> void:
 	# Restore gravity zones
 	if state.has("gravity_zones"):
 		WorldManager.gravity_zones.restore_zones(state["gravity_zones"])
+	# Send full world snapshot to all peers (much faster than syncing each tile)
+	if NetworkManager._peer != null:
+		for pid in NetworkManager.players:
+			if pid != multiplayer.get_unique_id():
+				WorldManager.send_world_to_peer(pid)
 	# Restore align state
 	if state.has("align_angle"):
 		_align_angle = state["align_angle"]
@@ -396,9 +401,9 @@ func _input(event: InputEvent) -> void:
 				var bid: int = WorldManager.get_tile(t.x, t.y)
 				if bid != 0:
 					var rot_deg: int = WorldManager.get_rotation(t.x, t.y)
-					WorldManager.set_tile(t.x, t.y, 0)
+					WorldManager.net_set_tile(t.x, t.y, 0)
 					var fb: Dictionary = {"pos": Vector2(t.x * 16, t.y * 16), "id": bid, "rotation": float(rot_deg), "flip_h": true}
-					WorldManager.free_blocks.append(fb)
+					WorldManager.net_add_free_block(fb)
 					_align_sel_indices.append(WorldManager.free_blocks.size() - 1)
 					_align_has_sel = true
 			get_viewport().set_input_as_handled()
@@ -449,7 +454,7 @@ func _input(event: InputEvent) -> void:
 				for del_si in _align_sel_indices:
 					if del_si < WorldManager.free_blocks.size():
 						var del_fb: Dictionary = WorldManager.free_blocks[del_si]
-						WorldManager.remove_polyline_near(del_fb.pos + Vector2(8, 8), 20.0)
+						WorldManager.net_remove_polyline_near(del_fb.pos + Vector2(8, 8), 20.0)
 				_delete_aligned_selection()
 			else:
 				_clear_selection()
@@ -694,7 +699,7 @@ func _input(event: InputEvent) -> void:
 				if _pgbid != 0 and _pgt.x > 0 and _pgt.y > 0 and _pgt.x < WorldManager.world_width - 1 and _pgt.y < WorldManager.world_height - 1:
 					var _pgrot: float = float(WorldManager.get_rotation(_pgt.x, _pgt.y))
 					var _pgpos: Vector2 = Vector2(_pgt.x * 16.0, _pgt.y * 16.0)
-					WorldManager.free_blocks.append({"pos": _pgpos, "id": _pgbid, "rotation": _pgrot})
+					WorldManager.net_add_free_block({"pos": _pgpos, "id": _pgbid, "rotation": _pgrot})
 					WorldManager.net_set_tile(_pgt.x, _pgt.y, 0)
 					WorldManager.set_rotation(_pgt.x, _pgt.y, 0)
 					_pfb_idx = WorldManager.free_blocks.size() - 1
@@ -769,7 +774,7 @@ func _input(event: InputEvent) -> void:
 						var _bloc: Vector2 = (_bcenter - _align_origin).rotated(_lift_inv) / 16.0
 						if _bloc.x >= _sel_mn.x and _bloc.x <= _sel_mx.x and _bloc.y >= _sel_mn.y and _bloc.y <= _sel_mx.y:
 							var _brot: float = float(WorldManager.get_rotation(_tx, _ty))
-							WorldManager.free_blocks.append({"pos": _bpos, "id": _bid, "rotation": _brot})
+							WorldManager.net_add_free_block({"pos": _bpos, "id": _bid, "rotation": _brot})
 							WorldManager.net_set_tile(_tx, _ty, 0)
 							WorldManager.set_rotation(_tx, _ty, 0)
 			var _inv_ar: float = deg_to_rad(-_align_angle)
@@ -854,7 +859,7 @@ func _input(event: InputEvent) -> void:
 							exists = true
 							break
 					if not exists:
-						WorldManager.free_blocks.append({"pos": lpos, "id": GameState.selected_block_id, "rotation": _align_angle})
+						WorldManager.net_add_free_block({"pos": lpos, "id": GameState.selected_block_id, "rotation": _align_angle})
 				queue_redraw()
 				return
 
@@ -895,7 +900,7 @@ func _input(event: InputEvent) -> void:
 					var new_fb: Dictionary = {"pos": ppos, "id": GameState.selected_block_id, "rotation": _align_angle}
 					if is_bg:
 						new_fb["bg"] = true
-					WorldManager.free_blocks.append(new_fb)
+					WorldManager.net_add_free_block(new_fb)
 			_last_align_place = snap_pos
 			queue_redraw()
 		if event.is_action_pressed("remove_block"):
@@ -911,10 +916,10 @@ func _input(event: InputEvent) -> void:
 					best_d = d
 					best_i = i
 			if best_i >= 0:
-				WorldManager.free_blocks.remove_at(best_i)
+				WorldManager.net_remove_free_block(best_i)
 				queue_redraw()
 			# Also try to remove polylines near the click
-			WorldManager.remove_polyline_near(mouse, 16.0)
+			WorldManager.net_remove_polyline_near(mouse, 16.0)
 		if event is InputEventMouseMotion:
 			queue_redraw()
 		return
@@ -973,7 +978,7 @@ func _input(event: InputEvent) -> void:
 				_deselect()
 				var grot: float = float(WorldManager.get_rotation(gt.x, gt.y))
 				var gpos: Vector2 = Vector2(gt.x * 16.0, gt.y * 16.0)
-				WorldManager.free_blocks.append({"pos": gpos, "id": gbid, "rotation": grot})
+				WorldManager.net_add_free_block({"pos": gpos, "id": gbid, "rotation": grot})
 				WorldManager.net_set_tile(gt.x, gt.y, 0)
 				WorldManager.set_rotation(gt.x, gt.y, 0)
 				var new_idx: int = WorldManager.free_blocks.size() - 1
@@ -1300,13 +1305,13 @@ func _process(_delta: float) -> void:
 									push_warning("CURVE_TRUNC CUT at idx=%d new_pts=%d cut_pos=(%.1f,%.1f)" % [_ti, spline_pts.size(), _tcut.x, _tcut.y])
 									break
 								_taccum += _tseg
-						WorldManager.add_polyline(spline_pts, "both", GameState.selected_block_id)
+						WorldManager.net_add_polyline(spline_pts, "both", GameState.selected_block_id)
 						# End cap blocks: centered at endpoints, rotated to tangent
 						# Start cap: direction from point 0 toward point 1
 						var s_dir: Vector2 = (spline_pts[1] - spline_pts[0]).normalized()
 						var s_pos: Vector2 = spline_pts[0] - s_dir * 7.7 - Vector2(8, 8)
 						var s_rot: float = rad_to_deg(atan2(s_dir.y, s_dir.x))
-						WorldManager.free_blocks.append({"pos": s_pos, "id": GameState.selected_block_id, "rotation": s_rot})
+						WorldManager.net_add_free_block({"pos": s_pos, "id": GameState.selected_block_id, "rotation": s_rot})
 						# End cap: spline already truncated to 16px boundary
 						# Use a point 10px+ back for stable direction
 						var e_ref_idx: int = spline_pts.size() - 2
@@ -1331,7 +1336,7 @@ func _process(_delta: float) -> void:
 						if tile_count_from_trunc % 2 == 1:
 							end_fb["flip_h"] = true
 						push_warning("ENDCAP_MIRROR trunc_tiles=%d rd_tiles=%d flip=%s" % [tile_count_from_trunc, int(round(_rd_total / 16.0)), str(end_fb.get("flip_h", false))])
-						WorldManager.free_blocks.append(end_fb)
+						WorldManager.net_add_free_block(end_fb)
 				_curve_points.clear()
 				_curve_preview.clear()
 				_curve_mode = false
@@ -1658,7 +1663,7 @@ func _place_at(t: Vector2i) -> void:
 	if layer == "background":
 		WorldManager.net_set_bg_tile(t.x, t.y, GameState.selected_block_id)
 	else:
-		WorldManager.set_tile(t.x, t.y, GameState.selected_block_id)
+		WorldManager.net_set_tile(t.x, t.y, GameState.selected_block_id)
 
 func _erase_at(t: Vector2i) -> void:
 	if t.x <= 0 or t.x >= WorldManager.world_width - 1: return
@@ -1676,7 +1681,7 @@ func _fill_line(from: Vector2i, to: Vector2i, block_id: int) -> void:
 			WorldManager.net_set_tile(p.x, p.y, 0)
 			WorldManager.net_set_bg_tile(p.x, p.y, 0)
 		else:
-			WorldManager.set_tile(p.x, p.y, block_id)
+			WorldManager.net_set_tile(p.x, p.y, block_id)
 
 func _get_line_points(from: Vector2i, to: Vector2i) -> Array:
 	# Bresenham's line algorithm
@@ -1922,8 +1927,8 @@ func _delete_aligned_selection() -> void:
 		var local: Vector2 = rel.rotated(rad) / 16.0
 		if local.x >= min_x - 0.5 and local.x <= max_x + 0.5 and local.y >= min_y - 0.5 and local.y <= max_y + 0.5:
 			# Also remove polylines near deleted blocks
-			WorldManager.remove_polyline_near(fc, 20.0)
-			WorldManager.free_blocks.remove_at(i)
+			WorldManager.net_remove_polyline_near(fc, 20.0)
+			WorldManager.net_remove_free_block(i)
 		i -= 1
 	_align_has_sel = false
 	queue_redraw()
@@ -1985,9 +1990,9 @@ func _lift_aligned_to_free(center_pt: Vector2) -> void:
 			to_remove.append(si)
 	to_remove.sort()
 	for i in range(to_remove.size() - 1, -1, -1):
-		WorldManager.free_blocks.remove_at(to_remove[i])
+		WorldManager.net_remove_free_block(to_remove[i])
 	for orig in _free_originals:
-		WorldManager.free_blocks.append({"pos": orig.pos, "id": orig.id, "rotation": orig.rot})
+		WorldManager.net_add_free_block({"pos": orig.pos, "id": orig.id, "rotation": orig.rot})
 	# Update indices to match new positions
 	_align_sel_indices.clear()
 	var base: int = WorldManager.free_blocks.size() - _free_originals.size()
@@ -2008,7 +2013,7 @@ func _lift_to_free() -> void:
 			if bid != 0:
 				var pos: Vector2 = Vector2(tx * 16.0, ty * 16.0)
 				_free_originals.append({"pos": pos, "id": bid, "rot": 0.0})
-				WorldManager.free_blocks.append({"pos": pos, "id": bid, "rotation": 0.0})
+				WorldManager.net_add_free_block({"pos": pos, "id": bid, "rotation": 0.0})
 				WorldManager.net_set_tile(tx, ty, 0)
 				WorldManager.set_rotation(tx, ty, 0)
 	# Also grab existing free blocks within selection area
@@ -2029,11 +2034,11 @@ func _lift_to_free() -> void:
 				to_remove.append(i)
 	# Remove grabbed free blocks (they'll be re-added by _rotate_free_blocks)
 	for i in range(to_remove.size() - 1, -1, -1):
-		WorldManager.free_blocks.remove_at(to_remove[i])
+		WorldManager.net_remove_free_block(to_remove[i])
 	# Re-add them at current positions (rotation 0 relative to group)
 	for orig in _free_originals:
 		if orig.rot != 0.0:
-			WorldManager.free_blocks.append({"pos": orig.pos, "id": orig.id, "rotation": orig.rot})
+			WorldManager.net_add_free_block({"pos": orig.pos, "id": orig.id, "rotation": orig.rot})
 
 func _rotate_free_blocks(angle_deg: float) -> void:
 	var rad: float = deg_to_rad(angle_deg)
@@ -2047,7 +2052,7 @@ func _rotate_free_blocks(angle_deg: float) -> void:
 		var rel: Vector2 = orig.pos + Vector2(8, 8) - _free_center
 		var rotated_pos: Vector2 = rel.rotated(rad)
 		var new_pos: Vector2 = _free_center + rotated_pos - Vector2(8, 8)
-		WorldManager.free_blocks.append({"pos": new_pos, "id": orig.id, "rotation": orig.rot + angle_deg})
+		WorldManager.net_add_free_block({"pos": new_pos, "id": orig.id, "rotation": orig.rot + angle_deg})
 		# 4 corners of this block
 		var c: Vector2 = new_pos + Vector2(8, 8)
 		all_corners.append(c + Vector2(-8, -8).rotated(rad))
@@ -2142,7 +2147,7 @@ func _clear_selection() -> void:
 		var fb: Dictionary = WorldManager.free_blocks[i]
 		var fc: Vector2 = fb.pos + Vector2(8, 8)
 		if sel_rect.has_point(fc):
-			WorldManager.free_blocks.remove_at(i)
+			WorldManager.net_remove_free_block(i)
 		i -= 1
 	_deselect()
 	queue_redraw()
@@ -2167,7 +2172,7 @@ func _snap_aligned_to_grid() -> void:
 			WorldManager.set_rotation(tx, ty, grid_rot)
 			to_remove.append(i)
 	for i in range(to_remove.size() - 1, -1, -1):
-		WorldManager.free_blocks.remove_at(to_remove[i])
+		WorldManager.net_remove_free_block(to_remove[i])
 
 func _deselect() -> void:
 	_has_selection = false

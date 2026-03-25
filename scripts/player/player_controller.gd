@@ -221,13 +221,40 @@ func _physics_process(delta: float) -> void:
 			_visual_pos = _remote_sync.get_interpolated_position(delta)
 			position = Vector2(floor(_visual_pos.x), floor(_visual_pos.y))
 			if _smiley_sprite:
-				# Apply animation frame texture
 				if _use_anim_sprite and _anim_textures.size() >= 3:
 					var af: int = clampi(_remote_sync.anim_frame, 0, _anim_textures.size() - 1)
 					_smiley_sprite.texture = _anim_textures[af]
 				_smiley_sprite.flip_h = _remote_sync.flip_h
 				_smiley_sprite.rotation = _remote_sync.rotation
 				_smiley_sprite.modulate = Color(0.6, 0.8, 1.0, 0.5) if _remote_sync.is_god else Color.WHITE
+			# Generate fire trail for remote player based on their speed
+			if _use_anim_sprite and not _remote_sync.is_god:
+				var r_spd: Vector2 = _remote_sync.speed
+				var r_len: float = r_spd.length()
+				if r_len > 2.0:
+					var r_center: Vector2 = _visual_pos + Vector2(8, 8)
+					var r_dir: Vector2 = -r_spd.normalized()
+					if _prev_fire_pos.distance_to(r_center) > 64:
+						_prev_fire_pos = r_center
+					var r_move: float = r_center.distance_to(_prev_fire_pos)
+					var r_steps: int = maxi(1, int(r_move / 2.0))
+					var r_per: int = maxi(2, int(8.0 / r_steps))
+					for r_step in range(r_steps):
+						var r_lerp_t: float = float(r_step) / float(r_steps)
+						var r_spawn: Vector2 = _prev_fire_pos.lerp(r_center, r_lerp_t)
+						for _ri in range(r_per):
+							var r_angle: float = randf_range(-0.9, 0.9)
+							var r_sdir: Vector2 = r_dir.rotated(r_angle)
+							_fire_particles.append({
+								"wpos": r_spawn + r_sdir * randf_range(3, 7),
+								"vel": r_spd * randf_range(0.3, 0.6) + r_sdir * randf_range(5, 15),
+								"life": randf_range(0.06, 0.18),
+								"max_life": 0.18,
+								"size": 1,
+							})
+					_prev_fire_pos = r_center
+					if _fire_particles.size() > 2000:
+						_fire_particles.resize(2000)
 		return
 
 	# Pre-tick: valley jump from smiley flip detection
@@ -303,12 +330,29 @@ func _physics_process(delta: float) -> void:
 		var af: int = _anim_frame
 		var fh: bool = _smiley_sprite.flip_h if _smiley_sprite else false
 		var rot: float = _smiley_sprite.rotation if _smiley_sprite else 0.0
-		_broadcast_state.rpc({
+		var _bdata: Dictionary = {
 			"x": physics.get_pixel_x(), "y": physics.get_pixel_y(),
 			"sx": physics._speedX, "sy": physics._speedY,
 			"af": af, "fh": fh, "r": rot,
 			"g": physics.is_god_mode, "gr": physics.is_grounded
-		})
+		}
+		_broadcast_state.rpc(_bdata)
+		# Send tiles via RELIABLE RPC
+		if WorldManager._pending_net_tiles.size() > 0:
+			_broadcast_tiles.rpc(WorldManager._pending_net_tiles.duplicate())
+			WorldManager._pending_net_tiles.clear()
+		# Send free blocks via RELIABLE RPC
+		if WorldManager._pending_net_freeblocks.size() > 0:
+			_broadcast_freeblocks.rpc(WorldManager._pending_net_freeblocks.duplicate())
+			WorldManager._pending_net_freeblocks.clear()
+		# Send polylines via RELIABLE RPC
+		if WorldManager._pending_net_polylines.size() > 0:
+			_broadcast_polylines.rpc(WorldManager._pending_net_polylines.duplicate())
+			WorldManager._pending_net_polylines.clear()
+		# Send deletions via RELIABLE RPC
+		if WorldManager._pending_net_deletions.size() > 0:
+			_broadcast_deletions.rpc(WorldManager._pending_net_deletions.duplicate())
+			WorldManager._pending_net_deletions.clear()
 
 	_phys_pos = Vector2(physics.get_pixel_x(), physics.get_pixel_y())
 	# Visual position: pixel-snap on grid tiles, sub-pixel on curves/slopes
@@ -730,9 +774,8 @@ func _draw() -> void:
 
 @rpc("any_peer", "unreliable_ordered")
 func _broadcast_state(data: Dictionary) -> void:
-	# Received on all peers — find the player node matching the sender
 	var sender: int = multiplayer.get_remote_sender_id()
-	# Route to the correct player's remote sync
+	# Route position to the correct player's remote sync
 	var scene: Node = get_parent()
 	if scene and scene.has_method("_get_player"):
 		var p: Node = scene._get_player(sender)
@@ -740,6 +783,42 @@ func _broadcast_state(data: Dictionary) -> void:
 			p._remote_sync.receive_state(data)
 	elif _remote_sync and peer_id == sender:
 		_remote_sync.receive_state(data)
+
+@rpc("any_peer", "reliable", "call_remote")
+func _broadcast_tiles(tiles: Array) -> void:
+	for tile in tiles:
+		if tile.l == "fg":
+			WorldManager.set_fg_tile(tile.x, tile.y, tile.id)
+		elif tile.l == "bg":
+			WorldManager.set_bg_tile(tile.x, tile.y, tile.id)
+
+@rpc("any_peer", "reliable", "call_remote")
+func _broadcast_freeblocks(blocks: Array) -> void:
+	for b in blocks:
+		WorldManager.free_blocks.append({"pos": Vector2(b.pos_x, b.pos_y), "id": b.id, "rotation": b.rot})
+	WorldManager.tile_changed.emit(0, 0, 0)
+
+@rpc("any_peer", "reliable", "call_remote")
+func _broadcast_polylines(polylines: Array) -> void:
+	for pl in polylines:
+		var pts: PackedVector2Array = PackedVector2Array()
+		for p in pl.pts:
+			pts.append(Vector2(p.x, p.y))
+		WorldManager.add_polyline(pts, pl.side, pl.bid)
+
+@rpc("any_peer", "reliable", "call_remote")
+func _broadcast_deletions(deletions: Array) -> void:
+	for d in deletions:
+		if d.type == "fb":
+			# Find and remove free block by position + id
+			for i in range(WorldManager.free_blocks.size() - 1, -1, -1):
+				var fb: Dictionary = WorldManager.free_blocks[i]
+				if fb.id == d.id and absf(fb.pos.x - d.x) < 2.0 and absf(fb.pos.y - d.y) < 2.0:
+					WorldManager.free_blocks.remove_at(i)
+					break
+		elif d.type == "poly":
+			WorldManager.remove_polyline_near(Vector2(d.x, d.y), d.r)
+	WorldManager.tile_changed.emit(0, 0, 0)
 
 func _input(event: InputEvent) -> void:
 	if not is_local:

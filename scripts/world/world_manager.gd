@@ -33,6 +33,10 @@ var active_group_filter: int = 0  # 0 = All, >0 = specific group ID
 # Each: {points: PackedVector2Array, normals: Array[Vector2], side: String,
 #         bbox_min: Vector2, bbox_max: Vector2}
 var polylines: Array = []
+var _pending_net_tiles: Array = []  # Queued tile edits to send with next position broadcast
+var _pending_net_freeblocks: Array = []  # Queued free block adds
+var _pending_net_polylines: Array = []  # Queued polyline adds
+var _pending_net_deletions: Array = []  # Queued deletions {type, pos_x, pos_y}
 var wedge_pairs: Array = []  # Pre-computed [{a: poly_dict, b: poly_dict}]
 # Global spatial hash: all render edges from all polylines in one hash
 # Key: cell_key -> Array of {edge: PackedVector2Array, si: int, poly_idx: int, rd: Array}
@@ -1519,28 +1523,55 @@ func send_world_to_peer(peer_id: int) -> void:
 	var json: String = JSON.stringify(data)
 	receive_world_snapshot.rpc_id(peer_id, json)
 
+## Network-aware polyline add
+func net_add_polyline(pts: PackedVector2Array, side: String, block_id: int) -> void:
+	add_polyline(pts, side, block_id)
+	# Serialize points for network
+	var pts_arr: Array = []
+	for p in pts:
+		pts_arr.append({"x": p.x, "y": p.y})
+	_pending_net_polylines.append({"pts": pts_arr, "side": side, "bid": block_id})
+
+## Network-aware free block remove by index (syncs by position)
+func net_remove_free_block(idx: int) -> void:
+	if idx >= 0 and idx < free_blocks.size():
+		var fb: Dictionary = free_blocks[idx]
+		_pending_net_deletions.append({"type": "fb", "x": fb.pos.x, "y": fb.pos.y, "id": fb.id})
+		free_blocks.remove_at(idx)
+		tile_changed.emit(0, 0, 0)
+
+## Network-aware polyline remove near position
+func net_remove_polyline_near(pos: Vector2, radius: float) -> void:
+	_pending_net_deletions.append({"type": "poly", "x": pos.x, "y": pos.y, "r": radius})
+	remove_polyline_near(pos, radius)
+
 ## Network-aware bg tile edit
 func net_set_bg_tile(x: int, y: int, block_id: int) -> void:
 	net_set_tile(x, y, block_id, "bg")
 
+## Network-aware free block add
+func net_add_free_block(fb: Dictionary) -> void:
+	free_blocks.append(fb)
+	_pending_net_freeblocks.append({"pos_x": fb.pos.x, "pos_y": fb.pos.y, "id": fb.id, "rot": fb.get("rotation", 0.0)})
+	tile_changed.emit(0, 0, 0)  # Trigger renderer redraw
+
 ## Network-aware tile edit — use instead of direct set_fg_tile/set_bg_tile
 func net_set_tile(x: int, y: int, block_id: int, layer: String = "fg") -> void:
-	if NetworkManager._peer == null:
-		# Singleplayer — just apply directly
-		if layer == "fg":
-			set_fg_tile(x, y, block_id)
-		elif layer == "bg":
-			set_bg_tile(x, y, block_id)
-	elif multiplayer.is_server():
-		# Host — apply locally + broadcast
-		if layer == "fg":
-			set_fg_tile(x, y, block_id)
-		elif layer == "bg":
-			set_bg_tile(x, y, block_id)
-		sync_tile.rpc(x, y, block_id, layer)
-	else:
-		# Client — request from server
-		request_tile_edit.rpc_id(1, x, y, block_id, layer)
+	if layer == "fg":
+		set_fg_tile(x, y, block_id)
+	elif layer == "bg":
+		set_bg_tile(x, y, block_id)
+	_pending_net_tiles.append({"x": x, "y": y, "id": block_id, "l": layer})
+	# Debug log next to exe
+	var _log_name: String = "host_log.txt" if NetworkManager.is_host else "receiver_log.txt"
+	var _log_path: String = OS.get_executable_path().get_base_dir() + "/" + _log_name
+	var f: FileAccess = FileAccess.open(_log_path, FileAccess.READ_WRITE)
+	if f == null:
+		f = FileAccess.open(_log_path, FileAccess.WRITE)
+	if f:
+		f.seek_end()
+		f.store_line("NET_SET_TILE x=%d y=%d id=%d layer=%s queue=%d peer=%s" % [x, y, block_id, layer, _pending_net_tiles.size(), str(NetworkManager._peer)])
+		f.close()
 
 func build_sample_room() -> void:
 	init_empty_world(400, 200)

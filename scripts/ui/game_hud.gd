@@ -74,13 +74,14 @@ func _load_atlas_textures() -> void:
 
 func _build_mode_label() -> void:
 	mode_label = Label.new()
-	mode_label.text = "PLAY MODE"
+	mode_label.text = ""
 	mode_label.position = Vector2(12, 8)
 	mode_label.add_theme_font_size_override("font_size", 16)
 	mode_label.add_theme_color_override("font_color", Color(0.3, 1.0, 0.3))
 	mode_label.add_theme_color_override("font_shadow_color", Color(0, 0, 0, 0.9))
 	mode_label.add_theme_constant_override("shadow_offset_x", 1)
 	mode_label.add_theme_constant_override("shadow_offset_y", 1)
+	mode_label.visible = false
 	add_child(mode_label)
 
 var layer_label: Label
@@ -127,8 +128,8 @@ func _build_help_label() -> void:
 	help_label.add_theme_color_override("font_shadow_color", Color(0, 0, 0, 0.5))
 	help_label.add_theme_constant_override("shadow_offset_x", 1)
 	help_label.add_theme_constant_override("shadow_offset_y", 1)
+	help_label.visible = false
 	add_child(help_label)
-	_update_help_text()
 
 func _build_palette() -> void:
 	# Main palette panel - anchored to bottom of screen

@@ -409,8 +409,8 @@ func tick(input_h: int, input_v: int, space_just: bool, space_held: bool) -> voi
 					_speedX += _poly_hit_normal.x * _w_into
 					_speedY += _poly_hit_normal.y * _w_into
 
-		# Ceiling hit: any curve above player while jumping up — kill upward speed
-		if _poly_any_hit and _poly_hit_normal.y > 0.3 and _speedY < 0:
+		# Ceiling hit: kill upward speed only on TRUE ceiling (against < -0.5 = surface opposes gravity from above)
+		if _poly_any_hit and _poly_hit_against < -0.5 and _speedY < 0 and not is_wedged and _wedge_escape_cooldown <= 0:
 			_speedY = 0
 
 	# 7.5 Line collision
@@ -787,8 +787,12 @@ func tick(input_h: int, input_v: int, space_just: bool, space_held: bool) -> voi
 			_wedge_allow_down = WorldManager.dist_to_nearest_polyline(_pcx, _pcy + _wr2) > _wd_c + 2.0
 			break
 
-	# 9. Jump — if wedged, always allow straight up jump
+	# 9. Jump — if wedged OR stuck between curves, allow straight up jump
 	if is_wedged and space_just:
+		is_grounded = true
+		_surface_normal = Vector2(0, -1)
+		jumpCount = 0
+	elif on_rotated_block and not is_grounded and space_just and purple_pushed:
 		is_grounded = true
 		_surface_normal = Vector2(0, -1)
 		jumpCount = 0

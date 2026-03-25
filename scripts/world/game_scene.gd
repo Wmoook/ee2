@@ -73,6 +73,41 @@ func _setup_scene() -> void:
 	var hud: CanvasLayer = preload("res://scripts/ui/game_hud.gd").new()
 	add_child(hud)
 
+	# Show tunnel URL with copy button when hosting
+	if NetworkManager.is_host:
+		var _tl_canvas: CanvasLayer = CanvasLayer.new()
+		_tl_canvas.layer = 90
+		add_child(_tl_canvas)
+		var _hbox: HBoxContainer = HBoxContainer.new()
+		_hbox.position = Vector2(10, 8)
+		_hbox.add_theme_constant_override("separation", 8)
+		_tl_canvas.add_child(_hbox)
+		var _tunnel_label: Label = Label.new()
+		_tunnel_label.name = "TunnelLabel"
+		_tunnel_label.add_theme_font_size_override("font_size", 13)
+		_tunnel_label.add_theme_color_override("font_color", Color(0.3, 0.9, 1.0))
+		_hbox.add_child(_tunnel_label)
+		var _copy_btn: Button = Button.new()
+		_copy_btn.text = "Copy"
+		_copy_btn.add_theme_font_size_override("font_size", 11)
+		_copy_btn.visible = false
+		_hbox.add_child(_copy_btn)
+		_copy_btn.pressed.connect(func():
+			DisplayServer.clipboard_set(NetworkManager.tunnel_url)
+			_copy_btn.text = "Copied!"
+			await get_tree().create_timer(1.5).timeout
+			_copy_btn.text = "Copy"
+		)
+		if NetworkManager.tunnel_url.length() > 0 and not NetworkManager.tunnel_url.begins_with("Starting"):
+			_tunnel_label.text = "Join URL: " + NetworkManager.tunnel_url
+			_copy_btn.visible = true
+		else:
+			_tunnel_label.text = "Starting tunnel..."
+			NetworkManager.tunnel_ready.connect(func(url: String):
+				_tunnel_label.text = "Join URL: " + url
+				_copy_btn.visible = true
+			)
+
 func _on_world_loaded() -> void:
 	# Client received world snapshot — now spawn players
 	_world_ready = true
@@ -138,5 +173,10 @@ func _input(event: InputEvent) -> void:
 		if event.physical_keycode == KEY_E:
 			GameState.set_edit_mode(not GameState.is_edit_mode)
 			get_viewport().set_input_as_handled()
+		if event.physical_keycode == KEY_ESCAPE:
+			# Save world, disconnect, go back to main menu
+			WorldManager.save_to_file("user://world_save.json")
+			NetworkManager.disconnect_game()
+			get_tree().change_scene_to_file("res://scenes/ui/main_menu.tscn")
 	if event.is_action_pressed("save_world"):
 		WorldManager.save_to_file("user://world_save.json")
