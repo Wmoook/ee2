@@ -33,6 +33,11 @@ var active_group_filter: int = 0  # 0 = All, >0 = specific group ID
 # Each: {points: PackedVector2Array, normals: Array[Vector2], side: String,
 #         bbox_min: Vector2, bbox_max: Vector2}
 var polylines: Array = []
+var wedge_pairs: Array = []  # Pre-computed [{a: poly_dict, b: poly_dict}]
+# Global spatial hash: all render edges from all polylines in one hash
+# Key: cell_key -> Array of {edge: PackedVector2Array, si: int, poly_idx: int, rd: Array}
+var _global_render_hash: Dictionary = {}
+var _global_render_cell: int = 32
 signal polylines_changed()
 
 # Gravity zones (circular areas with inward gravity)
@@ -240,9 +245,13 @@ func add_polyline(points: PackedVector2Array, side: String = "top", block_id: in
 		"render_dists": render_dists,
 		"mesh": mesh,
 		"spatial_hash": _build_spatial_hash(points, 32),
+		"render_top_hash": _build_spatial_hash(render_top, 32),
+		"render_bot_hash": _build_spatial_hash(render_bot, 32),
 		"uv_offset": uv_offset,
 		"from_split": uv_offset != 0.0  # Part of a split — skip mesh truncation
 	})
+	_rebuild_wedge_pairs()
+	_rebuild_global_render_hash()
 	polylines_changed.emit()
 
 func _build_spatial_hash(pts: PackedVector2Array, cell_size: int) -> Dictionary:
@@ -261,6 +270,47 @@ func _build_spatial_hash(pts: PackedVector2Array, cell_size: int) -> Dictionary:
 				hash[key].append(si)
 	hash["cell_size"] = cell_size
 	return hash
+
+func _rebuild_wedge_pairs() -> void:
+	wedge_pairs.clear()
+	var seen: Dictionary = {}
+	for i in range(polylines.size()):
+		var pa: Dictionary = polylines[i]
+		if not pa.get("collision_only", false):
+			continue
+		var pair_idx: int = pa.get("split_pair", -1)
+		if pair_idx < 0 or pair_idx >= polylines.size():
+			continue
+		var lo: int = mini(i, pair_idx)
+		var hi: int = maxi(i, pair_idx)
+		var key: int = lo * 10000 + hi
+		if seen.has(key):
+			continue
+		seen[key] = true
+		wedge_pairs.append({"a": polylines[lo], "b": polylines[hi]})
+
+func _rebuild_global_render_hash() -> void:
+	_global_render_hash.clear()
+	var cs: int = _global_render_cell
+	for pi in range(polylines.size()):
+		var poly: Dictionary = polylines[pi]
+		if poly.get("render_only", false):
+			continue
+		var rd: Array = poly.get("render_dists", [])
+		for edge in [poly.render_top, poly.render_bot]:
+			for si in range(edge.size() - 1):
+				var sa: Vector2 = edge[si]
+				var sb: Vector2 = edge[si + 1]
+				var ax: int = int(floor(sa.x / cs))
+				var ay: int = int(floor(sa.y / cs))
+				var bx: int = int(floor(sb.x / cs))
+				var by: int = int(floor(sb.y / cs))
+				for gx in range(mini(ax, bx), maxi(ax, bx) + 1):
+					for gy in range(mini(ay, by), maxi(ay, by) + 1):
+						var key: int = gx * 10000 + gy
+						if not _global_render_hash.has(key):
+							_global_render_hash[key] = []
+						_global_render_hash[key].append([edge, si, pi, rd])
 
 func check_polyline_collision(px: float, py: float, pw: float, ph: float, prefer_normal: Vector2 = Vector2.ZERO, stick_poly: int = -1, exclude_poly: int = -1) -> Dictionary:
 	## Check if axis-aligned box (px,py,pw,ph) collides with any polyline.
@@ -285,7 +335,7 @@ func check_polyline_collision(px: float, py: float, pw: float, ph: float, prefer
 			continue
 		var pts: PackedVector2Array = poly.points
 		var norms: Array = poly.normals
-		# Find nearest segment + detect self-intersection branches (brute force within bbox)
+		# Find nearest segment via spatial hash (O(1) instead of O(N))
 		var closest_seg: int = -1
 		var closest_t: float = 0.0
 		var closest_dist: float = 999999.0
@@ -293,28 +343,42 @@ func check_polyline_collision(px: float, py: float, pw: float, ph: float, prefer
 		var second_t: float = 0.0
 		var second_dist: float = 999999.0
 		var eff_radius: float = 8.0
-		var block_half: float = 8.35  # Match render edge (purple line) exactly
-		for si in range(pts.size() - 1):
-			var sa: Vector2 = pts[si]
-			var sb: Vector2 = pts[si + 1]
-			var ab: Vector2 = sb - sa
-			var ap: Vector2 = Vector2(pcx, pcy) - sa
-			var ab_dot: float = ab.dot(ab)
-			var seg_t: float = clampf(ap.dot(ab) / maxf(ab_dot, 0.001), 0.0, 1.0)
-			var on_pt: Vector2 = sa + ab * seg_t
-			var dist: float = Vector2(pcx, pcy).distance_to(on_pt)
-			if dist < closest_dist:
-				if closest_seg >= 0 and abs(si - closest_seg) > 20:
-					second_seg = closest_seg
-					second_t = closest_t
-					second_dist = closest_dist
-				closest_dist = dist
-				closest_seg = si
-				closest_t = seg_t
-			elif dist < second_dist and closest_seg >= 0 and abs(si - closest_seg) > 20:
-				second_dist = dist
-				second_seg = si
-				second_t = seg_t
+		var block_half: float = 8.35
+		var _shash: Dictionary = poly.get("spatial_hash", {})
+		var _cs: int = _shash.get("cell_size", 32)
+		var _sgx: int = int(floor(pcx / _cs))
+		var _sgy: int = int(floor(pcy / _cs))
+		var _checked: Dictionary = {}
+		var _pvec: Vector2 = Vector2(pcx, pcy)
+		for _sdx in range(-2, 3):
+			for _sdy in range(-2, 3):
+				var _skey: int = (_sgx + _sdx) * 10000 + (_sgy + _sdy)
+				if not _shash.has(_skey):
+					continue
+				for si in _shash[_skey]:
+					if _checked.has(si):
+						continue
+					_checked[si] = true
+					var sa: Vector2 = pts[si]
+					var sb: Vector2 = pts[si + 1]
+					var ab: Vector2 = sb - sa
+					var ap: Vector2 = _pvec - sa
+					var ab_dot: float = ab.dot(ab)
+					var seg_t: float = clampf(ap.dot(ab) / maxf(ab_dot, 0.001), 0.0, 1.0)
+					var on_pt: Vector2 = sa + ab * seg_t
+					var dist: float = _pvec.distance_to(on_pt)
+					if dist < closest_dist:
+						if closest_seg >= 0 and abs(si - closest_seg) > 20:
+							second_seg = closest_seg
+							second_t = closest_t
+							second_dist = closest_dist
+						closest_dist = dist
+						closest_seg = si
+						closest_t = seg_t
+					elif dist < second_dist and closest_seg >= 0 and abs(si - closest_seg) > 20:
+						second_dist = dist
+						second_seg = si
+						second_t = seg_t
 		if closest_seg < 0:
 			continue
 		# Self-intersection guard: if nearest segment push opposes prefer_normal
@@ -653,51 +717,33 @@ func dist_to_polyline_idx(poly_idx: int, cx: float, cy: float) -> float:
 	return best_dist
 
 func get_purple_line_push(cx: float, cy: float) -> Vector2:
-	## If player center is within 7px of ANY purple line segment, return push to 9px away.
-	## Uses spatial hash for fast lookup — only checks nearby segments.
+	## Uses GLOBAL render hash — one lookup covers ALL polylines.
 	var thresh: float = 7.0
 	var push_to: float = 9.0
 	var best_dist: float = 99999.0
 	var best_push: Vector2 = Vector2.ZERO
-	for poly in polylines:
-		if poly.get("render_only", false):
-			continue
-		var bb: Vector2 = poly.bbox_min
-		var bx: Vector2 = poly.bbox_max
-		if cx < bb.x - 10 or cx > bx.x + 10 or cy < bb.y - 10 or cy > bx.y + 10:
-			continue
-		# Use spatial hash to find only nearby segments
-		var shash: Dictionary = poly.get("spatial_hash", {})
-		var cs: int = shash.get("cell_size", 32)
-		var gx: int = int(floor(cx / cs))
-		var gy: int = int(floor(cy / cs))
-		var checked: Dictionary = {}
-		var rt: PackedVector2Array = poly.render_top
-		var rb: PackedVector2Array = poly.render_bot
-		for dx in range(-1, 2):
-			for dy in range(-1, 2):
-				var key: int = (gx + dx) * 10000 + (gy + dy)
-				if not shash.has(key):
-					continue
-				for si in shash[key]:
-					if checked.has(si):
-						continue
-					checked[si] = true
-					if si >= rt.size() - 1:
-						continue
-					# Check render_top at this segment index
-					for edge in [rt, rb]:
-						var sa: Vector2 = edge[si]
-						var sb: Vector2 = edge[si + 1]
-						var ab: Vector2 = sb - sa
-						var ap: Vector2 = Vector2(cx, cy) - sa
-						var t: float = clampf(ap.dot(ab) / maxf(ab.dot(ab), 0.001), 0.0, 1.0)
-						var on_pt: Vector2 = sa + ab * t
-						var to_player: Vector2 = Vector2(cx, cy) - on_pt
-						var dist: float = to_player.length()
-						if dist < thresh and dist < best_dist and dist > 0.01:
-							best_dist = dist
-							best_push = to_player.normalized() * (push_to - dist)
+	var cs: int = _global_render_cell
+	var gx: int = int(floor(cx / cs))
+	var gy: int = int(floor(cy / cs))
+	for dx in range(-1, 2):
+		for dy in range(-1, 2):
+			var key: int = (gx + dx) * 10000 + (gy + dy)
+			if not _global_render_hash.has(key):
+				continue
+			for entry in _global_render_hash[key]:
+				var edge: PackedVector2Array = entry[0]
+				var si: int = entry[1]
+				var sa: Vector2 = edge[si]
+				var sb: Vector2 = edge[si + 1]
+				var ab: Vector2 = sb - sa
+				var ap: Vector2 = Vector2(cx, cy) - sa
+				var t: float = clampf(ap.dot(ab) / maxf(ab.dot(ab), 0.001), 0.0, 1.0)
+				var on_pt: Vector2 = sa + ab * t
+				var to_player: Vector2 = Vector2(cx, cy) - on_pt
+				var dist: float = to_player.length()
+				if dist < thresh and dist < best_dist and dist > 0.01:
+					best_dist = dist
+					best_push = to_player.normalized() * (push_to - dist)
 	return best_push
 
 func dist_to_nearest_polyline(cx: float, cy: float, exclude_poly: int = -1) -> float:
@@ -894,72 +940,39 @@ func intercept_polyline_tunneling(pre_cx: float, pre_cy: float, post_cx: float, 
 	return result
 
 func does_step_cross_render_edge(x1: float, y1: float, x2: float, y2: float, stick_poly: int = -1, stick_arc: float = -1.0) -> bool:
-	## Check if step crosses any render_top or render_bot edge of ANY polyline.
-	## These are the VISUAL sprite edges (the purple lines). IMPASSABLE.
-	## For stick poly: only skip segments near the riding position (arc < 40px).
-	var _pidx: int = -1
-	for poly in polylines:
-		_pidx += 1
-		if poly.get("render_only", false):
-			continue
-		var bb_min: Vector2 = poly.bbox_min
-		var bb_max: Vector2 = poly.bbox_max
-		if maxf(x1, x2) < bb_min.x - 10 or minf(x1, x2) > bb_max.x + 10:
-			continue
-		if maxf(y1, y2) < bb_min.y - 10 or minf(y1, y2) > bb_max.y + 10:
-			continue
-		var is_stick: bool = (_pidx == stick_poly)
-		var rd: Array = poly.get("render_dists", [])
-		var step_min_x: float = minf(x1, x2)
-		var step_max_x: float = maxf(x1, x2)
-		var step_min_y: float = minf(y1, y2)
-		var step_max_y: float = maxf(y1, y2)
-		var d1x: float = x2 - x1
-		var d1y: float = y2 - y1
-		# Check render_top edges
-		var rt: PackedVector2Array = poly.render_top
-		for si in range(rt.size() - 1):
-			if is_stick and stick_arc >= 0 and si < rd.size() and absf(rd[si] - stick_arc) < 40.0:
+	## Uses GLOBAL render hash — one lookup covers ALL polylines. No per-poly iteration.
+	var mid_x: float = (x1 + x2) * 0.5
+	var mid_y: float = (y1 + y2) * 0.5
+	var d1x: float = x2 - x1
+	var d1y: float = y2 - y1
+	var cs: int = _global_render_cell
+	var gx: int = int(floor(mid_x / cs))
+	var gy: int = int(floor(mid_y / cs))
+	for dx in range(-1, 2):
+		for dy in range(-1, 2):
+			var key: int = (gx + dx) * 10000 + (gy + dy)
+			if not _global_render_hash.has(key):
 				continue
-			var sa: Vector2 = rt[si]
-			var sb: Vector2 = rt[si + 1]
-			if step_max_x < minf(sa.x, sb.x) - 1 or step_min_x > maxf(sa.x, sb.x) + 1:
-				continue
-			if step_max_y < minf(sa.y, sb.y) - 1 or step_min_y > maxf(sa.y, sb.y) + 1:
-				continue
-			var d2x: float = sb.x - sa.x
-			var d2y: float = sb.y - sa.y
-			var denom: float = d1x * d2y - d1y * d2x
-			if absf(denom) < 0.0001:
-				continue
-			var d3x: float = sa.x - x1
-			var d3y: float = sa.y - y1
-			var t: float = (d3x * d2y - d3y * d2x) / denom
-			var u: float = (d3x * d1y - d3y * d1x) / denom
-			if t >= 0.0 and t <= 1.0 and u >= 0.0 and u <= 1.0:
-				return true
-		# Check render_bot edges
-		var rb: PackedVector2Array = poly.render_bot
-		for si in range(rb.size() - 1):
-			if is_stick and stick_arc >= 0 and si < rd.size() and absf(rd[si] - stick_arc) < 40.0:
-				continue
-			var sa: Vector2 = rb[si]
-			var sb: Vector2 = rb[si + 1]
-			if step_max_x < minf(sa.x, sb.x) - 1 or step_min_x > maxf(sa.x, sb.x) + 1:
-				continue
-			if step_max_y < minf(sa.y, sb.y) - 1 or step_min_y > maxf(sa.y, sb.y) + 1:
-				continue
-			var d2x: float = sb.x - sa.x
-			var d2y: float = sb.y - sa.y
-			var denom: float = d1x * d2y - d1y * d2x
-			if absf(denom) < 0.0001:
-				continue
-			var d3x: float = sa.x - x1
-			var d3y: float = sa.y - y1
-			var t: float = (d3x * d2y - d3y * d2x) / denom
-			var u: float = (d3x * d1y - d3y * d1x) / denom
-			if t >= 0.0 and t <= 1.0 and u >= 0.0 and u <= 1.0:
-				return true
+			for entry in _global_render_hash[key]:
+				var edge: PackedVector2Array = entry[0]
+				var si: int = entry[1]
+				var pi: int = entry[2]
+				var rd: Array = entry[3]
+				if pi == stick_poly and stick_arc >= 0 and si < rd.size() and absf(rd[si] - stick_arc) < 40.0:
+					continue
+				var sa: Vector2 = edge[si]
+				var sb: Vector2 = edge[si + 1]
+				var d2x: float = sb.x - sa.x
+				var d2y: float = sb.y - sa.y
+				var denom: float = d1x * d2y - d1y * d2x
+				if absf(denom) < 0.0001:
+					continue
+				var d3x: float = sa.x - x1
+				var d3y: float = sa.y - y1
+				var t: float = (d3x * d2y - d3y * d2x) / denom
+				var u: float = (d3x * d1y - d3y * d1x) / denom
+				if t >= 0.0 and t <= 1.0 and u >= 0.0 and u <= 1.0:
+					return true
 	return false
 
 func does_step_cross_collision_only(x1: float, y1: float, x2: float, y2: float, exclude_poly: int = -1) -> Dictionary:

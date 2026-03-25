@@ -1835,8 +1835,8 @@ func _compute_spline_blocks(points: Array, mouse_pos: Vector2) -> Array:
 		# For smooth curves: use the actual points as control points
 		# and midpoints between consecutive points as segment endpoints
 		pass
-	# Simpler approach: Catmull-Rom style
-	# Insert virtual start/end points for smooth ends
+	# Catmull-Rom spline with O(1) dedup via grid hash
+	var _spline_dedup: Dictionary = {}
 	var cp: Array = [pts[0] - (pts[1] - pts[0])]
 	cp.append_array(pts)
 	cp.append(pts[-1] + (pts[-1] - pts[-2]))
@@ -1857,22 +1857,15 @@ func _compute_spline_blocks(points: Array, mouse_pos: Vector2) -> Array:
 			var tan: Vector2 = 0.5 * ((-p0 + p2) + (4.0 * p0 - 10.0 * p1 + 8.0 * p2 - 2.0 * p3) * t + (-3.0 * p0 + 9.0 * p1 - 9.0 * p2 + 3.0 * p3) * tt)
 			var angle: float = rad_to_deg(atan2(tan.y, tan.x))
 			var block_pos: Vector2 = pos - Vector2(8, 8)
-			var skip: bool = false
-			for existing in result:
-				if existing.pos.distance_to(block_pos) < 8.0:
-					skip = true
-					break
-			if not skip:
+			var gk: int = int(floor(block_pos.x / 16.0)) * 10000 + int(floor(block_pos.y / 16.0))
+			if not _spline_dedup.has(gk):
+				_spline_dedup[gk] = true
 				result.append({"pos": block_pos, "rot": angle, "curve": true})
 	# Add final point
 	if result.size() > 0:
 		var last_pt: Vector2 = pts[-1] - Vector2(8, 8)
-		var skip2: bool = false
-		for existing in result:
-			if existing.pos.distance_to(last_pt) < 8.0:
-				skip2 = true
-				break
-		if not skip2:
+		var lk: int = int(floor(last_pt.x / 16.0)) * 10000 + int(floor(last_pt.y / 16.0))
+		if not _spline_dedup.has(lk):
 			var final_tan: Vector2 = pts[-1] - pts[-2]
 			result.append({"pos": last_pt, "rot": rad_to_deg(atan2(final_tan.y, final_tan.x)), "curve": true})
 	return result

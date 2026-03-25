@@ -279,11 +279,13 @@ func tick(input_h: int, input_v: int, space_just: bool, space_held: bool) -> voi
 	var _pre_step_y: float = y
 	_step_position()
 
-	# 7.1 CCD backup: centerline crossing check when airborne
-	if not is_god_mode and _stick_poly_idx < 0 and WorldManager.polylines.size() > 0:
-		var _ccd_center: bool = WorldManager.does_step_cross_collision_only(
+	# 7.1 CCD backup: render edge check ALWAYS (exclude stick), centerline only when airborne
+	if not is_god_mode and WorldManager.polylines.size() > 0:
+		var _ccd_edge: bool = WorldManager.does_step_cross_render_edge(
+			_pre_step_x + 8, _pre_step_y + 8, x + 8, y + 8, _stick_poly_idx, _stick_arc_pos)
+		var _ccd_center: bool = _stick_poly_idx < 0 and WorldManager.does_step_cross_collision_only(
 			_pre_step_x + 8, _pre_step_y + 8, x + 8, y + 8, -1).crossed
-		if _ccd_center:
+		if _ccd_edge or _ccd_center:
 			x = _pre_step_x
 			y = _pre_step_y
 			_speedX = 0
@@ -700,10 +702,10 @@ func tick(input_h: int, input_v: int, space_just: bool, space_held: bool) -> voi
 	# 8.5 Dual-arm wedge detection: player sprite edge touches both split curve arms
 	if _wedge_escape_cooldown > 0:
 		_wedge_escape_cooldown -= 1
-	if not is_god_mode and not is_wedged and _wedge_escape_cooldown <= 0 and on_rotated_block:
+	if not is_god_mode and not is_wedged and _wedge_escape_cooldown <= 0:
 		var _pcx: float = x + 8.0
 		var _pcy: float = y + 8.0
-		var _wedge_threshold: float = 16.35
+		var _wedge_threshold: float = 16.35  # 8px half-sprite + 8.35px curve render edge
 		# Find consecutive collision_only pairs in polylines
 		var _polys: Array = WorldManager.polylines
 		var _pi: int = 0
@@ -793,7 +795,7 @@ func tick(input_h: int, input_v: int, space_just: bool, space_held: bool) -> voi
 	# If player center is within 7px of any purple line, push to 8px away (1px buffer).
 	# Runs every tick. No exclusions. Keeps player 1px outside purple lines at all times.
 	purple_pushed = false
-	if not is_god_mode and WorldManager.polylines.size() > 0:
+	if not is_god_mode:
 		var _pp_push: Vector2 = WorldManager.get_purple_line_push(x + 8, y + 8)
 		if _pp_push.length() > 0.01:
 			x += _pp_push.x
@@ -995,8 +997,9 @@ func _step_position() -> void:
 					x += currentSX; currentSX = 0
 			rx = fmod(x, 1.0)
 			if rx < 0: rx += 1.0
+			var _cx_edge: bool = not is_god_mode and WorldManager.does_step_cross_render_edge(ox + 8, oy + 8, x + 8, y + 8, _stick_poly_idx, _stick_arc_pos)
 			var _cx_center: bool = not is_god_mode and _stick_poly_idx < 0 and _poly_cross_cooldown <= 0 and WorldManager.does_step_cross_collision_only(ox + 8, oy + 8, x + 8, y + 8, -1).crossed
-			if _collides_px(x, y) or _cx_center:
+			if _collides_px(x, y) or _cx_edge or _cx_center:
 				x = ox; _speedX = 0; currentSX = osx; donex = true
 
 		# Step Y
@@ -1013,13 +1016,16 @@ func _step_position() -> void:
 					y += currentSY; currentSY = 0
 			ry = fmod(y, 1.0)
 			if ry < 0: ry += 1.0
+			var _cy_edge: bool = not is_god_mode and WorldManager.does_step_cross_render_edge(x + 8, oy + 8, x + 8, y + 8, _stick_poly_idx, _stick_arc_pos)
 			var _cy_center: bool = not is_god_mode and _stick_poly_idx < 0 and _poly_cross_cooldown <= 0 and WorldManager.does_step_cross_collision_only(x + 8, oy + 8, x + 8, y + 8, -1).crossed
-			if _collides_px(x, y) or _cy_center:
+			if _collides_px(x, y) or _cy_edge or _cy_center:
 				y = oy; _speedY = 0; currentSY = osy; doney = true
 
-		# Combined diagonal crossing check — centerline only when airborne
-		if not is_god_mode and _stick_poly_idx < 0 and _poly_cross_cooldown <= 0 and (x != ox or y != oy):
-			if WorldManager.does_step_cross_collision_only(ox + 8, oy + 8, x + 8, y + 8, -1).crossed:
+		# Combined diagonal crossing check — render edges ALWAYS checked, centerline only when airborne
+		if not is_god_mode and (x != ox or y != oy):
+			var _cd_edge: bool = WorldManager.does_step_cross_render_edge(ox + 8, oy + 8, x + 8, y + 8, _stick_poly_idx, _stick_arc_pos)
+			var _cd_center: bool = _stick_poly_idx < 0 and _poly_cross_cooldown <= 0 and WorldManager.does_step_cross_collision_only(ox + 8, oy + 8, x + 8, y + 8, -1).crossed
+			if _cd_edge or _cd_center:
 				x = ox; _speedX = 0; donex = true
 				y = oy; _speedY = 0; doney = true
 
