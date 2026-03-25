@@ -653,27 +653,51 @@ func dist_to_polyline_idx(poly_idx: int, cx: float, cy: float) -> float:
 	return best_dist
 
 func get_purple_line_push(cx: float, cy: float) -> Vector2:
-	## If player center is within 7px of ANY purple line segment, return push to 8px away.
-	## Returns Vector2.ZERO if no violation.
+	## If player center is within 7px of ANY purple line segment, return push to 9px away.
+	## Uses spatial hash for fast lookup — only checks nearby segments.
 	var thresh: float = 7.0
-	var push_to: float = 9.0  # Push to 9px = 2px buffer outside threshold
+	var push_to: float = 9.0
 	var best_dist: float = 99999.0
 	var best_push: Vector2 = Vector2.ZERO
-	var pos: Vector2 = Vector2(cx, cy)
 	for poly in polylines:
 		if poly.get("render_only", false):
 			continue
-		for edge in [poly.render_top, poly.render_bot]:
-			for si in range(edge.size() - 1):
-				var ab: Vector2 = edge[si + 1] - edge[si]
-				var ap: Vector2 = pos - edge[si]
-				var t: float = clampf(ap.dot(ab) / maxf(ab.dot(ab), 0.001), 0.0, 1.0)
-				var on_pt: Vector2 = edge[si] + ab * t
-				var to_player: Vector2 = pos - on_pt
-				var dist: float = to_player.length()
-				if dist < thresh and dist < best_dist and dist > 0.01:
-					best_dist = dist
-					best_push = to_player.normalized() * (push_to - dist)
+		var bb: Vector2 = poly.bbox_min
+		var bx: Vector2 = poly.bbox_max
+		if cx < bb.x - 10 or cx > bx.x + 10 or cy < bb.y - 10 or cy > bx.y + 10:
+			continue
+		# Use spatial hash to find only nearby segments
+		var shash: Dictionary = poly.get("spatial_hash", {})
+		var cs: int = shash.get("cell_size", 32)
+		var gx: int = int(floor(cx / cs))
+		var gy: int = int(floor(cy / cs))
+		var checked: Dictionary = {}
+		var rt: PackedVector2Array = poly.render_top
+		var rb: PackedVector2Array = poly.render_bot
+		for dx in range(-1, 2):
+			for dy in range(-1, 2):
+				var key: int = (gx + dx) * 10000 + (gy + dy)
+				if not shash.has(key):
+					continue
+				for si in shash[key]:
+					if checked.has(si):
+						continue
+					checked[si] = true
+					if si >= rt.size() - 1:
+						continue
+					# Check render_top at this segment index
+					for edge in [rt, rb]:
+						var sa: Vector2 = edge[si]
+						var sb: Vector2 = edge[si + 1]
+						var ab: Vector2 = sb - sa
+						var ap: Vector2 = Vector2(cx, cy) - sa
+						var t: float = clampf(ap.dot(ab) / maxf(ab.dot(ab), 0.001), 0.0, 1.0)
+						var on_pt: Vector2 = sa + ab * t
+						var to_player: Vector2 = Vector2(cx, cy) - on_pt
+						var dist: float = to_player.length()
+						if dist < thresh and dist < best_dist and dist > 0.01:
+							best_dist = dist
+							best_push = to_player.normalized() * (push_to - dist)
 	return best_push
 
 func dist_to_nearest_polyline(cx: float, cy: float, exclude_poly: int = -1) -> float:
@@ -886,6 +910,12 @@ func does_step_cross_render_edge(x1: float, y1: float, x2: float, y2: float, sti
 			continue
 		var is_stick: bool = (_pidx == stick_poly)
 		var rd: Array = poly.get("render_dists", [])
+		var step_min_x: float = minf(x1, x2)
+		var step_max_x: float = maxf(x1, x2)
+		var step_min_y: float = minf(y1, y2)
+		var step_max_y: float = maxf(y1, y2)
+		var d1x: float = x2 - x1
+		var d1y: float = y2 - y1
 		# Check render_top edges
 		var rt: PackedVector2Array = poly.render_top
 		for si in range(rt.size() - 1):
@@ -893,8 +923,10 @@ func does_step_cross_render_edge(x1: float, y1: float, x2: float, y2: float, sti
 				continue
 			var sa: Vector2 = rt[si]
 			var sb: Vector2 = rt[si + 1]
-			var d1x: float = x2 - x1
-			var d1y: float = y2 - y1
+			if step_max_x < minf(sa.x, sb.x) - 1 or step_min_x > maxf(sa.x, sb.x) + 1:
+				continue
+			if step_max_y < minf(sa.y, sb.y) - 1 or step_min_y > maxf(sa.y, sb.y) + 1:
+				continue
 			var d2x: float = sb.x - sa.x
 			var d2y: float = sb.y - sa.y
 			var denom: float = d1x * d2y - d1y * d2x
@@ -913,8 +945,10 @@ func does_step_cross_render_edge(x1: float, y1: float, x2: float, y2: float, sti
 				continue
 			var sa: Vector2 = rb[si]
 			var sb: Vector2 = rb[si + 1]
-			var d1x: float = x2 - x1
-			var d1y: float = y2 - y1
+			if step_max_x < minf(sa.x, sb.x) - 1 or step_min_x > maxf(sa.x, sb.x) + 1:
+				continue
+			if step_max_y < minf(sa.y, sb.y) - 1 or step_min_y > maxf(sa.y, sb.y) + 1:
+				continue
 			var d2x: float = sb.x - sa.x
 			var d2y: float = sb.y - sa.y
 			var denom: float = d1x * d2y - d1y * d2x
