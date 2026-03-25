@@ -50,7 +50,15 @@ func _on_join() -> void:
 		status_label.text = "Failed to connect: %s" % error_string(err)
 
 func _on_connected() -> void:
-	status_label.text = "Connected! Loading..."
+	status_label.text = "Connected! Waiting for world data..."
+	# Disable buttons while loading
+	host_btn.disabled = true
+	join_btn.disabled = true
+	# Wait for world snapshot from server, then switch scene
+	WorldManager.world_loaded.connect(_on_world_received, CONNECT_ONE_SHOT)
+
+func _on_world_received() -> void:
+	status_label.text = "World loaded! Entering..."
 	get_tree().change_scene_to_file("res://scenes/world/game.tscn")
 
 func _on_connect_failed() -> void:

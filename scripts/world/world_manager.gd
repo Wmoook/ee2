@@ -1436,22 +1436,64 @@ func load_from_file(path: String) -> Error:
 
 @rpc("any_peer", "reliable")
 func request_tile_edit(x: int, y: int, block_id: int, layer: String) -> void:
-	pass
+	# Server receives edit request from client — validate and broadcast
+	if not multiplayer.is_server():
+		return
+	if x < 0 or x >= world_width or y < 0 or y >= world_height:
+		return
+	if layer == "fg":
+		set_fg_tile(x, y, block_id)
+	elif layer == "bg":
+		set_bg_tile(x, y, block_id)
+	sync_tile.rpc(x, y, block_id, layer)
 
 @rpc("authority", "reliable")
 func sync_tile(x: int, y: int, block_id: int, layer: String) -> void:
-	pass
+	# All clients receive tile update from server
+	if layer == "fg":
+		set_fg_tile(x, y, block_id)
+	elif layer == "bg":
+		set_bg_tile(x, y, block_id)
 
 @rpc("authority", "reliable")
 func receive_world_snapshot(data_json: String) -> void:
-	pass
+	# Client receives full world state from server
+	var data: Variant = JSON.parse_string(data_json)
+	if data is Dictionary:
+		deserialize_world(data)
 
 @rpc("authority", "reliable")
 func sync_state_channel(channel_id: int, value: int) -> void:
 	pass
 
 func send_world_to_peer(peer_id: int) -> void:
-	pass
+	# Server sends full world state to a specific client
+	var data: Dictionary = serialize_world()
+	var json: String = JSON.stringify(data)
+	receive_world_snapshot.rpc_id(peer_id, json)
+
+## Network-aware bg tile edit
+func net_set_bg_tile(x: int, y: int, block_id: int) -> void:
+	net_set_tile(x, y, block_id, "bg")
+
+## Network-aware tile edit — use instead of direct set_fg_tile/set_bg_tile
+func net_set_tile(x: int, y: int, block_id: int, layer: String = "fg") -> void:
+	if NetworkManager._peer == null:
+		# Singleplayer — just apply directly
+		if layer == "fg":
+			set_fg_tile(x, y, block_id)
+		elif layer == "bg":
+			set_bg_tile(x, y, block_id)
+	elif multiplayer.is_server():
+		# Host — apply locally + broadcast
+		if layer == "fg":
+			set_fg_tile(x, y, block_id)
+		elif layer == "bg":
+			set_bg_tile(x, y, block_id)
+		sync_tile.rpc(x, y, block_id, layer)
+	else:
+		# Client — request from server
+		request_tile_edit.rpc_id(1, x, y, block_id, layer)
 
 func build_sample_room() -> void:
 	init_empty_world(400, 200)

@@ -120,11 +120,11 @@ func _do_undo() -> void:
 	for y in range(WorldManager.world_height):
 		for x in range(1, WorldManager.world_width - 1):
 			if y > 0 and y < WorldManager.world_height - 1:
-				WorldManager.set_fg_tile(x, y, 0)
+				WorldManager.net_set_tile(x, y, 0)
 				WorldManager.set_rotation(x, y, 0)
 	# Restore saved tiles
 	for t in state["tiles"]:
-		WorldManager.set_fg_tile(t.x, t.y, t.id)
+		WorldManager.net_set_tile(t.x, t.y, t.id)
 		WorldManager.set_rotation(t.x, t.y, t.rot)
 	# Restore polylines
 	if state.has("polylines"):
@@ -259,8 +259,8 @@ func _ready() -> void:
 		WorldManager.gravity_zones.clear()
 		for y in range(1, WorldManager.world_height - 1):
 			for x in range(1, WorldManager.world_width - 1):
-				WorldManager.set_fg_tile(x, y, 0)
-				WorldManager.set_bg_tile(x, y, 0)
+				WorldManager.net_set_tile(x, y, 0)
+				WorldManager.net_set_bg_tile(x, y, 0)
 				WorldManager.set_rotation(x, y, 0)
 		_free_originals.clear()
 		_deselect()
@@ -695,7 +695,7 @@ func _input(event: InputEvent) -> void:
 					var _pgrot: float = float(WorldManager.get_rotation(_pgt.x, _pgt.y))
 					var _pgpos: Vector2 = Vector2(_pgt.x * 16.0, _pgt.y * 16.0)
 					WorldManager.free_blocks.append({"pos": _pgpos, "id": _pgbid, "rotation": _pgrot})
-					WorldManager.set_fg_tile(_pgt.x, _pgt.y, 0)
+					WorldManager.net_set_tile(_pgt.x, _pgt.y, 0)
 					WorldManager.set_rotation(_pgt.x, _pgt.y, 0)
 					_pfb_idx = WorldManager.free_blocks.size() - 1
 			if _pfb_idx >= 0:
@@ -770,7 +770,7 @@ func _input(event: InputEvent) -> void:
 						if _bloc.x >= _sel_mn.x and _bloc.x <= _sel_mx.x and _bloc.y >= _sel_mn.y and _bloc.y <= _sel_mx.y:
 							var _brot: float = float(WorldManager.get_rotation(_tx, _ty))
 							WorldManager.free_blocks.append({"pos": _bpos, "id": _bid, "rotation": _brot})
-							WorldManager.set_fg_tile(_tx, _ty, 0)
+							WorldManager.net_set_tile(_tx, _ty, 0)
 							WorldManager.set_rotation(_tx, _ty, 0)
 			var _inv_ar: float = deg_to_rad(-_align_angle)
 			for _fi in range(WorldManager.free_blocks.size()):
@@ -974,7 +974,7 @@ func _input(event: InputEvent) -> void:
 				var grot: float = float(WorldManager.get_rotation(gt.x, gt.y))
 				var gpos: Vector2 = Vector2(gt.x * 16.0, gt.y * 16.0)
 				WorldManager.free_blocks.append({"pos": gpos, "id": gbid, "rotation": grot})
-				WorldManager.set_fg_tile(gt.x, gt.y, 0)
+				WorldManager.net_set_tile(gt.x, gt.y, 0)
 				WorldManager.set_rotation(gt.x, gt.y, 0)
 				var new_idx: int = WorldManager.free_blocks.size() - 1
 				_align_sel_indices = [new_idx]
@@ -1656,15 +1656,15 @@ func _place_at(t: Vector2i) -> void:
 	if t.y <= 0 or t.y >= WorldManager.world_height - 1: return
 	var layer: String = GameState.get_block_layer(GameState.selected_block_id)
 	if layer == "background":
-		WorldManager.set_bg_tile(t.x, t.y, GameState.selected_block_id)
+		WorldManager.net_set_bg_tile(t.x, t.y, GameState.selected_block_id)
 	else:
 		WorldManager.set_tile(t.x, t.y, GameState.selected_block_id)
 
 func _erase_at(t: Vector2i) -> void:
 	if t.x <= 0 or t.x >= WorldManager.world_width - 1: return
 	if t.y <= 0 or t.y >= WorldManager.world_height - 1: return
-	WorldManager.set_fg_tile(t.x, t.y, 0)
-	WorldManager.set_bg_tile(t.x, t.y, 0)
+	WorldManager.net_set_tile(t.x, t.y, 0)
+	WorldManager.net_set_bg_tile(t.x, t.y, 0)
 
 func _fill_line(from: Vector2i, to: Vector2i, block_id: int) -> void:
 	_save_undo()
@@ -1673,8 +1673,8 @@ func _fill_line(from: Vector2i, to: Vector2i, block_id: int) -> void:
 		if p.x <= 0 or p.x >= WorldManager.world_width - 1: continue
 		if p.y <= 0 or p.y >= WorldManager.world_height - 1: continue
 		if block_id == 0:
-			WorldManager.set_fg_tile(p.x, p.y, 0)
-			WorldManager.set_bg_tile(p.x, p.y, 0)
+			WorldManager.net_set_tile(p.x, p.y, 0)
+			WorldManager.net_set_bg_tile(p.x, p.y, 0)
 		else:
 			WorldManager.set_tile(p.x, p.y, block_id)
 
@@ -1717,16 +1717,16 @@ func _rotate_selection() -> void:
 					var orient: int = sub / 2
 					var half_side: int = sub % 2
 					orient = (orient + 1) % 4
-					WorldManager.set_fg_tile(tx, ty, 2040 + block_group + orient * 2 + half_side)
+					WorldManager.net_set_tile(tx, ty, 2040 + block_group + orient * 2 + half_side)
 				else:
 					var rel: int = bid - 2000
 					var block_group: int = (rel / 4) * 4
 					var orient: int = rel % 4
 					orient = (orient + 1) % 4
-					WorldManager.set_fg_tile(tx, ty, 2000 + block_group + orient)
+					WorldManager.net_set_tile(tx, ty, 2000 + block_group + orient)
 			else:
 				# Regular blocks: replace with current selected block
-				WorldManager.set_fg_tile(tx, ty, GameState.selected_block_id)
+				WorldManager.net_set_tile(tx, ty, GameState.selected_block_id)
 	queue_redraw()
 
 func _rotate_group_90() -> void:
@@ -1751,7 +1751,7 @@ func _rotate_group_90() -> void:
 
 	# Clear old positions
 	for b in blocks:
-		WorldManager.set_fg_tile(b.x, b.y, 0)
+		WorldManager.net_set_tile(b.x, b.y, 0)
 		WorldManager.set_rotation(b.x, b.y, 0)
 
 	# Place at new rotated positions (90° CW around center)
@@ -1762,7 +1762,7 @@ func _rotate_group_90() -> void:
 		var new_x: int = int(floor(cx + rel_y - 0.5))
 		var new_y: int = int(floor(cy - rel_x - 0.5))
 		if new_x >= 1 and new_x < WorldManager.world_width - 1 and new_y >= 1 and new_y < WorldManager.world_height - 1:
-			WorldManager.set_fg_tile(new_x, new_y, b.id)
+			WorldManager.net_set_tile(new_x, new_y, b.id)
 			WorldManager.set_rotation(new_x, new_y, (b.rot + 90) % 360)
 
 	# Update selection rect to match new dimensions (w/h swap)
@@ -1777,7 +1777,7 @@ func _apply_move(dx: int, dy: int) -> void:
 	# Clear old positions
 	for my in range(_selection.position.y, _selection.position.y + _selection.size.y):
 		for mx in range(_selection.position.x, _selection.position.x + _selection.size.x):
-			WorldManager.set_fg_tile(mx, my, 0)
+			WorldManager.net_set_tile(mx, my, 0)
 			WorldManager.set_rotation(mx, my, 0)
 	# Move selection rect
 	_selection.position.x += dx
@@ -1787,7 +1787,7 @@ func _apply_move(dx: int, dy: int) -> void:
 		var nx: int = _selection.position.x + b.rx
 		var ny: int = _selection.position.y + b.ry
 		if nx >= 1 and nx < WorldManager.world_width - 1 and ny >= 1 and ny < WorldManager.world_height - 1:
-			WorldManager.set_fg_tile(nx, ny, b.id)
+			WorldManager.net_set_tile(nx, ny, b.id)
 			WorldManager.set_rotation(nx, ny, b.rot)
 
 func _get_align_sel_center(include_drag: bool = false) -> Vector2:
@@ -2016,7 +2016,7 @@ func _lift_to_free() -> void:
 				var pos: Vector2 = Vector2(tx * 16.0, ty * 16.0)
 				_free_originals.append({"pos": pos, "id": bid, "rot": 0.0})
 				WorldManager.free_blocks.append({"pos": pos, "id": bid, "rotation": 0.0})
-				WorldManager.set_fg_tile(tx, ty, 0)
+				WorldManager.net_set_tile(tx, ty, 0)
 				WorldManager.set_rotation(tx, ty, 0)
 	# Also grab existing free blocks within selection area
 	var sel_rect: Rect2 = Rect2(cx - (_selection.size.x / 2.0) * 16.0, cy - (_selection.size.y / 2.0) * 16.0,
@@ -2138,8 +2138,8 @@ func _clear_selection() -> void:
 	# Clear grid tiles in selection
 	for ty in range(_selection.position.y, _selection.position.y + _selection.size.y):
 		for tx in range(_selection.position.x, _selection.position.x + _selection.size.x):
-			WorldManager.set_fg_tile(tx, ty, 0)
-			WorldManager.set_bg_tile(tx, ty, 0)
+			WorldManager.net_set_tile(tx, ty, 0)
+			WorldManager.net_set_bg_tile(tx, ty, 0)
 	# Also remove free blocks within selection area
 	var sel_rect: Rect2 = Rect2(
 		_selection.position.x * 16.0, _selection.position.y * 16.0,
@@ -2170,7 +2170,7 @@ func _snap_aligned_to_grid() -> void:
 		if tx >= 0 and tx < WorldManager.world_width and ty >= 0 and ty < WorldManager.world_height:
 			var grid_rot: int = int(round(fb.rotation / 90.0) * 90) % 360
 			if grid_rot < 0: grid_rot += 360
-			WorldManager.set_fg_tile(tx, ty, fb.id)
+			WorldManager.net_set_tile(tx, ty, fb.id)
 			WorldManager.set_rotation(tx, ty, grid_rot)
 			to_remove.append(i)
 	for i in range(to_remove.size() - 1, -1, -1):

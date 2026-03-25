@@ -4,14 +4,29 @@ var renderer: Node2D
 var editor: Node2D
 var _vignette: ColorRect
 var _bg: ColorRect
+var _players: Dictionary = {}  # peer_id -> PlayerController node
+var _world_ready: bool = false
+var _player_scene: PackedScene = preload("res://scenes/player/player.tscn")
 
 func _ready() -> void:
 	RenderingServer.set_default_clear_color(Color(0.0, 0.0, 0.0))
 
-	# Load saved world or build sample
-	if WorldManager.load_from_file("user://world_save.json") != OK:
-		WorldManager.build_sample_room()
+	# Connect network signals for player spawn/despawn
+	NetworkManager.player_connected.connect(_on_player_connected)
+	NetworkManager.player_disconnected.connect(_on_player_disconnected)
 
+	# Load world: host loads from file, client already has it (loaded in main_menu)
+	if NetworkManager.is_host or NetworkManager._peer == null:
+		# Host or singleplayer — load world from file
+		if not _world_ready:
+			if WorldManager.load_from_file("user://world_save.json") != OK:
+				WorldManager.build_sample_room()
+	# Client world was already loaded via receive_world_snapshot before scene switch
+	_world_ready = true
+
+	_setup_scene()
+
+func _setup_scene() -> void:
 	# World background with shader
 	_bg = ColorRect.new()
 	_bg.z_index = -10
@@ -32,13 +47,13 @@ func _ready() -> void:
 	editor = preload("res://scripts/world/block_editor.gd").new()
 	add_child(editor)
 
-	# Spawn player FIRST (so FG overlay draws on top)
-	var player: Node = preload("res://scenes/player/player.tscn").instantiate()
-	player.is_local = true
-	player.peer_id = 1
-	player.player_name = "Player"
-	player.position = WorldManager.get_spawn_pixel(0)
-	add_child(player)
+	# Spawn local player
+	if _world_ready:
+		_spawn_local_player()
+		# Spawn existing remote players (if host and others already connected)
+		for pid in NetworkManager.players:
+			if pid != multiplayer.get_unique_id() and not _players.has(pid):
+				_spawn_remote_player(pid)
 
 	# FG overlay - draws foreground blocks ON TOP of player (z=2)
 	var fg_overlay: Node2D = preload("res://scripts/world/fg_overlay.gd").new()
@@ -58,6 +73,54 @@ func _ready() -> void:
 	var hud: CanvasLayer = preload("res://scripts/ui/game_hud.gd").new()
 	add_child(hud)
 
+func _on_world_loaded() -> void:
+	# Client received world snapshot — now spawn players
+	_world_ready = true
+	_spawn_local_player()
+	for pid in NetworkManager.players:
+		if pid != multiplayer.get_unique_id() and not _players.has(pid):
+			_spawn_remote_player(pid)
+
+func _spawn_local_player() -> void:
+	var my_id: int = 1
+	if NetworkManager._peer != null:
+		my_id = multiplayer.get_unique_id()
+	if _players.has(my_id):
+		return
+	var player: Node = _player_scene.instantiate()
+	player.is_local = true
+	player.peer_id = my_id
+	player.player_name = GameState.player_name
+	player.smiley_id = GameState.player_smiley_id
+	player.position = WorldManager.get_spawn_pixel(0)
+	add_child(player)
+	_players[my_id] = player
+
+func _spawn_remote_player(peer_id: int) -> void:
+	if _players.has(peer_id) or not _world_ready:
+		return
+	var info: Dictionary = NetworkManager.get_player_info(peer_id)
+	var player: Node = _player_scene.instantiate()
+	player.is_local = false
+	player.peer_id = peer_id
+	player.player_name = info.get("name", "Player")
+	player.smiley_id = info.get("smiley_id", 0)
+	player.position = WorldManager.get_spawn_pixel(0)
+	add_child(player)
+	_players[peer_id] = player
+
+func _on_player_connected(peer_id: int) -> void:
+	if peer_id != multiplayer.get_unique_id():
+		_spawn_remote_player(peer_id)
+
+func _on_player_disconnected(peer_id: int) -> void:
+	if _players.has(peer_id):
+		_players[peer_id].queue_free()
+		_players.erase(peer_id)
+
+func _get_player(peer_id: int) -> Node:
+	return _players.get(peer_id, null)
+
 func _process(_delta: float) -> void:
 	# Keep vignette covering viewport
 	if _vignette and _camera_exists():
@@ -75,6 +138,5 @@ func _input(event: InputEvent) -> void:
 		if event.physical_keycode == KEY_E:
 			GameState.set_edit_mode(not GameState.is_edit_mode)
 			get_viewport().set_input_as_handled()
-		# Escape handled by block_editor for deselect
 	if event.is_action_pressed("save_world"):
 		WorldManager.save_to_file("user://world_save.json")

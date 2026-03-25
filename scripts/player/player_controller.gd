@@ -57,6 +57,9 @@ var _visual_pos: Vector2 = Vector2.ZERO
 var _phys_pos: Vector2 = Vector2.ZERO
 var _prev_pos: Vector2 = Vector2.ZERO
 var _smooth_look: Vector2 = Vector2.ZERO  # Smoothed look-ahead offset
+# Multiplayer sync
+var _remote_sync: RemotePlayerSync = null
+var _sync_tick_counter: int = 0
 var _smooth_normal: Vector2 = Vector2(0, -1)  # Smoothed surface normal for smiley
 
 func _ready() -> void:
@@ -131,6 +134,17 @@ func _ready() -> void:
 		_camera.limit_smoothed = true
 		# Independent camera (NOT child) - exact EE behavior
 		call_deferred("_setup_camera")
+	else:
+		# Remote player — init sync module, set spawn position
+		_remote_sync = RemotePlayerSync.new()
+		_remote_sync.target_pos = position
+		_remote_sync.prev_pos = position
+		physics.set_collides_fn(_tile_collides)
+		var sp: Vector2 = WorldManager.get_spawn_point()
+		physics.set_position_tiles(sp.x, sp.y)
+		_phys_pos = Vector2(physics.get_pixel_x(), physics.get_pixel_y())
+		_visual_pos = _phys_pos
+		position = _phys_pos
 
 func _setup_camera() -> void:
 	physics.set_collides_fn(_tile_collides)
@@ -181,10 +195,39 @@ func _physics_process(delta: float) -> void:
 			_smiley_sprite.modulate = Color(1, lerpf(1, 0.1, t), lerpf(1, 0.0, t), lerpf(1.0, 0.0, t * t))
 			if t >= 1.0:
 				_smiley_sprite.visible = false
-		if _death_timer > 0.7:
+		_visual_pos = position  # Keep fire_drawer offset correct during death
+		# Camera follows player into black hole
+		if _camera and _gz_death:
+			var target: Vector2 = position + Vector2(8, 8)
+			var cam: Vector2 = _camera.global_position
+			cam.x += (target.x - cam.x) * 0.0625
+			cam.y += (target.y - cam.y) * 0.0625
+			_camera.global_position = cam
+		if _gz_death:
+			# Force clear ALL stray particles at 1.5s — no exceptions
+			if not _fire_particles.is_empty() and _death_timer > 1.5:
+				_fire_particles.clear()
+				if _fire_layer:
+					_fire_layer.queue_redraw()
+			# Respawn 0.5s after clear
+			if _fire_particles.is_empty() and _death_timer > 2.0:
+				_respawn()
+		elif _death_timer > 0.7:
 			_respawn()
 		return
 	if not is_local:
+		# Remote player: interpolate position from network state
+		if _remote_sync:
+			_visual_pos = _remote_sync.get_interpolated_position(delta)
+			position = Vector2(floor(_visual_pos.x), floor(_visual_pos.y))
+			if _smiley_sprite:
+				# Apply animation frame texture
+				if _use_anim_sprite and _anim_textures.size() >= 3:
+					var af: int = clampi(_remote_sync.anim_frame, 0, _anim_textures.size() - 1)
+					_smiley_sprite.texture = _anim_textures[af]
+				_smiley_sprite.flip_h = _remote_sync.flip_h
+				_smiley_sprite.rotation = _remote_sync.rotation
+				_smiley_sprite.modulate = Color(0.6, 0.8, 1.0, 0.5) if _remote_sync.is_god else Color.WHITE
 		return
 
 	# Pre-tick: valley jump from smiley flip detection
@@ -252,6 +295,20 @@ func _physics_process(delta: float) -> void:
 			_camera.global_position = cam
 	_space_just = false
 	_cbf_consumed_jump = false  # Reset for next frame
+
+	# Broadcast position to other players (every 3 ticks = ~33Hz for low lag)
+	_sync_tick_counter += 1
+	if _sync_tick_counter >= 3 and NetworkManager._peer != null:
+		_sync_tick_counter = 0
+		var af: int = _anim_frame
+		var fh: bool = _smiley_sprite.flip_h if _smiley_sprite else false
+		var rot: float = _smiley_sprite.rotation if _smiley_sprite else 0.0
+		_broadcast_state.rpc({
+			"x": physics.get_pixel_x(), "y": physics.get_pixel_y(),
+			"sx": physics._speedX, "sy": physics._speedY,
+			"af": af, "fh": fh, "r": rot,
+			"g": physics.is_god_mode, "gr": physics.is_grounded
+		})
 
 	_phys_pos = Vector2(physics.get_pixel_x(), physics.get_pixel_y())
 	# Visual position: pixel-snap on grid tiles, sub-pixel on curves/slopes
@@ -380,11 +437,11 @@ func _physics_process(delta: float) -> void:
 					var vel_dir: Vector2 = vel / spd_len
 					var ball_center: Vector2 = Vector2(physics.x + 8, physics.y + 8)
 					# Reset prev position if too far (first frame or teleport)
-					if _prev_fire_pos.distance_to(ball_center) > 16:
+					if _prev_fire_pos.distance_to(ball_center) > 64:
 						_prev_fire_pos = ball_center
 					# Interpolate spawn positions between prev and current to fill gaps
 					var move_dist: float = ball_center.distance_to(_prev_fire_pos)
-					var steps: int = maxi(1, int(move_dist / 1.5))  # One burst per ~1.5px
+					var steps: int = maxi(1, int(move_dist / 1.0))  # One burst per ~1px
 					var per_step: int = maxi(4, int((15 + _glow_intensity * 15) / steps))
 					for step in range(steps):
 						var lerp_t: float = float(step) / float(steps)
@@ -404,13 +461,16 @@ func _physics_process(delta: float) -> void:
 								"size": psize,
 							})
 					_prev_fire_pos = ball_center
-					# Meteor heat shield: only when falling WITH gravity (not walking)
-					# Compute speed along gravity direction
+					# Meteor heat shield: falling with gravity, or any momentum in gravity zone
 					var grav_dir: Vector2 = Vector2(physics.mox, physics.moy)
 					if grav_dir.length() < 0.01:
 						grav_dir = Vector2(0, 1)
 					grav_dir = grav_dir.normalized()
-					var fall_speed: float = vel.dot(grav_dir)  # Positive = falling
+					var fall_speed: float = vel.dot(grav_dir)
+					# In gravity zone: all momentum counts
+					var in_gz: bool = WorldManager.gravity_zones.get_gravity_at(physics.x + 8.0, physics.y + 8.0).in_zone
+					if in_gz:
+						fall_speed = vel.length()
 					var meteor_intensity: float = clampf((fall_speed - 3.0) / 10.0, 0.0, 1.0)
 					if meteor_intensity > 0.1:
 						var meteor_amt: float = meteor_intensity
@@ -445,8 +505,8 @@ func _physics_process(delta: float) -> void:
 								"hot": true,
 							})
 					_was_max_speed = _at_max_speed
-					if _fire_particles.size() > 500:
-						_fire_particles.resize(500)
+					if _fire_particles.size() > 2000:
+						_fire_particles.resize(2000)
 		_at_max_speed = _glow_intensity > 0.7
 		# Landing impact: was NOT grounded + falling fast → now grounded
 		# Only trigger landing if actually fell a meaningful distance (not 1x1 gap bouncing)
@@ -473,8 +533,9 @@ func _physics_process(delta: float) -> void:
 					"max_life": spray_life,
 					"hot": randf() < impact_sq * 0.6,
 				})
-		# Clear stray particles when stopped
-		if _glow_intensity < 0.05 and not _fire_particles.is_empty():
+		# Clear stray particles when stopped (but not in gravity zone — let them get sucked in)
+		var _in_gz: bool = WorldManager.gravity_zones.get_gravity_at(physics.x + 8.0, physics.y + 8.0).in_zone
+		if _glow_intensity < 0.05 and not _fire_particles.is_empty() and not _in_gz and not _is_dead:
 			_fire_particles.clear()
 			_prev_fire_pos = Vector2.ZERO
 			if _fire_layer:
@@ -551,7 +612,7 @@ func _physics_process(delta: float) -> void:
 		# Gravity zone center = death (spaghettification)
 		var player_center: Vector2 = Vector2(physics.x + 8, physics.y + 8)
 		for gz in WorldManager.gravity_zones.zones:
-			var kill_r: float = gz.get("center_radius", 8.0) + 2.0
+			var kill_r: float = gz.get("center_radius", 8.0) + 9.0
 			if player_center.distance_to(gz.center) < kill_r:
 				_die_gravity_zone(gz.center)
 				return
@@ -562,28 +623,56 @@ func _physics_process(delta: float) -> void:
 func _process(delta: float) -> void:
 	if _show_debug and _debug_label and physics:
 		_debug_label.text = physics.debug_text
-	if _is_dead:
+	# Force clear particles 1.5s after death
+	if _is_dead and _death_timer > 1.5 and not _fire_particles.is_empty():
+		_fire_particles.clear()
+		if _fire_layer:
+			_fire_layer.queue_redraw()
 		return
+	# Update fire particles even when dead (get sucked into black hole)
 	var fi: int = _fire_particles.size() - 1
 	while fi >= 0:
-		_fire_particles[fi].life -= delta
-		if _fire_particles[fi].life <= 0:
+		var gz_pull: Dictionary = WorldManager.gravity_zones.get_gravity_at(_fire_particles[fi].wpos.x, _fire_particles[fi].wpos.y)
+		var in_gz: bool = gz_pull.in_zone
+		# Only upon death: don't decay life in gravity zone (die at center void)
+		if not (in_gz and _is_dead):
+			_fire_particles[fi].life -= delta
+		var hit_void: bool = false
+		if _is_dead and _gz_death:
+			for gz in WorldManager.gravity_zones.zones:
+				var d: float = _fire_particles[fi].wpos.distance_to(gz.center)
+				if d < 4.0:
+					hit_void = true
+					break
+		if _fire_particles[fi].life <= 0 or hit_void:
 			_fire_particles.remove_at(fi)
 		else:
 			var new_pos: Vector2 = _fire_particles[fi].wpos + _fire_particles[fi].vel * delta
-			# Collide with solid blocks: bounce/splash on walls
 			var tx: int = int(floor(new_pos.x / 16.0))
 			var ty: int = int(floor(new_pos.y / 16.0))
 			if WorldManager.is_solid_at(tx, ty):
-				# Hit a wall — kill velocity, die faster
-				_fire_particles[fi].vel *= -0.2  # Slight bounce
-				_fire_particles[fi].life *= 0.5  # Die faster on impact
+				_fire_particles[fi].vel *= -0.2
+				_fire_particles[fi].life *= 0.5
 			else:
 				_fire_particles[fi].wpos = new_pos
 			_fire_particles[fi].vel *= 0.96
-			_fire_particles[fi].vel.x += randf_range(-1, 1) * delta * 20
-			_fire_particles[fi].vel.y += randf_range(-1, 1) * delta * 20
+			if not (_is_dead and _gz_death):
+				_fire_particles[fi].vel.x += randf_range(-1, 1) * delta * 20
+				_fire_particles[fi].vel.y += randf_range(-1, 1) * delta * 20
+			# Black hole sucks in fire particles
+			if in_gz:
+				var pull_str: float = 800.0
+				if _is_dead:
+					for gz in WorldManager.gravity_zones.zones:
+						var d: float = _fire_particles[fi].wpos.distance_to(gz.center)
+						if d < 30.0:
+							pull_str += 2000.0 / maxf(d, 1.0)
+							_fire_particles[fi].vel *= 0.9
+				_fire_particles[fi].vel += gz_pull.direction * delta * pull_str
 		fi -= 1
+	# When dead: if only 1 particle left, it's the stray — kill it
+	if _is_dead and _fire_particles.size() == 1:
+		_fire_particles.clear()
 	if _show_hitboxes or _fire_particles.size() > 0:
 		queue_redraw()
 
@@ -638,6 +727,19 @@ func _draw() -> void:
 		for _si in range(mini(_rt.size(), _rb.size()) - 1):
 			draw_line(_rt[_si] - position, _rt[_si + 1] - position, Color(0.7, 0, 1, 0.6), 1.0)
 			draw_line(_rb[_si] - position, _rb[_si + 1] - position, Color(0.7, 0, 1, 0.6), 1.0)
+
+@rpc("any_peer", "unreliable_ordered")
+func _broadcast_state(data: Dictionary) -> void:
+	# Received on all peers — find the player node matching the sender
+	var sender: int = multiplayer.get_remote_sender_id()
+	# Route to the correct player's remote sync
+	var scene: Node = get_parent()
+	if scene and scene.has_method("_get_player"):
+		var p: Node = scene._get_player(sender)
+		if p and p != self and p._remote_sync:
+			p._remote_sync.receive_state(data)
+	elif _remote_sync and peer_id == sender:
+		_remote_sync.receive_state(data)
 
 func _input(event: InputEvent) -> void:
 	if not is_local:
@@ -765,8 +867,9 @@ func _die() -> void:
 	_is_dead = true
 	_death_timer = 0.0
 	_name_label.visible = false
-	# Clear fire trail
-	_fire_particles.clear()
+	# Clear fire trail — but NOT for gravity zone death (let it get sucked in)
+	if not _gz_death:
+		_fire_particles.clear()
 	_glow_intensity = 0.0
 	_prev_fire_pos = Vector2.ZERO
 	if _fire_layer:

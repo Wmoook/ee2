@@ -14,8 +14,8 @@ compatibility/default_parent_skeleton_in_mesh_instance_3d=true
 
 [application]
 
-config/name="EE2 - Everybody Edits 2"
-run/main_scene="res://scenes/world/game.tscn"
+config/name="Dreamers Design"
+run/main_scene="res://scenes/ui/main_menu.tscn"
 config/features=PackedStringArray("4.6", "GL Compatibility")
 config/icon="res://icon.svg"
 

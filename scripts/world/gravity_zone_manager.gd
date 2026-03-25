@@ -33,7 +33,7 @@ func get_gravity_at(px: float, py: float) -> Dictionary:
 	for gz in zones:
 		var to_center: Vector2 = gz.center - pos
 		var dist: float = to_center.length()
-		if dist < gz.radius and dist > 0.1:
+		if dist < gz.radius + 7.0 and dist > 0.1:
 			result.in_zone = true
 			# Gravity gets stronger closer to center (inverse distance)
 			# Edge = 0.5x strength, center = 3x strength

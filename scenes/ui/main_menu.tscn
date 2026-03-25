@@ -1,6 +1,11 @@
-[gd_scene load_steps=2 format=3 uid="uid://bfhj3d5q6xvpc"]
+[gd_scene load_steps=4 format=3 uid="uid://bfhj3d5q6xvpc"]
 
 [ext_resource type="Script" path="res://scripts/ui/main_menu.gd" id="1_menu"]
+[ext_resource type="Shader" path="res://assets/shaders/menu_bg.gdshader" id="2_shader"]
+
+[sub_resource type="ShaderMaterial" id="ShaderMaterial_bg"]
+shader = ExtResource("2_shader")
+shader_parameter/time_scale = 0.8
 
 [node name="MainMenu" type="Control"]
 layout_mode = 3
@@ -18,7 +23,7 @@ anchor_right = 1.0
 anchor_bottom = 1.0
 grow_horizontal = 2
 grow_vertical = 2
-color = Color(0.08, 0.08, 0.15, 1)
+material = SubResource("ShaderMaterial_bg")
 
 [node name="VBox" type="VBoxContainer" parent="."]
 layout_mode = 1
@@ -27,84 +32,130 @@ anchor_left = 0.5
 anchor_top = 0.5
 anchor_right = 0.5
 anchor_bottom = 0.5
-offset_left = -200.0
-offset_top = -220.0
-offset_right = 200.0
-offset_bottom = 220.0
+offset_left = -220.0
+offset_top = -280.0
+offset_right = 220.0
+offset_bottom = 280.0
 grow_horizontal = 2
 grow_vertical = 2
-theme_override_constants/separation = 12
+theme_override_constants/separation = 8
 
 [node name="Title" type="Label" parent="VBox"]
 layout_mode = 2
-theme_override_font_sizes/font_size = 36
-text = "EE2"
+theme_override_font_sizes/font_size = 42
+theme_override_colors/font_color = Color(0.3, 0.8, 1.0, 1)
+theme_override_colors/font_outline_color = Color(0.1, 0.2, 0.5, 1)
+theme_override_constants/outline_size = 4
+text = "DREAMERS"
+horizontal_alignment = 1
+
+[node name="Title2" type="Label" parent="VBox"]
+layout_mode = 2
+theme_override_font_sizes/font_size = 28
+theme_override_colors/font_color = Color(0.9, 0.7, 1.0, 1)
+theme_override_colors/font_outline_color = Color(0.3, 0.1, 0.4, 1)
+theme_override_constants/outline_size = 3
+text = "DESIGN"
 horizontal_alignment = 1
 
 [node name="Subtitle" type="Label" parent="VBox"]
 layout_mode = 2
-theme_override_font_sizes/font_size = 14
-theme_override_colors/font_color = Color(0.7, 0.7, 0.7, 1)
-text = "Everybody Edits 2"
+theme_override_font_sizes/font_size = 11
+theme_override_colors/font_color = Color(0.4, 0.45, 0.6, 1)
+text = "Build worlds. Share dreams."
 horizontal_alignment = 1
 
 [node name="Sep1" type="HSeparator" parent="VBox"]
 layout_mode = 2
+theme_override_constants/separation = 20
 
 [node name="NameLabel" type="Label" parent="VBox"]
 layout_mode = 2
-text = "Player Name:"
+theme_override_font_sizes/font_size = 11
+theme_override_colors/font_color = Color(0.5, 0.55, 0.7, 1)
+text = "PLAYER NAME"
 
 [node name="NameInput" type="LineEdit" parent="VBox"]
 layout_mode = 2
+custom_minimum_size = Vector2(0, 32)
 placeholder_text = "Enter your name..."
 text = "Player"
 
 [node name="SmileyLabel" type="Label" parent="VBox"]
 layout_mode = 2
-text = "Smiley ID (0-187):"
+theme_override_font_sizes/font_size = 11
+theme_override_colors/font_color = Color(0.5, 0.55, 0.7, 1)
+text = "SMILEY ID (0-187)"
 
 [node name="SmileyInput" type="SpinBox" parent="VBox"]
 layout_mode = 2
+custom_minimum_size = Vector2(0, 32)
 max_value = 187.0
 value = 0.0
 
 [node name="Sep2" type="HSeparator" parent="VBox"]
 layout_mode = 2
+theme_override_constants/separation = 14
 
 [node name="HostBtn" type="Button" parent="VBox"]
 layout_mode = 2
-text = "Host Game"
+custom_minimum_size = Vector2(0, 42)
+theme_override_font_sizes/font_size = 16
+text = "HOST GAME"
 
 [node name="HBoxJoin" type="HBoxContainer" parent="VBox"]
 layout_mode = 2
+theme_override_constants/separation = 8
 
 [node name="IPInput" type="LineEdit" parent="VBox/HBoxJoin"]
 layout_mode = 2
 size_flags_horizontal = 3
+custom_minimum_size = Vector2(0, 32)
 placeholder_text = "IP Address"
 text = "127.0.0.1"
 
 [node name="PortInput" type="LineEdit" parent="VBox/HBoxJoin"]
 layout_mode = 2
-custom_minimum_size = Vector2(80, 0)
+custom_minimum_size = Vector2(80, 32)
 placeholder_text = "Port"
 text = "7777"
 
 [node name="JoinBtn" type="Button" parent="VBox"]
 layout_mode = 2
-text = "Join Game"
+custom_minimum_size = Vector2(0, 42)
+theme_override_font_sizes/font_size = 16
+text = "JOIN GAME"
 
 [node name="Sep3" type="HSeparator" parent="VBox"]
 layout_mode = 2
+theme_override_constants/separation = 8
 
 [node name="QuitBtn" type="Button" parent="VBox"]
 layout_mode = 2
-text = "Quit"
+custom_minimum_size = Vector2(0, 36)
+theme_override_font_sizes/font_size = 13
+text = "QUIT"
 
 [node name="StatusLabel" type="Label" parent="VBox"]
 layout_mode = 2
+theme_override_font_sizes/font_size = 13
 theme_override_colors/font_color = Color(1, 0.8, 0.3, 1)
 text = ""
 horizontal_alignment = 1
 autowrap_mode = 2
+
+[node name="Version" type="Label" parent="."]
+layout_mode = 1
+anchors_preset = 3
+anchor_left = 1.0
+anchor_top = 1.0
+anchor_right = 1.0
+anchor_bottom = 1.0
+offset_left = -140.0
+offset_top = -30.0
+grow_horizontal = 0
+grow_vertical = 0
+theme_override_font_sizes/font_size = 10
+theme_override_colors/font_color = Color(0.25, 0.25, 0.35, 1)
+text = "v0.1 alpha"
+horizontal_alignment = 2

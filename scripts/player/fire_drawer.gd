@@ -5,8 +5,11 @@ func _draw() -> void:
 	var parent: PlayerController = get_parent() as PlayerController
 	if not parent:
 		return
-	# Heat shield removed — now part of particle system in player_controller
 	if parent._fire_particles.is_empty():
+		return
+	# Force clear if dead too long — absolutely nothing renders
+	if parent._is_dead and parent._death_timer > 1.5:
+		parent._fire_particles.clear()
 		return
 	for p in parent._fire_particles:
 		var lp: Vector2 = p.wpos - parent._visual_pos
