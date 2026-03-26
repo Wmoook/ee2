@@ -43,6 +43,10 @@ var _cam_pad_center: Vector2 = Vector2.ZERO
 const CAM_PAD_SIZE: float = 120.0
 const CAM_PAD_RANGE: float = 200.0  # Max offset in pixels
 
+var _palette_collapsed: bool = false
+var _palette_slide: float = 0.0  # 0 = visible, 1 = hidden
+var _palette_toggle_btn: Button
+
 func _ready() -> void:
 	layer = 10
 	_load_atlas_textures()
@@ -52,6 +56,9 @@ func _ready() -> void:
 	_build_camera_pad()
 	_build_layer_label()
 	_build_save_button()
+	_build_zoom_buttons()
+
+	_build_chat()
 
 	GameState.edit_mode_changed.connect(_on_edit)
 	GameState.block_selected.connect(_on_block)
@@ -210,6 +217,25 @@ func _build_palette() -> void:
 
 	# Populate grid with first category
 	_populate_grid(0)
+
+	# Toggle button to collapse/expand palette
+	_palette_toggle_btn = Button.new()
+	_palette_toggle_btn.text = ">"
+	_palette_toggle_btn.custom_minimum_size = Vector2(24, 40)
+	_palette_toggle_btn.add_theme_font_size_override("font_size", 16)
+	_palette_toggle_btn.focus_mode = Control.FOCUS_NONE
+	_palette_toggle_btn.visible = false
+	var tog_style: StyleBoxFlat = StyleBoxFlat.new()
+	tog_style.bg_color = Color(0.12, 0.12, 0.2, 0.9)
+	tog_style.border_color = Color(0.3, 0.3, 0.45, 0.6)
+	tog_style.set_border_width_all(1)
+	tog_style.set_corner_radius_all(4)
+	_palette_toggle_btn.add_theme_stylebox_override("normal", tog_style)
+	_palette_toggle_btn.pressed.connect(func():
+		_palette_collapsed = not _palette_collapsed
+		_palette_toggle_btn.text = "<" if _palette_collapsed else ">"
+	)
+	add_child(_palette_toggle_btn)
 
 func _style_tab_button(btn: Button, active: bool) -> void:
 	if active:
@@ -468,6 +494,8 @@ func _on_block(id: int) -> void:
 
 func _update_visibility() -> void:
 	palette_panel.visible = GameState.is_edit_mode
+	if _palette_toggle_btn:
+		_palette_toggle_btn.visible = GameState.is_edit_mode
 
 func _update_help_text() -> void:
 	if GameState.is_edit_mode:
@@ -481,6 +509,23 @@ func _update_info() -> void:
 		info_label.text = "%s (ID: %d) | LMB: Place | RMB: Erase | Scroll: Cycle | 1-9: Quick" % [name, GameState.selected_block_id]
 
 func _input(event: InputEvent) -> void:
+	# Chat toggle with Enter
+	if event is InputEventKey and event.pressed and not event.echo:
+		if event.keycode == KEY_ENTER or event.keycode == KEY_KP_ENTER:
+			if _chat_visible:
+				# Submit is handled by text_submitted signal
+				pass
+			else:
+				_open_chat()
+				get_viewport().set_input_as_handled()
+				return
+		elif event.keycode == KEY_ESCAPE and _chat_visible:
+			_close_chat()
+			get_viewport().set_input_as_handled()
+			return
+	# Block all game input while chat is open
+	if _chat_visible:
+		return
 	if not GameState.is_edit_mode:
 		return
 
@@ -580,6 +625,153 @@ func _on_save_pressed() -> void:
 	else:
 		_save_label.text = "Error!"
 
+var _chat_container: VBoxContainer
+var _chat_log: RichTextLabel
+var _chat_input: LineEdit
+var _chat_visible: bool = false
+var _chat_messages: Array = []
+const MAX_CHAT_MESSAGES: int = 50
+
+var _zoom_container: HBoxContainer
+var _zoom_label: Label
+var _trails_btn: Button
+
+func _build_zoom_buttons() -> void:
+	_zoom_container = HBoxContainer.new()
+	_zoom_container.add_theme_constant_override("separation", 4)
+	add_child(_zoom_container)
+
+	var btn_style: StyleBoxFlat = StyleBoxFlat.new()
+	btn_style.bg_color = Color(0.12, 0.12, 0.18, 0.85)
+	btn_style.border_color = Color(0.3, 0.3, 0.45, 0.6)
+	btn_style.set_border_width_all(1)
+	btn_style.set_corner_radius_all(4)
+
+	var zoom_out_btn: Button = Button.new()
+	zoom_out_btn.text = "-"
+	zoom_out_btn.custom_minimum_size = Vector2(32, 32)
+	zoom_out_btn.add_theme_font_size_override("font_size", 18)
+	zoom_out_btn.add_theme_stylebox_override("normal", btn_style)
+	zoom_out_btn.focus_mode = Control.FOCUS_NONE
+	zoom_out_btn.pressed.connect(_on_zoom_out)
+	_zoom_container.add_child(zoom_out_btn)
+
+	_zoom_label = Label.new()
+	_zoom_label.custom_minimum_size = Vector2(40, 32)
+	_zoom_label.add_theme_font_size_override("font_size", 12)
+	_zoom_label.add_theme_color_override("font_color", Color(0.7, 0.75, 0.9))
+	_zoom_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_zoom_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	_zoom_label.text = "3x"
+	_zoom_container.add_child(_zoom_label)
+
+	var zoom_in_btn: Button = Button.new()
+	zoom_in_btn.text = "+"
+	zoom_in_btn.custom_minimum_size = Vector2(32, 32)
+	zoom_in_btn.add_theme_font_size_override("font_size", 18)
+	zoom_in_btn.add_theme_stylebox_override("normal", btn_style)
+	zoom_in_btn.focus_mode = Control.FOCUS_NONE
+	zoom_in_btn.pressed.connect(_on_zoom_in)
+	_zoom_container.add_child(zoom_in_btn)
+
+	# Spacer
+	var spacer: Control = Control.new()
+	spacer.custom_minimum_size = Vector2(12, 0)
+	_zoom_container.add_child(spacer)
+
+	# Trails toggle
+	_trails_btn = Button.new()
+	_trails_btn.text = "Trails ON"
+	_trails_btn.custom_minimum_size = Vector2(72, 32)
+	_trails_btn.add_theme_font_size_override("font_size", 11)
+	_trails_btn.add_theme_stylebox_override("normal", btn_style)
+	_trails_btn.focus_mode = Control.FOCUS_NONE
+	_trails_btn.pressed.connect(_on_trails_toggle)
+	_zoom_container.add_child(_trails_btn)
+
+func _get_camera() -> Camera2D:
+	return get_viewport().get_camera_2d()
+
+func _on_zoom_in() -> void:
+	var cam: Camera2D = _get_camera()
+	if cam:
+		cam.zoom = clampf(cam.zoom.x + 0.5, 0.5, 10.0) * Vector2.ONE
+		_zoom_label.text = "%gx" % cam.zoom.x
+
+func _build_chat() -> void:
+	_chat_container = VBoxContainer.new()
+	_chat_container.add_theme_constant_override("separation", 4)
+	add_child(_chat_container)
+
+	# Chat log (shows recent messages)
+	_chat_log = RichTextLabel.new()
+	_chat_log.custom_minimum_size = Vector2(320, 150)
+	_chat_log.size = Vector2(320, 150)
+	_chat_log.bbcode_enabled = true
+	_chat_log.scroll_following = true
+	_chat_log.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_chat_log.add_theme_font_size_override("normal_font_size", 12)
+	var log_style: StyleBoxFlat = StyleBoxFlat.new()
+	log_style.bg_color = Color(0.0, 0.0, 0.0, 0.4)
+	log_style.set_corner_radius_all(4)
+	log_style.content_margin_left = 6.0
+	log_style.content_margin_right = 6.0
+	log_style.content_margin_top = 4.0
+	log_style.content_margin_bottom = 4.0
+	_chat_log.add_theme_stylebox_override("normal", log_style)
+	_chat_container.add_child(_chat_log)
+
+	# Chat input (hidden until Enter pressed)
+	_chat_input = LineEdit.new()
+	_chat_input.custom_minimum_size = Vector2(320, 28)
+	_chat_input.placeholder_text = "Type a message..."
+	_chat_input.add_theme_font_size_override("font_size", 12)
+	_chat_input.visible = false
+	_chat_input.text_submitted.connect(_on_chat_submitted)
+	_chat_container.add_child(_chat_input)
+
+	NetworkManager.chat_received.connect(_on_chat_received)
+
+func _on_chat_received(sender_name: String, message: String) -> void:
+	_chat_messages.append({"name": sender_name, "text": message})
+	if _chat_messages.size() > MAX_CHAT_MESSAGES:
+		_chat_messages.pop_front()
+	_update_chat_log()
+
+func _update_chat_log() -> void:
+	_chat_log.clear()
+	for msg in _chat_messages:
+		_chat_log.append_text("[color=#6cb4ee]%s:[/color] %s\n" % [msg.name, msg.text])
+
+func _on_chat_submitted(text: String) -> void:
+	if text.strip_edges().is_empty():
+		_close_chat()
+		return
+	NetworkManager.send_chat(text.strip_edges())
+	_chat_input.text = ""
+	_close_chat()
+
+func _open_chat() -> void:
+	_chat_visible = true
+	_chat_input.visible = true
+	_chat_input.grab_focus()
+
+func _close_chat() -> void:
+	_chat_visible = false
+	_chat_input.visible = false
+	_chat_input.release_focus()
+	_chat_input.text = ""
+
+func _on_trails_toggle() -> void:
+	GameState.trails_enabled = not GameState.trails_enabled
+	_trails_btn.text = "Trails ON" if GameState.trails_enabled else "Trails OFF"
+
+func _on_zoom_out() -> void:
+	var cam: Camera2D = _get_camera()
+	if cam:
+		cam.zoom = clampf(cam.zoom.x - 0.5, 0.5, 10.0) * Vector2.ONE
+		_zoom_label.text = "%gx" % cam.zoom.x
+
 func _process(_delta: float) -> void:
 	if not palette_panel:
 		return
@@ -589,10 +781,29 @@ func _process(_delta: float) -> void:
 		var vp_size: Vector2 = get_viewport().get_visible_rect().size
 		_cam_pad.position = Vector2(12, vp_size.y / 2 - CAM_PAD_SIZE / 2)
 
-	# Position palette at top-right
+	# Position zoom buttons bottom-left
+	if _zoom_container:
+		var vp_size2: Vector2 = get_viewport().get_visible_rect().size
+		_zoom_container.position = Vector2(12, vp_size2.y - 44)
+
+	# Position chat bottom-right
+	if _chat_container:
+		var vp_size3: Vector2 = get_viewport().get_visible_rect().size
+		_chat_container.position = Vector2(vp_size3.x - 332, vp_size3.y - 200)
+
+	# Animate palette slide
+	var target_slide: float = 1.0 if _palette_collapsed else 0.0
+	_palette_slide = lerpf(_palette_slide, target_slide, _delta * 10.0)
+	if absf(_palette_slide - target_slide) < 0.01:
+		_palette_slide = target_slide
+
+	# Position palette at top-right (slides off-screen when collapsed)
+	var vp4: Vector2 = get_viewport().get_visible_rect().size
+	var panel_w: float = PALETTE_COLS * CELL_SIZE + PANEL_MARGIN * 2 + 16
+	var panel_h: float = TAB_HEIGHT + PALETTE_ROWS * CELL_SIZE + 50 + PANEL_MARGIN * 2
+	var slide_offset: float = (panel_w + 16) * _palette_slide
 	if palette_panel.visible:
-		var vp_size: Vector2 = get_viewport().get_visible_rect().size
-		var panel_w: float = PALETTE_COLS * CELL_SIZE + PANEL_MARGIN * 2 + 16
-		var panel_h: float = TAB_HEIGHT + PALETTE_ROWS * CELL_SIZE + 50 + PANEL_MARGIN * 2
-		palette_panel.position = Vector2(vp_size.x - panel_w - 8, 8)
+		palette_panel.position = Vector2(vp4.x - panel_w - 8 + slide_offset, 8)
 		palette_panel.size = Vector2(panel_w, panel_h)
+	if _palette_toggle_btn and _palette_toggle_btn.visible:
+		_palette_toggle_btn.position = Vector2(vp4.x - panel_w - 8 + slide_offset - 28, 8)

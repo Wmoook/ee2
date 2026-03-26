@@ -14,6 +14,7 @@ func _ready() -> void:
 	# Connect network signals for player spawn/despawn
 	NetworkManager.player_connected.connect(_on_player_connected)
 	NetworkManager.player_disconnected.connect(_on_player_disconnected)
+	NetworkManager.chat_received.connect(_on_chat_for_speech)
 
 	# Load world: host loads from file, client already has it (loaded in main_menu)
 	if NetworkManager.is_host or NetworkManager._peer == null:
@@ -156,6 +157,14 @@ func _on_player_disconnected(peer_id: int) -> void:
 func _get_player(peer_id: int) -> Node:
 	return _players.get(peer_id, null)
 
+func _on_chat_for_speech(sender_name: String, _message: String) -> void:
+	# Set speech on local player when they send a message
+	var my_id: int = 1
+	if NetworkManager._peer != null:
+		my_id = multiplayer.get_unique_id()
+	if _players.has(my_id) and sender_name == GameState.player_name:
+		_players[my_id].set_speech(_message)
+
 func _process(_delta: float) -> void:
 	# Keep vignette covering viewport
 	if _vignette and _camera_exists():
@@ -169,6 +178,10 @@ func _camera_exists() -> bool:
 	return cam != null
 
 func _input(event: InputEvent) -> void:
+	# Don't handle keys when typing in chat or any text field
+	var focused: Control = get_viewport().gui_get_focus_owner()
+	if focused is LineEdit or focused is TextEdit:
+		return
 	if event is InputEventKey and event.pressed and not event.echo:
 		if event.physical_keycode == KEY_E:
 			GameState.set_edit_mode(not GameState.is_edit_mode)

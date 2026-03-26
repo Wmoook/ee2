@@ -35,8 +35,10 @@ var active_group_filter: int = 0  # 0 = All, >0 = specific group ID
 var polylines: Array = []
 var _pending_net_tiles: Array = []  # Queued tile edits to send with next position broadcast
 var _pending_net_freeblocks: Array = []  # Queued free block adds
+var _pending_net_fb_replace: Dictionary = {}  # Queued free block bulk replace {remove_count, blocks}
 var _pending_net_polylines: Array = []  # Queued polyline adds
 var _pending_net_deletions: Array = []  # Queued deletions {type, pos_x, pos_y}
+var _pending_net_gz: Array = []  # Queued gravity zone changes
 var wedge_pairs: Array = []  # Pre-computed [{a: poly_dict, b: poly_dict}]
 # Global spatial hash: all render edges from all polylines in one hash
 # Key: cell_key -> Array of {edge: PackedVector2Array, si: int, poly_idx: int, rd: Array}
@@ -1177,14 +1179,62 @@ func check_polyline_crossing(x1: float, y1: float, x2: float, y2: float, player_
 	return result
 
 func remove_polyline_near(pos: Vector2, radius: float = 16.0) -> void:
+	# Find the first matching polyline
+	var hit_idx: int = -1
 	for i in range(polylines.size() - 1, -1, -1):
 		var poly: Dictionary = polylines[i]
 		var pts: PackedVector2Array = poly.points
 		for pi in range(pts.size()):
 			if pts[pi].distance_to(pos) < radius:
-				polylines.remove_at(i)
-				polylines_changed.emit()
-				return
+				hit_idx = i
+				break
+		if hit_idx >= 0:
+			break
+	if hit_idx < 0:
+		return
+	# Collect all related indices (render_only parent + collision_only split pairs)
+	var to_remove: Array = [hit_idx]
+	var hit_poly: Dictionary = polylines[hit_idx]
+	# If this is a split pair half, find the other half and the render_only parent
+	if hit_poly.get("collision_only", false):
+		var pair: int = hit_poly.get("split_pair", -1)
+		if pair >= 0 and pair < polylines.size() and not to_remove.has(pair):
+			to_remove.append(pair)
+		# Find the render_only parent (usually right before the collision halves)
+		for j in range(polylines.size()):
+			if j != hit_idx and polylines[j].get("render_only", false):
+				# Check if it's the same curve by comparing points overlap
+				var rpts: PackedVector2Array = polylines[j].points
+				var hpts: PackedVector2Array = hit_poly.points
+				if rpts.size() > 0 and hpts.size() > 0:
+					if rpts[0].distance_to(hpts[0]) < 2.0 or rpts[-1].distance_to(hpts[-1]) < 2.0 or rpts[0].distance_to(hpts[-1]) < 2.0 or rpts[-1].distance_to(hpts[0]) < 2.0:
+						if not to_remove.has(j):
+							to_remove.append(j)
+	elif hit_poly.get("render_only", false):
+		# Clicked on the render parent — find its collision halves
+		var rpts: PackedVector2Array = hit_poly.points
+		for j in range(polylines.size()):
+			if j == hit_idx:
+				continue
+			if polylines[j].get("collision_only", false):
+				var cpts: PackedVector2Array = polylines[j].points
+				if cpts.size() > 0 and rpts.size() > 0:
+					if rpts[0].distance_to(cpts[0]) < 2.0 or rpts[-1].distance_to(cpts[-1]) < 2.0 or rpts[0].distance_to(cpts[-1]) < 2.0 or rpts[-1].distance_to(cpts[0]) < 2.0:
+						if not to_remove.has(j):
+							to_remove.append(j)
+	# Remove in reverse order so indices stay valid
+	to_remove.sort()
+	for k in range(to_remove.size() - 1, -1, -1):
+		polylines.remove_at(to_remove[k])
+	# Rebuild spatial hashes and wedge pairs after removal
+	_rebuild_wedge_pairs()
+	_rebuild_global_render_hash()
+	# Invalidate cached mesh on remaining polylines (indices shifted)
+	for p in polylines:
+		p.erase("_cached_mesh")
+		p.erase("_cached_tex")
+	_pending_net_poly_fullsync = true
+	polylines_changed.emit()
 
 func _ready() -> void:
 	pass
@@ -1573,33 +1623,58 @@ func net_set_tile(x: int, y: int, block_id: int, layer: String = "fg") -> void:
 		f.store_line("NET_SET_TILE x=%d y=%d id=%d layer=%s queue=%d peer=%s" % [x, y, block_id, layer, _pending_net_tiles.size(), str(NetworkManager._peer)])
 		f.close()
 
+var _pending_net_clear_world: bool = false  # Queued full world clear
+var _pending_net_poly_fullsync: bool = false  # Send full polyline state
+
+## Network-aware full world clear (keeps border)
+func net_clear_world() -> void:
+	free_blocks.clear()
+	block_groups.clear()
+	polylines.clear()
+	lines.clear()
+	gravity_zones.clear()
+	for y in range(1, world_height - 1):
+		for x in range(1, world_width - 1):
+			set_fg_tile(x, y, 0)
+			set_bg_tile(x, y, 0)
+			set_rotation(x, y, 0)
+	tile_changed.emit(0, 0, 0)
+	polylines_changed.emit()
+	_pending_net_clear_world = true
+
+## Network-aware free block bulk replace (remove last N, add new ones)
+func net_replace_free_blocks(remove_count: int, new_blocks: Array) -> void:
+	# Locally: already done by caller (resize + append)
+	# Queue for network: tell remote to do the same
+	var serialized: Array = []
+	for fb in new_blocks:
+		serialized.append({"pos_x": fb.pos.x, "pos_y": fb.pos.y, "id": fb.id, "rot": fb.get("rotation", 0.0)})
+	_pending_net_fb_replace = {"remove": remove_count, "blocks": serialized}
+
+## Network-aware gravity zone add
+func net_add_gravity_zone(center: Vector2, radius: float, strength: float = 2.0, center_radius: float = 8.0) -> void:
+	gravity_zones.add_zone(center, radius, strength, center_radius)
+	_pending_net_gz.append({"action": "add", "cx": center.x, "cy": center.y, "r": radius, "s": strength, "cr": center_radius})
+
+## Network-aware gravity zone remove
+func net_remove_gravity_zone_near(pos: Vector2, threshold: float = 24.0) -> void:
+	gravity_zones.remove_zone_near(pos, threshold)
+	_pending_net_gz.append({"action": "remove", "cx": pos.x, "cy": pos.y, "t": threshold})
+
+## Network-aware gravity zone clear
+func net_clear_gravity_zones() -> void:
+	gravity_zones.clear()
+	_pending_net_gz.append({"action": "clear"})
+
 func build_sample_room() -> void:
 	init_empty_world(400, 200)
-	# Border
+	# Completely empty world — just a border so players don't fall into void
 	for x in range(world_width):
 		set_fg_tile(x, 0, 9)
 		set_fg_tile(x, world_height - 1, 9)
 	for y in range(world_height):
 		set_fg_tile(0, y, 9)
 		set_fg_tile(world_width - 1, y, 9)
-	# Floor
-	for x in range(1, world_width - 1):
-		set_fg_tile(x, world_height - 2, 10)
-	# Platforms
-	for x in range(8, 12):
-		set_fg_tile(x, world_height - 5, 12)
-	for x in range(15, 19):
-		set_fg_tile(x, world_height - 8, 14)
-	for x in range(22, 30):
-		set_fg_tile(x, world_height - 11, 15)
-	# Hazard
-	for x in range(35, 40):
-		set_fg_tile(x, world_height - 2, 0)
-		set_fg_tile(x, world_height - 2, 361)
-	# Keys and doors
-	set_fg_tile(32, world_height - 3, 6)
-	for y in range(world_height - 6, world_height - 2):
-		set_fg_tile(42, y, 23)
-	# Spawn
-	spawn_points = [Vector2(3, world_height - 4), Vector2(5, world_height - 4)]
+	# Spawn at top-left corner (on the border floor)
+	spawn_points = [Vector2(2, world_height - 2), Vector2(4, world_height - 2)]
 	world_loaded.emit()

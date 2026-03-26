@@ -8,12 +8,14 @@ extends Control
 @onready var quit_btn: Button = $VBox/QuitBtn
 @onready var ip_input: LineEdit = $VBox/HBoxJoin/IPInput
 @onready var port_input: LineEdit = $VBox/HBoxJoin/PortInput
+@onready var paste_btn: Button = $VBox/HBoxJoin/PasteBtn
 @onready var status_label: Label = $VBox/StatusLabel
 
 func _ready() -> void:
 	host_btn.pressed.connect(_on_host)
 	join_btn.pressed.connect(_on_join)
 	quit_btn.pressed.connect(_on_quit)
+	paste_btn.pressed.connect(_on_paste)
 	NetworkManager.connection_succeeded.connect(_on_connected)
 	NetworkManager.connection_failed.connect(_on_connect_failed)
 	NetworkManager.server_disconnected.connect(_on_server_dc)
@@ -76,6 +78,31 @@ func _on_server_dc() -> void:
 
 func _on_quit() -> void:
 	get_tree().quit()
+
+func _on_paste() -> void:
+	var clipboard_text := DisplayServer.clipboard_get()
+	if clipboard_text.is_empty() and OS.has_feature("web"):
+		# Web fallback: use JavaScript clipboard API
+		JavaScriptBridge.eval("""
+			navigator.clipboard.readText().then(function(text) {
+				var el = document.querySelector('canvas');
+				if (el) el.dispatchEvent(new CustomEvent('paste_text', {detail: text}));
+			});
+		""")
+		# Also try the sync method
+		JavaScriptBridge.eval("""
+			var text = prompt('Paste your tunnel URL here:');
+			if (text) {
+				window._godot_paste = text;
+			}
+		""")
+		var result = JavaScriptBridge.eval("window._godot_paste || ''")
+		if result is String and not result.is_empty():
+			ip_input.text = result.strip_edges()
+			JavaScriptBridge.eval("window._godot_paste = null")
+			return
+	if not clipboard_text.is_empty():
+		ip_input.text = clipboard_text.strip_edges()
 
 func _apply_settings() -> void:
 	GameState.player_name = name_input.text.strip_edges()

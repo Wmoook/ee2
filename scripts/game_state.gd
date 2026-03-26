@@ -144,6 +144,7 @@ var _portal_set: Dictionary = {}
 var _switch_set: Dictionary = {}
 
 var camera_offset: Vector2 = Vector2.ZERO  # Manual camera pan offset
+var trails_enabled: bool = true  # Fire trail toggle
 
 signal edit_mode_changed(enabled: bool)
 signal block_selected(block_id: int)

@@ -61,6 +61,10 @@ var _smooth_look: Vector2 = Vector2.ZERO  # Smoothed look-ahead offset
 var _remote_sync: RemotePlayerSync = null
 var _sync_tick_counter: int = 0
 var _smooth_normal: Vector2 = Vector2(0, -1)  # Smoothed surface normal for smiley
+var _speech_label: Label = null
+var _speech_text: String = ""
+var _speech_timer: float = 0.0
+var _pending_speech: String = ""  # Queued speech to broadcast
 
 func _ready() -> void:
 	for i in range(2):
@@ -111,6 +115,22 @@ func _ready() -> void:
 	_name_label.z_index = 5
 	add_child(_name_label)
 
+	# Speech bubble (shows last chat message when idle)
+	_speech_label = Label.new()
+	_speech_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_speech_label.add_theme_font_size_override("font_size", 8)
+	_speech_label.add_theme_color_override("font_color", Color.WHITE)
+	_speech_label.add_theme_color_override("font_shadow_color", Color(0, 0, 0, 0.9))
+	_speech_label.add_theme_constant_override("shadow_offset_x", 1)
+	_speech_label.add_theme_constant_override("shadow_offset_y", 1)
+	_speech_label.position = Vector2(-40, -14)
+	_speech_label.size = Vector2(96, 14)
+	_speech_label.z_as_relative = false
+	_speech_label.z_index = 6
+	_speech_label.visible = false
+	_speech_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	add_child(_speech_label)
+
 	# Debug overlay (toggle with P key)
 	var _dbg_canvas := CanvasLayer.new()
 	_dbg_canvas.layer = 100
@@ -134,6 +154,8 @@ func _ready() -> void:
 		_camera.limit_smoothed = true
 		# Independent camera (NOT child) - exact EE behavior
 		call_deferred("_setup_camera")
+		# Reset physics polyline cache when curves are deleted
+		WorldManager.polylines_changed.connect(_on_polylines_changed)
 	else:
 		# Remote player — init sync module, set spawn position
 		_remote_sync = RemotePlayerSync.new()
@@ -218,6 +240,43 @@ func _physics_process(delta: float) -> void:
 	if not is_local:
 		# Remote player: interpolate position from network state
 		if _remote_sync:
+			# Handle remote death animation
+			if _remote_sync.is_dead and not _is_dead:
+				_is_dead = true
+				_death_timer = 0.0
+				_gz_death = _remote_sync.gz_death
+				_gz_death_center = _remote_sync.gz_death_center
+				if not _gz_death:
+					_smiley_sprite.visible = false
+				_name_label.visible = false
+			elif not _remote_sync.is_dead and _is_dead:
+				# Respawned
+				_is_dead = false
+				_gz_death = false
+				_smiley_sprite.visible = true
+				_smiley_sprite.modulate = Color.WHITE
+				_smiley_sprite.scale = Vector2(ANIM_SCALE + 0.35 * 2.0 / 40.0, ANIM_SCALE + 0.35 * 2.0 / 40.0)
+				_smiley_sprite.rotation = 0.0
+				_name_label.visible = true
+				_fire_particles.clear()
+			if _is_dead:
+				_death_timer += delta
+				if _gz_death and _smiley_sprite:
+					var t: float = clampf(_death_timer / 0.5, 0.0, 1.0)
+					var to_center: Vector2 = _gz_death_center - (_visual_pos + Vector2(8, 8))
+					var stretch_angle: float = to_center.angle()
+					_smiley_sprite.rotation = stretch_angle + PI * 0.5
+					var base_s: float = ANIM_SCALE + 0.35 * 2.0 / 40.0
+					var stretch_y: float = lerpf(1.0, 2.5, t * t)
+					var thin_x: float = lerpf(1.0, 0.1, t * t)
+					var shrink: float = lerpf(1.0, 0.0, t * t * t)
+					_smiley_sprite.scale = Vector2(base_s * thin_x * shrink, base_s * stretch_y * shrink)
+					position = _visual_pos.lerp(_gz_death_center - Vector2(8, 8), t * t * t)
+					_smiley_sprite.modulate = Color(1, lerpf(1, 0.1, t), lerpf(1, 0.0, t), lerpf(1.0, 0.0, t * t))
+					if t >= 1.0:
+						_smiley_sprite.visible = false
+				return
+
 			_visual_pos = _remote_sync.get_interpolated_position(delta)
 			position = Vector2(floor(_visual_pos.x), floor(_visual_pos.y))
 			if _smiley_sprite:
@@ -225,7 +284,7 @@ func _physics_process(delta: float) -> void:
 					var af: int = clampi(_remote_sync.anim_frame, 0, _anim_textures.size() - 1)
 					_smiley_sprite.texture = _anim_textures[af]
 				_smiley_sprite.flip_h = _remote_sync.flip_h
-				_smiley_sprite.rotation = _remote_sync.rotation
+				_smiley_sprite.rotation = lerp_angle(_smiley_sprite.rotation, _remote_sync.rotation, 0.4)
 				_smiley_sprite.modulate = Color(0.6, 0.8, 1.0, 0.5) if _remote_sync.is_god else Color.WHITE
 			# Generate fire trail for remote player based on their speed
 			if _use_anim_sprite and not _remote_sync.is_god:
@@ -329,30 +388,54 @@ func _physics_process(delta: float) -> void:
 		_sync_tick_counter = 0
 		var af: int = _anim_frame
 		var fh: bool = _smiley_sprite.flip_h if _smiley_sprite else false
-		var rot: float = _smiley_sprite.rotation if _smiley_sprite else 0.0
+		var rot: float = fmod(_smiley_sprite.rotation, TAU) if _smiley_sprite else 0.0
 		var _bdata: Dictionary = {
 			"x": physics.get_pixel_x(), "y": physics.get_pixel_y(),
 			"sx": physics._speedX, "sy": physics._speedY,
 			"af": af, "fh": fh, "r": rot,
-			"g": physics.is_god_mode, "gr": physics.is_grounded
+			"g": physics.is_god_mode, "gr": physics.is_grounded,
+			"dead": _is_dead, "gzd": _gz_death
 		}
+		if _gz_death:
+			_bdata["gzc_x"] = _gz_death_center.x
+			_bdata["gzc_y"] = _gz_death_center.y
+		if not _pending_speech.is_empty():
+			_bdata["sp"] = _pending_speech
+			_pending_speech = ""
 		_broadcast_state.rpc(_bdata)
 		# Send tiles via RELIABLE RPC
 		if WorldManager._pending_net_tiles.size() > 0:
 			_broadcast_tiles.rpc(WorldManager._pending_net_tiles.duplicate())
 			WorldManager._pending_net_tiles.clear()
-		# Send free blocks via RELIABLE RPC
-		if WorldManager._pending_net_freeblocks.size() > 0:
-			_broadcast_freeblocks.rpc(WorldManager._pending_net_freeblocks.duplicate())
+		# All world edits go through NetworkManager (autoload, stable RPC path)
+		if WorldManager._pending_net_clear_world:
+			NetworkManager.send_clear_world()
+			WorldManager._pending_net_clear_world = false
+			WorldManager._pending_net_tiles.clear()
 			WorldManager._pending_net_freeblocks.clear()
-		# Send polylines via RELIABLE RPC
-		if WorldManager._pending_net_polylines.size() > 0:
-			_broadcast_polylines.rpc(WorldManager._pending_net_polylines.duplicate())
 			WorldManager._pending_net_polylines.clear()
-		# Send deletions via RELIABLE RPC
-		if WorldManager._pending_net_deletions.size() > 0:
-			_broadcast_deletions.rpc(WorldManager._pending_net_deletions.duplicate())
 			WorldManager._pending_net_deletions.clear()
+			WorldManager._pending_net_fb_replace = {}
+			WorldManager._pending_net_gz.clear()
+		if not WorldManager._pending_net_fb_replace.is_empty():
+			var rep: Dictionary = WorldManager._pending_net_fb_replace
+			NetworkManager.send_fb_replace(rep.remove, rep.blocks)
+			WorldManager._pending_net_fb_replace = {}
+		if WorldManager._pending_net_freeblocks.size() > 0:
+			NetworkManager.send_freeblocks(WorldManager._pending_net_freeblocks.duplicate())
+			WorldManager._pending_net_freeblocks.clear()
+		if WorldManager._pending_net_polylines.size() > 0:
+			NetworkManager.send_polylines(WorldManager._pending_net_polylines.duplicate())
+			WorldManager._pending_net_polylines.clear()
+		if WorldManager._pending_net_deletions.size() > 0:
+			NetworkManager.send_deletions(WorldManager._pending_net_deletions.duplicate())
+			WorldManager._pending_net_deletions.clear()
+		if WorldManager._pending_net_poly_fullsync:
+			NetworkManager.send_poly_fullsync()
+			WorldManager._pending_net_poly_fullsync = false
+		if WorldManager._pending_net_gz.size() > 0:
+			NetworkManager.send_gz_changes(WorldManager._pending_net_gz.duplicate())
+			WorldManager._pending_net_gz.clear()
 
 	_phys_pos = Vector2(physics.get_pixel_x(), physics.get_pixel_y())
 	# Visual position: pixel-snap on grid tiles, sub-pixel on curves/slopes
@@ -448,7 +531,7 @@ func _physics_process(delta: float) -> void:
 			var spd_total: float = absf(physics._speedX) + absf(physics._speedY)
 			if spd_total > 0.3:
 				# Rolling ball: accumulate rotation from horizontal speed
-				_smiley_sprite.rotation += physics._speedX / 8.0
+				_smiley_sprite.rotation = fmod(_smiley_sprite.rotation + physics._speedX / 8.0, TAU)
 			else:
 				# No momentum: lerp back to upright so directional sprites look correct
 				_smiley_sprite.rotation = lerp_angle(_smiley_sprite.rotation, 0.0, 0.3)
@@ -474,7 +557,7 @@ func _physics_process(delta: float) -> void:
 			if _is_boxed:
 				target = 0.0  # Suppress trail when boxed in
 			_glow_intensity = lerpf(_glow_intensity, target, 0.15)
-			if _glow_intensity > 0.1:
+			if _glow_intensity > 0.1 and GameState.trails_enabled:
 				var vel: Vector2 = Vector2(physics._speedX, physics._speedY)
 				var spd_len: float = vel.length()
 				if spd_len > 0.5:
@@ -579,7 +662,7 @@ func _physics_process(delta: float) -> void:
 				})
 		# Clear stray particles when stopped (but not in gravity zone — let them get sucked in)
 		var _in_gz: bool = WorldManager.gravity_zones.get_gravity_at(physics.x + 8.0, physics.y + 8.0).in_zone
-		if _glow_intensity < 0.05 and not _fire_particles.is_empty() and not _in_gz and not _is_dead:
+		if (not GameState.trails_enabled or _glow_intensity < 0.05) and not _fire_particles.is_empty() and not _in_gz and not _is_dead:
 			_fire_particles.clear()
 			_prev_fire_pos = Vector2.ZERO
 			if _fire_layer:
@@ -645,6 +728,14 @@ func _physics_process(delta: float) -> void:
 			_name_fade = minf(_name_fade + delta * 2.0, 1.0)  # Fade in over 0.5s
 	if _name_label:
 		_name_label.modulate = Color(1, 1, 1, _name_fade)
+	# Speech bubble: show when idle 2s and has text, hide on move
+	if _speech_label:
+		if _speech_timer > 0:
+			_speech_timer -= delta
+		if _total_speed > 0.3 or _speech_timer <= 0:
+			_speech_label.visible = false
+		elif _idle_timer > 2.0 and not _speech_text.is_empty():
+			_speech_label.visible = true
 
 	# Hazard check
 	if not physics.is_god_mode:
@@ -717,7 +808,7 @@ func _process(delta: float) -> void:
 	# When dead: if only 1 particle left, it's the stray — kill it
 	if _is_dead and _fire_particles.size() == 1:
 		_fire_particles.clear()
-	if _show_hitboxes or _fire_particles.size() > 0:
+	if _show_hitboxes:
 		queue_redraw()
 
 func _draw() -> void:
@@ -781,8 +872,12 @@ func _broadcast_state(data: Dictionary) -> void:
 		var p: Node = scene._get_player(sender)
 		if p and p != self and p._remote_sync:
 			p._remote_sync.receive_state(data)
+			if data.has("sp"):
+				p.set_speech(str(data.sp))
 	elif _remote_sync and peer_id == sender:
 		_remote_sync.receive_state(data)
+		if data.has("sp"):
+			set_speech(str(data.sp))
 
 @rpc("any_peer", "reliable", "call_remote")
 func _broadcast_tiles(tiles: Array) -> void:
@@ -791,6 +886,34 @@ func _broadcast_tiles(tiles: Array) -> void:
 			WorldManager.set_fg_tile(tile.x, tile.y, tile.id)
 		elif tile.l == "bg":
 			WorldManager.set_bg_tile(tile.x, tile.y, tile.id)
+
+@rpc("any_peer", "reliable", "call_remote")
+func _broadcast_clear_world() -> void:
+	WorldManager.free_blocks.clear()
+	WorldManager.block_groups.clear()
+	WorldManager.polylines.clear()
+	WorldManager.lines.clear()
+	WorldManager.gravity_zones.clear()
+	for y in range(1, WorldManager.world_height - 1):
+		for x in range(1, WorldManager.world_width - 1):
+			WorldManager.set_fg_tile(x, y, 0)
+			WorldManager.set_bg_tile(x, y, 0)
+			WorldManager.set_rotation(x, y, 0)
+	WorldManager.tile_changed.emit(0, 0, 0)
+	WorldManager.polylines_changed.emit()
+	# Server relays to clients
+	if NetworkManager.is_host and multiplayer.get_remote_sender_id() != 0:
+		_broadcast_clear_world.rpc()
+
+@rpc("any_peer", "reliable", "call_remote")
+func _broadcast_fb_replace(remove_count: int, blocks: Array) -> void:
+	# Remove last N free blocks (the ones being rotated)
+	if remove_count > 0 and remove_count <= WorldManager.free_blocks.size():
+		WorldManager.free_blocks.resize(WorldManager.free_blocks.size() - remove_count)
+	# Add the new rotated blocks
+	for b in blocks:
+		WorldManager.free_blocks.append({"pos": Vector2(b.pos_x, b.pos_y), "id": b.id, "rotation": b.rot})
+	WorldManager.tile_changed.emit(0, 0, 0)
 
 @rpc("any_peer", "reliable", "call_remote")
 func _broadcast_freeblocks(blocks: Array) -> void:
@@ -824,7 +947,7 @@ func _input(event: InputEvent) -> void:
 	if not is_local:
 		return
 	# Ctrl+scroll = zoom
-	if event is InputEventMouseButton and Input.is_key_pressed(KEY_CTRL) and _camera:
+	if event is InputEventMouseButton and (Input.is_key_pressed(KEY_CTRL) or Input.is_key_pressed(KEY_META)) and _camera:
 		if event.button_index == MOUSE_BUTTON_WHEEL_UP:
 			_camera.zoom = clampf(_camera.zoom.x + 0.5, 0.5, 10.0) * Vector2.ONE
 			get_viewport().set_input_as_handled()
@@ -955,6 +1078,24 @@ func _die() -> void:
 		_fire_layer.queue_redraw()
 	if not _gz_death:
 		_smiley_sprite.visible = false
+
+func _on_polylines_changed() -> void:
+	# Reset all cached polyline indices in physics — polyline array may have shifted
+	physics._stick_poly_idx = -1
+	physics._stick_poly_ticks = 99
+	physics._last_stick_poly = -1
+	physics._poly_cross_cooldown = 0
+	physics._prev_push_normal = Vector2.ZERO
+	physics.is_wedged = false
+	physics.on_rotated_block = false
+
+func set_speech(text: String) -> void:
+	_speech_text = text
+	_speech_timer = 8.0  # Show for 8 seconds
+	if _speech_label:
+		_speech_label.text = text
+	if is_local:
+		_pending_speech = text
 
 func _respawn() -> void:
 	_is_dead = false

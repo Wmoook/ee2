@@ -114,6 +114,12 @@ custom_minimum_size = Vector2(0, 32)
 placeholder_text = "Tunnel URL or IP"
 text = ""
 
+[node name="PasteBtn" type="Button" parent="VBox/HBoxJoin"]
+layout_mode = 2
+custom_minimum_size = Vector2(60, 32)
+theme_override_font_sizes/font_size = 12
+text = "PASTE"
+
 [node name="PortInput" type="LineEdit" parent="VBox/HBoxJoin"]
 layout_mode = 2
 custom_minimum_size = Vector2(80, 32)

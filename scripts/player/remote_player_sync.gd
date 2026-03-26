@@ -12,6 +12,9 @@ var flip_h: bool = false
 var rotation: float = 0.0
 var is_god: bool = false
 var is_grounded: bool = false
+var is_dead: bool = false
+var gz_death: bool = false
+var gz_death_center: Vector2 = Vector2.ZERO
 
 const SYNC_INTERVAL: float = 0.05  # 50ms = 20Hz
 
@@ -24,6 +27,10 @@ func receive_state(data: Dictionary) -> void:
 	rotation = data.get("r", 0.0)
 	is_god = data.get("g", false)
 	is_grounded = data.get("gr", false)
+	is_dead = data.get("dead", false)
+	gz_death = data.get("gzd", false)
+	if gz_death:
+		gz_death_center = Vector2(data.get("gzc_x", 0), data.get("gzc_y", 0))
 	interp_t = 0.0
 
 func get_interpolated_position(delta: float) -> Vector2:

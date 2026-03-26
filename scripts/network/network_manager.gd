@@ -6,6 +6,7 @@ signal connection_succeeded()
 signal connection_failed()
 signal server_disconnected()
 signal tunnel_ready(url: String)
+signal chat_received(sender_name: String, message: String)
 
 var players: Dictionary = {}  # peer_id -> {name, smiley_id}
 var is_host: bool = false
@@ -207,3 +208,178 @@ func _net_sync_tile(x: int, y: int, block_id: int, layer: String) -> void:
 	# the server must re-broadcast so other clients also receive the change.
 	if is_host and multiplayer.get_remote_sender_id() != 0:
 		_net_sync_tile.rpc(x, y, block_id, layer)
+
+## --- World edit sync (all on autoload for stable RPC path) ---
+
+func send_clear_world() -> void:
+	if _peer == null:
+		return
+	_receive_clear_world.rpc()
+
+@rpc("any_peer", "reliable", "call_remote")
+func _receive_clear_world() -> void:
+	WorldManager.free_blocks.clear()
+	WorldManager.block_groups.clear()
+	WorldManager.polylines.clear()
+	WorldManager.lines.clear()
+	WorldManager.gravity_zones.clear()
+	for y in range(1, WorldManager.world_height - 1):
+		for x in range(1, WorldManager.world_width - 1):
+			WorldManager.set_fg_tile(x, y, 0)
+			WorldManager.set_bg_tile(x, y, 0)
+			WorldManager.set_rotation(x, y, 0)
+	WorldManager.tile_changed.emit(0, 0, 0)
+	WorldManager.polylines_changed.emit()
+	if is_host and multiplayer.get_remote_sender_id() != 0:
+		_receive_clear_world.rpc()
+
+func send_freeblocks(blocks: Array) -> void:
+	if _peer == null:
+		return
+	_receive_freeblocks.rpc(blocks)
+
+@rpc("any_peer", "reliable", "call_remote")
+func _receive_freeblocks(blocks: Array) -> void:
+	for b in blocks:
+		WorldManager.free_blocks.append({"pos": Vector2(b.pos_x, b.pos_y), "id": b.id, "rotation": b.rot})
+	WorldManager.tile_changed.emit(0, 0, 0)
+	if is_host and multiplayer.get_remote_sender_id() != 0:
+		var sender_id: int = multiplayer.get_remote_sender_id()
+		for pid in players:
+			if pid != 1 and pid != sender_id:
+				_receive_freeblocks.rpc_id(pid, blocks)
+
+func send_fb_replace(remove_count: int, blocks: Array) -> void:
+	if _peer == null:
+		return
+	_receive_fb_replace.rpc(remove_count, blocks)
+
+@rpc("any_peer", "reliable", "call_remote")
+func _receive_fb_replace(remove_count: int, blocks: Array) -> void:
+	if remove_count > 0 and remove_count <= WorldManager.free_blocks.size():
+		WorldManager.free_blocks.resize(WorldManager.free_blocks.size() - remove_count)
+	for b in blocks:
+		WorldManager.free_blocks.append({"pos": Vector2(b.pos_x, b.pos_y), "id": b.id, "rotation": b.rot})
+	WorldManager.tile_changed.emit(0, 0, 0)
+	if is_host and multiplayer.get_remote_sender_id() != 0:
+		var sender_id: int = multiplayer.get_remote_sender_id()
+		for pid in players:
+			if pid != 1 and pid != sender_id:
+				_receive_fb_replace.rpc_id(pid, remove_count, blocks)
+
+func send_polylines(polylines: Array) -> void:
+	if _peer == null:
+		return
+	_receive_polylines.rpc(polylines)
+
+@rpc("any_peer", "reliable", "call_remote")
+func _receive_polylines(poly_data: Array) -> void:
+	for pl in poly_data:
+		var pts: PackedVector2Array = PackedVector2Array()
+		for p in pl.pts:
+			pts.append(Vector2(p.x, p.y))
+		WorldManager.add_polyline(pts, pl.side, pl.bid)
+	if is_host and multiplayer.get_remote_sender_id() != 0:
+		var sender_id: int = multiplayer.get_remote_sender_id()
+		for pid in players:
+			if pid != 1 and pid != sender_id:
+				_receive_polylines.rpc_id(pid, poly_data)
+
+func send_deletions(deletions: Array) -> void:
+	if _peer == null:
+		return
+	_receive_deletions.rpc(deletions)
+
+@rpc("any_peer", "reliable", "call_remote")
+func _receive_deletions(deletions: Array) -> void:
+	for d in deletions:
+		if d.type == "fb":
+			for i in range(WorldManager.free_blocks.size() - 1, -1, -1):
+				var fb: Dictionary = WorldManager.free_blocks[i]
+				if fb.id == d.id and absf(fb.pos.x - d.x) < 2.0 and absf(fb.pos.y - d.y) < 2.0:
+					WorldManager.free_blocks.remove_at(i)
+					break
+		elif d.type == "poly":
+			WorldManager.remove_polyline_near(Vector2(d.x, d.y), d.r)
+	WorldManager.tile_changed.emit(0, 0, 0)
+	if is_host and multiplayer.get_remote_sender_id() != 0:
+		var sender_id: int = multiplayer.get_remote_sender_id()
+		for pid in players:
+			if pid != 1 and pid != sender_id:
+				_receive_deletions.rpc_id(pid, deletions)
+
+func send_poly_fullsync() -> void:
+	if _peer == null:
+		return
+	# Serialize all non-collision-only, non-render-only polylines
+	var poly_data: Array = []
+	for poly in WorldManager.polylines:
+		if poly.get("collision_only", false):
+			continue
+		if poly.get("render_only", false):
+			continue
+		var pts_arr: Array = []
+		for pt in poly.points:
+			pts_arr.append({"x": pt.x, "y": pt.y})
+		poly_data.append({"pts": pts_arr, "side": poly.side, "bid": poly.get("block_id", 9)})
+	_receive_poly_fullsync.rpc(poly_data)
+
+@rpc("any_peer", "reliable", "call_remote")
+func _receive_poly_fullsync(poly_data: Array) -> void:
+	# Replace ALL polylines with the received set
+	WorldManager.polylines.clear()
+	for pd in poly_data:
+		var packed_pts: PackedVector2Array = PackedVector2Array()
+		for pt in pd.pts:
+			packed_pts.append(Vector2(pt.x, pt.y))
+		WorldManager.add_polyline(packed_pts, pd.side, pd.get("bid", 9))
+	WorldManager.polylines_changed.emit()
+	# Server relays
+	if is_host and multiplayer.get_remote_sender_id() != 0:
+		var sender_id: int = multiplayer.get_remote_sender_id()
+		for pid in players:
+			if pid != 1 and pid != sender_id:
+				_receive_poly_fullsync.rpc_id(pid, poly_data)
+
+func send_gz_changes(gz_changes: Array) -> void:
+	if _peer == null:
+		return
+	_receive_gz.rpc(gz_changes)
+
+@rpc("any_peer", "reliable", "call_remote")
+func _receive_gz(gz_changes: Array) -> void:
+	for gz in gz_changes:
+		var action: String = str(gz.get("action", ""))
+		if action == "add":
+			WorldManager.gravity_zones.add_zone(
+				Vector2(gz.cx, gz.cy), gz.r, gz.get("s", 2.0), gz.get("cr", 8.0))
+		elif action == "remove":
+			WorldManager.gravity_zones.remove_zone_near(
+				Vector2(gz.cx, gz.cy), gz.get("t", 24.0))
+		elif action == "clear":
+			WorldManager.gravity_zones.clear()
+	# Server relays to other clients (not back to sender)
+	if is_host and multiplayer.get_remote_sender_id() != 0:
+		var sender_id: int = multiplayer.get_remote_sender_id()
+		for pid in players:
+			if pid != 1 and pid != sender_id:
+				_receive_gz.rpc_id(pid, gz_changes)
+
+func send_chat(message: String) -> void:
+	if _peer == null:
+		# Offline: just show locally
+		chat_received.emit(GameState.player_name, message)
+		return
+	_receive_chat.rpc(GameState.player_name, message)
+	# Also show locally (rpc call_remote doesn't call on self)
+	chat_received.emit(GameState.player_name, message)
+
+@rpc("any_peer", "reliable", "call_remote")
+func _receive_chat(sender_name: String, message: String) -> void:
+	chat_received.emit(sender_name, message)
+	# Server relays to other clients (not back to sender)
+	if is_host and multiplayer.get_remote_sender_id() != 0:
+		var sender_id: int = multiplayer.get_remote_sender_id()
+		for pid in players:
+			if pid != 1 and pid != sender_id:
+				_receive_chat.rpc_id(pid, sender_name, message)

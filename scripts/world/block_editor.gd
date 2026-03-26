@@ -257,16 +257,7 @@ func _ready() -> void:
 	_clear_btn.add_theme_font_size_override("font_size", 10)
 	_clear_btn.pressed.connect(func():
 		_save_undo()
-		WorldManager.free_blocks.clear()
-		WorldManager.block_groups.clear()
-		WorldManager.polylines.clear()
-		WorldManager.lines.clear()
-		WorldManager.gravity_zones.clear()
-		for y in range(1, WorldManager.world_height - 1):
-			for x in range(1, WorldManager.world_width - 1):
-				WorldManager.net_set_tile(x, y, 0)
-				WorldManager.net_set_bg_tile(x, y, 0)
-				WorldManager.set_rotation(x, y, 0)
+		WorldManager.net_clear_world()
 		_free_originals.clear()
 		_deselect()
 		queue_redraw())
@@ -621,7 +612,7 @@ func _input(event: InputEvent) -> void:
 			var r: float = _grav_zone_center.distance_to(get_global_mouse_position())
 			if _grav_zone_phase == 2 and r > _grav_zone_center_r + 5:
 				_save_undo()
-				WorldManager.gravity_zones.add_zone(_grav_zone_center, r, 2.0, _grav_zone_center_r)
+				WorldManager.net_add_gravity_zone(_grav_zone_center, r, 2.0, _grav_zone_center_r)
 				_grav_zone_dragging = false
 				_grav_zone_phase = 0
 			elif _grav_zone_phase == 2 and r <= _grav_zone_center_r + 5:
@@ -637,7 +628,7 @@ func _input(event: InputEvent) -> void:
 				_grav_zone_phase = 0
 			else:
 				_save_undo()
-				WorldManager.gravity_zones.remove_zone_near(get_global_mouse_position())
+				WorldManager.net_remove_gravity_zone_near(get_global_mouse_position())
 			queue_redraw()
 			return
 		if (event is InputEventMouseMotion or event is InputEventKey) and _grav_zone_dragging:
@@ -673,15 +664,6 @@ func _input(event: InputEvent) -> void:
 	# Aligned mode: shift = rotated select, normal = place
 	if _align_mode and Input.is_key_pressed(KEY_SHIFT):
 		if event.is_action_pressed("place_block"):
-			# Shift+click near gravity zone center = delete it
-			var _gz_mouse: Vector2 = get_global_mouse_position()
-			for _gzi in range(WorldManager.gravity_zones.zones.size()):
-				if _gz_mouse.distance_to(WorldManager.gravity_zones.zones[_gzi].center) < 16.0:
-					_save_undo()
-					WorldManager.gravity_zones.zones.remove_at(_gzi)
-					WorldManager.gravity_zones.zones_changed.emit()
-					queue_redraw()
-					return
 			# Check for block under cursor — show selection immediately
 			var _pmg: Vector2 = get_global_mouse_position()
 			var _pfb_idx: int = -1
@@ -2044,21 +2026,29 @@ func _rotate_free_blocks(angle_deg: float) -> void:
 	var rad: float = deg_to_rad(angle_deg)
 	# Remove only the blocks from this selection (keep previously placed free blocks)
 	# Current selection blocks are at the END of the array (_free_originals.size() count)
-	WorldManager.free_blocks.resize(WorldManager.free_blocks.size() - _free_originals.size())
+	var remove_count: int = _free_originals.size()
+	WorldManager.free_blocks.resize(WorldManager.free_blocks.size() - remove_count)
 
 	# Collect ALL corners of ALL blocks in world space
 	var all_corners: Array = []
+	var new_blocks: Array = []
 	for orig in _free_originals:
 		var rel: Vector2 = orig.pos + Vector2(8, 8) - _free_center
 		var rotated_pos: Vector2 = rel.rotated(rad)
 		var new_pos: Vector2 = _free_center + rotated_pos - Vector2(8, 8)
-		WorldManager.net_add_free_block({"pos": new_pos, "id": orig.id, "rotation": orig.rot + angle_deg})
+		var fb: Dictionary = {"pos": new_pos, "id": orig.id, "rotation": orig.rot + angle_deg}
+		WorldManager.free_blocks.append(fb)
+		new_blocks.append(fb)
 		# 4 corners of this block
 		var c: Vector2 = new_pos + Vector2(8, 8)
 		all_corners.append(c + Vector2(-8, -8).rotated(rad))
 		all_corners.append(c + Vector2(8, -8).rotated(rad))
 		all_corners.append(c + Vector2(8, 8).rotated(rad))
 		all_corners.append(c + Vector2(-8, 8).rotated(rad))
+
+	# Sync rotation to remote players
+	WorldManager.net_replace_free_blocks(remove_count, new_blocks)
+	WorldManager.tile_changed.emit(0, 0, 0)
 
 	# Bounding rect in local space
 	var min_lx: float = INF
