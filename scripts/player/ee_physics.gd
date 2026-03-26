@@ -288,8 +288,8 @@ func tick(input_h: int, input_v: int, space_just: bool, space_held: bool) -> voi
 		if _ccd_edge or _ccd_center:
 			x = _pre_step_x
 			y = _pre_step_y
-			_speedX = 0
-			_speedY = 0
+			# Don't zero speed — let polyline collision (section 7.15) handle it
+			# This preserves momentum at V intersections (same as normal blocks)
 
 	# 7.15 Polyline collision
 	if not is_god_mode and WorldManager.polylines.size() > 0:
@@ -335,8 +335,8 @@ func tick(input_h: int, input_v: int, space_just: bool, space_held: bool) -> voi
 		var _p2_exclude: int = poly_result.poly_idx if poly_result.hit else _stick_poly_idx
 		var poly2: Dictionary = WorldManager.check_polyline_collision(x, y, 16.0, 16.0, _prev_poly_normal, -1, _p2_exclude)
 		if poly2.hit and poly2.push.length() > 0.1:
-			if _poly_any_hit and poly2.normal.dot(_poly_hit_normal) < 0.3 and poly2.push.length() > 2.0:
-				# Opposing curves = sandwiched — only wedge if deep contact with BOTH arms
+			var _normals_opposing: bool = _poly_any_hit and poly2.normal.dot(_poly_hit_normal) < -0.5 and poly2.push.length() > 2.0
+			if _normals_opposing:
 				x += poly2.push.x * 0.5
 				y += poly2.push.y * 0.5
 				_speedX = 0
@@ -345,7 +345,6 @@ func tick(input_h: int, input_v: int, space_just: bool, space_held: bool) -> voi
 				is_grounded = true
 				in_valley = true
 				_surface_normal = Vector2(0, -1)
-				# Compute which directions are open at the freeze point
 				var _wcx: float = x + 8.0
 				var _wcy: float = y + 8.0
 				var _wr: float = 20.0
@@ -355,23 +354,26 @@ func tick(input_h: int, input_v: int, space_just: bool, space_held: bool) -> voi
 				_wedge_allow_up = WorldManager.dist_to_nearest_polyline(_wcx, _wcy - _wr) > _wd_cur
 				_wedge_allow_down = WorldManager.dist_to_nearest_polyline(_wcx, _wcy + _wr) > _wd_cur
 			else:
-				# Same direction or no pass 1 — apply normally
+				# V-valley or same direction: apply push but preserve tangential speed
+				var vel: Vector2 = Vector2(_speedX, _speedY)
+				var into_push: float = vel.dot(poly2.normal)
+				if into_push < 0:
+					# Only zero speed component going INTO the curve, keep tangential
+					_speedX -= poly2.normal.x * into_push
+					_speedY -= poly2.normal.y * into_push
 				x += poly2.push.x
 				y += poly2.push.y
+				_stick_poly_idx = poly2.poly_idx
+				_stick_poly_ticks = 0
 				if not _poly_any_hit:
 					_poly_any_hit = true
-					_stick_poly_idx = poly2.poly_idx
-					_stick_poly_ticks = 0
-					var poly_grav_n2: Vector2 = Vector2(mox, moy)
-					if poly_grav_n2.length() < 0.01:
-						poly_grav_n2 = Vector2(0, 1)
-					poly_grav_n2 = poly_grav_n2.normalized()
-					_poly_hit_against = -poly2.normal.dot(poly_grav_n2)
-					_poly_hit_normal = poly2.normal
-					_poly_hit_tangent = poly2.tangent
-					_prev_poly_normal = poly2.normal
+				_poly_hit_against = -poly2.normal.dot(Vector2(mox, moy).normalized() if Vector2(mox, moy).length() > 0.01 else Vector2(0, 1))
+				_poly_hit_normal = poly2.normal
+				_poly_hit_tangent = poly2.tangent
+				_prev_poly_normal = poly2.normal
+				is_wedged = false
+				in_valley = false
 		# Pass 4: Safety — catch any remaining penetration from ALL curves
-		# This prevents clipping through intersecting curves
 		for _safety_pass in range(3):
 			var poly4: Dictionary = WorldManager.check_polyline_collision(x, y, 16.0, 16.0, _prev_poly_normal)
 			if not poly4.hit or poly4.push.length() < 0.1:
@@ -900,8 +902,9 @@ func _handle_jump(space_just: bool, space_held: bool) -> void:
 	var did_jump: bool = false
 
 	if in_valley or valley_jump:
-		# Valley: always allow jump when at valley floor
-		jumpCount = 0
+		# Valley: allow jump only when grounded at valley floor
+		if is_grounded:
+			jumpCount = 0
 		if jumpCount < maxJumps:
 			if maxJumps < 1000: jumpCount += 1
 			var jump_mag: float = _gravity * _jump_height * _get_jump_mult() * 0.995 * TICK_SCALE / MULT

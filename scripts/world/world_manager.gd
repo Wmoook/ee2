@@ -387,17 +387,21 @@ func check_polyline_collision(px: float, py: float, pw: float, ph: float, prefer
 						second_t = seg_t
 		if closest_seg < 0:
 			continue
-		# Self-intersection guard: if nearest segment push opposes prefer_normal
-		# and there's a second branch nearby, use the second branch instead
+		# Self-intersection guard (SAME polyline only): if nearest segment push
+		# opposes prefer_normal and there's a second branch nearby, use second
 		if second_seg >= 0 and prefer_normal.length() > 0.1:
 			var seg_a1: Vector2 = pts[closest_seg]
 			var seg_b1: Vector2 = pts[closest_seg + 1]
 			var on1: Vector2 = seg_a1 + (seg_b1 - seg_a1) * closest_t
-			var dir1: Vector2 = (Vector2(pcx, pcy) - on1).normalized()
+			var n1: Vector2 = (norms[closest_seg] * (1.0 - closest_t) + norms[closest_seg + 1] * closest_t).normalized()
+			if n1.length() < 0.01: n1 = norms[closest_seg]
+			var dir1: Vector2 = n1 if (Vector2(pcx, pcy) - on1).dot(n1) >= 0 else -n1
 			var seg_a2: Vector2 = pts[second_seg]
 			var seg_b2: Vector2 = pts[second_seg + 1]
 			var on2: Vector2 = seg_a2 + (seg_b2 - seg_a2) * second_t
-			var dir2: Vector2 = (Vector2(pcx, pcy) - on2).normalized()
+			var n2s: Vector2 = (norms[second_seg] * (1.0 - second_t) + norms[second_seg + 1] * second_t).normalized()
+			if n2s.length() < 0.01: n2s = norms[second_seg]
+			var dir2: Vector2 = n2s if (Vector2(pcx, pcy) - on2).dot(n2s) >= 0 else -n2s
 			# If nearest opposes our previous surface but second matches, use second
 			if dir1.dot(prefer_normal) < 0.0 and dir2.dot(prefer_normal) > 0.0:
 				closest_seg = second_seg
@@ -414,7 +418,11 @@ func check_polyline_collision(px: float, py: float, pw: float, ph: float, prefer
 		# Distance from player center to surface
 		var to_player: Vector2 = Vector2(pcx, pcy) - on_seg
 		var dist_to_line: float = to_player.length()
-		var push_dir: Vector2 = to_player.normalized() if dist_to_line > 0.01 else interp_normal
+		# Use curve's stored normal for consistent push direction
+		# Flip if player is on the opposite side of the centerline
+		var push_dir: Vector2 = interp_normal
+		if dist_to_line > 0.01 and to_player.dot(interp_normal) < 0:
+			push_dir = -interp_normal
 		var penetration: float = minf((eff_radius + block_half) - dist_to_line, 4.0)
 		if penetration > 0 and dist_to_line < eff_radius + block_half + 2.0:
 			var seg_tangent: Vector2 = (seg_b - seg_a).normalized()
@@ -427,7 +435,9 @@ func check_polyline_collision(px: float, py: float, pw: float, ph: float, prefer
 				var on2: Vector2 = seg_a2 + (seg_b2 - seg_a2) * second_t
 				var to_p2: Vector2 = Vector2(pcx, pcy) - on2
 				var d2: float = to_p2.length()
-				var pd2: Vector2 = to_p2.normalized() if d2 > 0.01 else interp_normal
+				var n2: Vector2 = (norms[second_seg] * (1.0 - second_t) + norms[second_seg + 1] * second_t).normalized()
+				if n2.length() < 0.01: n2 = norms[second_seg]
+				var pd2: Vector2 = n2 if d2 <= 0.01 or to_p2.dot(n2) >= 0 else -n2
 				var pen2: float = minf((eff_radius + block_half) - d2, 4.0)
 				if pen2 > 0 and pd2.dot(push_dir) < 0.3:
 					# Opposing push = same-poly U sandwich. Use virtual poly ID.
@@ -1265,7 +1275,7 @@ func init_empty_world(w: int = 50, h: int = 30) -> void:
 	for y in range(1, world_height - 1):
 		fg_tiles[y][0] = 9
 		fg_tiles[y][world_width - 1] = 9
-	spawn_points = [Vector2(3, 3)]
+	spawn_points = [Vector2(3, h - 3) if h > 6 else Vector2(3, 3)]
 
 func get_tile(x: int, y: int) -> int:
 	if x < 0 or x >= world_width or y < 0 or y >= world_height:
@@ -1428,7 +1438,7 @@ func deserialize_world(data: Dictionary) -> void:
 		if sp.size() >= 2:
 			spawn_points.append(Vector2(sp[0], sp[1]))
 	if spawn_points.is_empty():
-		spawn_points = [Vector2(3, 3)]
+		spawn_points = [Vector2(3, world_height - 3)]
 	block_groups.clear()
 	_next_group_id = 1
 	for g in data.get("groups", []):
@@ -1638,6 +1648,9 @@ func net_clear_world() -> void:
 			set_fg_tile(x, y, 0)
 			set_bg_tile(x, y, 0)
 			set_rotation(x, y, 0)
+	spawn_points = [Vector2(3, world_height - 3), Vector2(5, world_height - 3)]
+	_rebuild_wedge_pairs()
+	_rebuild_global_render_hash()
 	tile_changed.emit(0, 0, 0)
 	polylines_changed.emit()
 	_pending_net_clear_world = true

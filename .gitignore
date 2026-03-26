@@ -1,2 +1,4 @@
 .godot/
 *.import
+build/
+build.zip
