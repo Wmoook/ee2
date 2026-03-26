@@ -318,7 +318,7 @@ func _rebuild_global_render_hash() -> void:
 							_global_render_hash[key] = []
 						_global_render_hash[key].append([edge, si, pi, rd])
 
-func check_polyline_collision(px: float, py: float, pw: float, ph: float, prefer_normal: Vector2 = Vector2.ZERO, stick_poly: int = -1, exclude_poly: int = -1) -> Dictionary:
+func check_polyline_collision(px: float, py: float, pw: float, ph: float, prefer_normal: Vector2 = Vector2.ZERO, stick_poly: int = -1, exclude_poly: int = -1, only_poly: int = -1) -> Dictionary:
 	## Check if axis-aligned box (px,py,pw,ph) collides with any polyline.
 	## Returns {hit, push, normal, tangent, poly_idx} with interpolated normal at closest point.
 	## stick_poly: when >= 0 and sandwiched, only collide with this polyline index.
@@ -331,6 +331,8 @@ func check_polyline_collision(px: float, py: float, pw: float, ph: float, prefer
 	for poly in polylines:
 		_dbg_poly_idx += 1
 		if _dbg_poly_idx == exclude_poly:
+			continue
+		if only_poly >= 0 and _dbg_poly_idx != only_poly:
 			continue
 		if poly.get("render_only", false):
 			continue  # Skip render-only polylines (no collision)
@@ -957,8 +959,29 @@ func intercept_polyline_tunneling(pre_cx: float, pre_cy: float, post_cx: float, 
 
 func does_step_cross_render_edge(x1: float, y1: float, x2: float, y2: float, stick_poly: int = -1, stick_arc: float = -1.0) -> bool:
 	## Uses GLOBAL render hash — one lookup covers ALL polylines. No per-poly iteration.
+	## Skip edges from polylines whose centerline is near the player (surface transition, not tunneling).
 	var mid_x: float = (x1 + x2) * 0.5
 	var mid_y: float = (y1 + y2) * 0.5
+	# Pre-compute which polylines are "nearby" (within collision range) — skip their edges
+	var _nearby_polys: Dictionary = {}
+	for pi2 in range(polylines.size()):
+		var poly2: Dictionary = polylines[pi2]
+		if poly2.get("render_only", false):
+			continue
+		if mid_x < poly2.bbox_min.x - 24 or mid_x > poly2.bbox_max.x + 24 or mid_y < poly2.bbox_min.y - 24 or mid_y > poly2.bbox_max.y + 24:
+			continue
+		# Check if player center is within 20px of this poly's centerline
+		var pts2: PackedVector2Array = poly2.points
+		for si2 in range(pts2.size() - 1):
+			var sa2: Vector2 = pts2[si2]
+			var sb2: Vector2 = pts2[si2 + 1]
+			var ab2: Vector2 = sb2 - sa2
+			var ap2: Vector2 = Vector2(mid_x, mid_y) - sa2
+			var t2: float = clampf(ap2.dot(ab2) / maxf(ab2.dot(ab2), 0.001), 0.0, 1.0)
+			var on2: Vector2 = sa2 + ab2 * t2
+			if Vector2(mid_x, mid_y).distance_to(on2) < 20.0:
+				_nearby_polys[pi2] = true
+				break
 	var d1x: float = x2 - x1
 	var d1y: float = y2 - y1
 	var cs: int = _global_render_cell
@@ -974,7 +997,11 @@ func does_step_cross_render_edge(x1: float, y1: float, x2: float, y2: float, sti
 				var si: int = entry[1]
 				var pi: int = entry[2]
 				var rd: Array = entry[3]
+				# Skip edges from stick poly near current arc position
 				if pi == stick_poly and stick_arc >= 0 and si < rd.size() and absf(rd[si] - stick_arc) < 40.0:
+					continue
+				# Skip edges from nearby polylines (player already in collision range)
+				if _nearby_polys.has(pi):
 					continue
 				var sa: Vector2 = edge[si]
 				var sb: Vector2 = edge[si + 1]
