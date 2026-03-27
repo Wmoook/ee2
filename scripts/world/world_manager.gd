@@ -44,6 +44,13 @@ var wedge_pairs: Array = []  # Pre-computed [{a: poly_dict, b: poly_dict}]
 # Key: cell_key -> Array of {edge: PackedVector2Array, si: int, poly_idx: int, rd: Array}
 var _global_render_hash: Dictionary = {}
 var _global_render_cell: int = 32
+# Swept AABB curve collision: array of quad colliders built from render_top/render_bot strips
+# Each entry: {quads: Array, spatial_hash: Dictionary, poly_idx: int}
+# Each quad: {verts: [V0,V1,V2,V3], aabb_min: Vector2, aabb_max: Vector2,
+#             edge_normals: [N0,N1,N2,N3], external_edges: [bool,bool,bool,bool]}
+var curve_colliders: Array = []
+var _curve_collider_hash: Dictionary = {}  # spatial hash: cell_key -> Array of quad references
+var _curve_collider_cell: int = 32
 signal polylines_changed()
 
 # Gravity zones (circular areas with inward gravity)
@@ -257,17 +264,88 @@ func add_polyline(points: PackedVector2Array, side: String = "top", block_id: in
 		"from_split": uv_offset != 0.0  # Part of a split — skip mesh truncation
 	})
 	_regenerate_curve_collision_blocks()
+	build_curve_colliders()
 	polylines_changed.emit()
 
 func _regenerate_curve_collision_blocks() -> void:
-	## Curve collision handled by enforce_polyline_hard_constraint (smooth geometry).
-	## No free blocks needed — hard constraint handles sliding, V-junctions, and clipping.
+	## Legacy cleanup: remove old curve_collision free blocks if any remain.
 	var i: int = free_blocks.size() - 1
 	while i >= 0:
 		if free_blocks[i].get("curve_collision", false):
 			free_blocks.remove_at(i)
 		i -= 1
 	tile_changed.emit(0, 0, 0)
+
+func build_curve_colliders() -> void:
+	## Build swept-AABB quad colliders from render_top/render_bot strips.
+	## Each non-render_only polyline with render data becomes a strip of convex quads.
+	## Internal seam edges (shared between adjacent quads) are marked non-collidable.
+	curve_colliders.clear()
+	_curve_collider_hash.clear()
+	var cs: int = _curve_collider_cell
+	var poly_idx: int = -1
+	for poly in polylines:
+		poly_idx += 1
+		if poly.get("render_only", false):
+			continue
+		var rt: PackedVector2Array = poly.get("render_top", PackedVector2Array())
+		var rb: PackedVector2Array = poly.get("render_bot", PackedVector2Array())
+		if rt.size() < 2 or rb.size() < 2 or rt.size() != rb.size():
+			continue
+		var quad_count: int = rt.size() - 1
+		var quads: Array = []
+		for qi in range(quad_count):
+			# Quad verts in clockwise order:
+			# V0 = render_top[i], V1 = render_top[i+1], V2 = render_bot[i+1], V3 = render_bot[i]
+			var v0: Vector2 = rt[qi]
+			var v1: Vector2 = rt[qi + 1]
+			var v2: Vector2 = rb[qi + 1]
+			var v3: Vector2 = rb[qi]
+			var verts: Array = [v0, v1, v2, v3]
+			# Compute AABB of this quad
+			var qmin: Vector2 = Vector2(minf(minf(v0.x, v1.x), minf(v2.x, v3.x)), minf(minf(v0.y, v1.y), minf(v2.y, v3.y)))
+			var qmax: Vector2 = Vector2(maxf(maxf(v0.x, v1.x), maxf(v2.x, v3.x)), maxf(maxf(v0.y, v1.y), maxf(v2.y, v3.y)))
+			# Edge normals: outward-pointing perpendicular for each edge (clockwise winding)
+			# Edge i: verts[i] -> verts[(i+1)%4], outward normal = rotate edge 90 CW
+			var edge_normals: Array = []
+			for ei in range(4):
+				var ea: Vector2 = verts[ei]
+				var eb: Vector2 = verts[(ei + 1) % 4]
+				var edge_dir: Vector2 = eb - ea
+				# CW winding: outward normal is (edge_dir.y, -edge_dir.x)
+				var n: Vector2 = Vector2(edge_dir.y, -edge_dir.x)
+				var nl: float = n.length()
+				if nl > 0.001:
+					n = n / nl
+				edge_normals.append(n)
+			# External edges:
+			# Edge 0 (top: V0->V1): always external
+			# Edge 1 (right cross: V1->V2): internal unless last quad
+			# Edge 2 (bottom: V2->V3): always external
+			# Edge 3 (left cross: V3->V0): internal unless first quad
+			var external: Array = [true, qi == quad_count - 1, true, qi == 0]
+			var quad: Dictionary = {
+				"verts": verts,
+				"aabb_min": qmin,
+				"aabb_max": qmax,
+				"edge_normals": edge_normals,
+				"external": external,
+				"poly_idx": poly_idx,
+				"quad_idx": qi
+			}
+			quads.append(quad)
+			# Insert into spatial hash
+			var gx0: int = int(floor(qmin.x / cs))
+			var gy0: int = int(floor(qmin.y / cs))
+			var gx1: int = int(floor(qmax.x / cs))
+			var gy1: int = int(floor(qmax.y / cs))
+			for gx in range(gx0, gx1 + 1):
+				for gy in range(gy0, gy1 + 1):
+					var key: int = gx * 100000 + gy
+					if not _curve_collider_hash.has(key):
+						_curve_collider_hash[key] = []
+					_curve_collider_hash[key].append(quad)
+		curve_colliders.append({"quads": quads, "poly_idx": poly_idx})
 
 func _build_spatial_hash(pts: PackedVector2Array, cell_size: int) -> Dictionary:
 	## Bucket segment indices into grid cells for O(1) lookup
@@ -1274,6 +1352,7 @@ func remove_polyline_near(pos: Vector2, radius: float = 16.0) -> void:
 		p.erase("_cached_mesh")
 		p.erase("_cached_tex")
 	_regenerate_curve_collision_blocks()
+	build_curve_colliders()
 	_pending_net_poly_fullsync = true
 	polylines_changed.emit()
 
@@ -1489,6 +1568,7 @@ func deserialize_world(data: Dictionary) -> void:
 	# Gravity zones
 	gravity_zones.deserialize(data.get("gravity_zones", []))
 	_regenerate_curve_collision_blocks()
+	build_curve_colliders()
 	world_loaded.emit()
 
 func add_line(start: Vector2, end: Vector2, color: Color, width: float = 3.0) -> void:

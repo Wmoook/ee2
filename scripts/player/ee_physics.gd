@@ -279,65 +279,90 @@ func tick(input_h: int, input_v: int, space_just: bool, space_held: bool) -> voi
 	var _pre_collision_speed: float = Vector2(_speedX, _speedY).length()
 	_step_position()
 
-	# 7.15 Primary curve collision: enforce min distance from polyline centerlines.
-	if not is_god_mode and WorldManager.polylines.size() > 0:
-		# CCD: if movement crossed a polyline centerline, revert to just before crossing.
-		# This prevents _step_position from putting the player on the wrong side.
-		var _move_dist: float = Vector2(x - _pre_step_x, y - _pre_step_y).length()
-		if _move_dist > 1.0:
-			var _cross: Dictionary = WorldManager.check_polyline_crossing(
-				_pre_step_x + 8, _pre_step_y + 8, x + 8, y + 8)
-			if _cross.crossed:
-				# Revert to just before the crossing point — don't zero speed
-				# Free blocks (section 7.6) handle tangent projection
-				var _safe_t: float = maxf(_cross.t - 0.1, 0.0)
-				x = _pre_step_x + (x - _pre_step_x) * _safe_t
-				y = _pre_step_y + (y - _pre_step_y) * _safe_t
-		var _hard: Dictionary = WorldManager.enforce_polyline_hard_constraint(x, y, _pre_step_x, _pre_step_y)
-		if _hard.pushed:
-			x = _hard.x
-			y = _hard.y
-			if _hard.normal.length() > 0.1:
-				# Tangent projection with speed preservation (like free blocks at junctions)
-				var _hspd: Vector2 = Vector2(_speedX, _speedY)
-				var _hspd_mag: float = _hspd.length()
-				var _hn: Vector2 = _hard.normal
-				var _htangent: Vector2 = Vector2(-_hn.y, _hn.x)
-				if _htangent.x < 0:
-					_htangent = -_htangent
-				var _htang_speed: float = _hspd.dot(_htangent)
-				# Add gravity contribution along tangent
-				var _hgrav2: Vector2 = Vector2(mox, moy) * _get_grav_mult() / MULT * 0.5
-				_htang_speed += _hgrav2.dot(_htangent)
-				var _hnew_spd: Vector2 = _htangent * _htang_speed
-				# Junction preservation: if projection loses >80% speed, preserve magnitude
-				var _hprev_dot: float = _prev_push_normal.dot(_hn) if _prev_push_normal.length() > 0.1 else 0.0
-				var _hat_junction: bool = _hprev_dot < 0.95
-				var _hhas_horiz: bool = absf(_pre_tick_speedX) > absf(_pre_tick_speedY) * 0.5
-				if _hspd_mag > 1.0 and _hnew_spd.length() < _hspd_mag * 0.2 and _hat_junction and _hhas_horiz:
-					var _hdir: float = sign(_pre_tick_speedX)
-					if _hdir == 0: _hdir = 1.0
-					_speedX = _htangent.x * _hspd_mag * _hdir
-					_speedY = _htangent.y * _hspd_mag * _hdir
-				else:
-					_speedX = _hnew_spd.x
-					_speedY = _hnew_spd.y
-			# Grounding
+	# 7.15 Swept AABB curve collision: preventive quad-strip collision
+	if not is_god_mode and WorldManager.curve_colliders.size() > 0:
+		var _curve_contact_normals: Array = []
+		var remaining: Vector2 = Vector2(x - _pre_step_x, y - _pre_step_y)
+		# Revert to pre-step position; we will re-apply motion via swept collision
+		x = _pre_step_x
+		y = _pre_step_y
+		for _iter in range(4):
+			if remaining.length() < 0.001:
+				break
+			var hits: Array = _find_curve_hits(Vector2(x, y), remaining)
+			if hits.is_empty():
+				x += remaining.x
+				y += remaining.y
+				break
+			# Move to just before first hit
+			var first: Dictionary = hits[0]
+			var safe_t: float = maxf(first.t - 0.001, 0.0)
+			x += remaining.x * safe_t
+			y += remaining.y * safe_t
+			# Collect contact normals from all hits at approximately same time
+			var contact_normals: Array = []
+			for h in hits:
+				if h.t <= first.t + 0.01:
+					contact_normals.append(h.normal)
+					if not _has_similar_normal(_curve_contact_normals, h.normal):
+						_curve_contact_normals.append(h.normal)
+			# Clip remaining motion
+			remaining = remaining * (1.0 - safe_t)
+			remaining = _clip_velocity_vec(remaining, contact_normals)
+			# Clip speed against contact normals
+			var spd_vec: Vector2 = Vector2(_speedX, _speedY)
+			spd_vec = _clip_velocity_vec(spd_vec, contact_normals)
+			# Speed preservation at sharp junctions (same rule as free blocks)
+			if _pre_collision_speed > 1.0 and spd_vec.length() < _pre_collision_speed * 0.2:
+				var _hdir: float = sign(_pre_tick_speedX)
+				if _hdir == 0:
+					_hdir = 1.0
+				if contact_normals.size() > 0:
+					var cn: Vector2 = contact_normals[0]
+					var tang: Vector2 = Vector2(-cn.y, cn.x)
+					if tang.dot(Vector2(_hdir, 0)) < 0:
+						tang = -tang
+					spd_vec = tang * _pre_collision_speed
+			_speedX = spd_vec.x
+			_speedY = spd_vec.y
+		# Grounding from curve contacts
+		if _curve_contact_normals.size() > 0:
 			var _hgrav: Vector2 = Vector2(mox, moy)
-			if _hgrav.length() < 0.01: _hgrav = Vector2(0, 1)
-			else: _hgrav = _hgrav.normalized()
-			var _hagainst: float = -_hard.normal.dot(_hgrav)
-			if _hagainst > 0.05:
-				on_rotated_block = true
-				is_grounded = true
-				_surface_normal = _hard.normal
-				_fb_hit = true
-			# V junction wedge
-			if _hard.poly_count >= 2:
+			if _hgrav.length() < 0.01:
+				_hgrav = Vector2(0, 1)
+			else:
+				_hgrav = _hgrav.normalized()
+			for cn in _curve_contact_normals:
+				var against: float = -cn.dot(_hgrav)
+				if against > 0.05:
+					on_rotated_block = true
+					is_grounded = true
+					_surface_normal = cn
+					_fb_hit = true
+					break
+		# Valley detection: 2+ contacts with different normals facing against gravity
+		if _curve_contact_normals.size() >= 2:
+			var _hgrav2: Vector2 = Vector2(mox, moy)
+			if _hgrav2.length() < 0.01:
+				_hgrav2 = Vector2(0, 1)
+			else:
+				_hgrav2 = _hgrav2.normalized()
+			var has_different: bool = false
+			for ci in range(_curve_contact_normals.size()):
+				for cj in range(ci + 1, _curve_contact_normals.size()):
+					if _curve_contact_normals[ci].dot(_curve_contact_normals[cj]) < 0.9:
+						var a1: float = -_curve_contact_normals[ci].dot(_hgrav2)
+						var a2: float = -_curve_contact_normals[cj].dot(_hgrav2)
+						if a1 > -0.1 and a2 > -0.1:
+							has_different = true
+							break
+				if has_different:
+					break
+			if has_different:
 				in_valley = true
 				is_grounded = true
 				_fb_hit = true
-				if absf(_speedX) + absf(_speedY) < 1.5:
+				if absf(_speedX) + absf(_speedY) < 0.5:
 					is_wedged = true
 					_speedX = 0
 					_speedY = 0
@@ -644,23 +669,7 @@ func tick(input_h: int, input_v: int, space_just: bool, space_held: bool) -> voi
 		jumpCount = 0
 	_handle_jump(space_just, space_held)
 
-	# 10. Purple push removed — curves now use generated free blocks for collision
-
-	# 11. Debug info (P key overlay)
-	# 10. Final curve constraint — ensures player ENDS the tick at the visual edge
-	# regardless of what sections 7.5-9 did to position/speed
-	if not is_god_mode and WorldManager.polylines.size() > 0:
-		var _final: Dictionary = WorldManager.enforce_polyline_hard_constraint(x, y, x, y)
-		if _final.pushed:
-			x = _final.x
-			y = _final.y
-			# Zero into-curve speed so input can't push past next tick
-			if _final.normal.length() > 0.1:
-				var _fspd: Vector2 = Vector2(_speedX, _speedY)
-				var _finto: float = _fspd.dot(_final.normal)
-				if _finto < 0:
-					_speedX -= _final.normal.x * _finto
-					_speedY -= _final.normal.y * _finto
+	# 10. (Removed — swept AABB in section 7.15 replaces final hard constraint)
 
 	debug_text = "pos=(%.1f,%.1f) spd=(%.2f,%.2f) grnd=%s val=%s vj=%s" % [x, y, _speedX, _speedY, is_grounded, in_valley, valley_jump]
 
@@ -809,41 +818,147 @@ func _dist_to_seg(cx: float, cy: float, sa: Vector2, sb: Vector2) -> float:
 	var on_pt: Vector2 = sa + ab * t
 	return Vector2(cx, cy).distance_to(on_pt)
 
-func _dist_to_nearest_centerline(px: float, py: float) -> float:
-	## Fast distance check from player center to nearest polyline centerline
-	var cx: float = px + 8.0
-	var cy: float = py + 8.0
-	var best: float = 99999.0
-	for poly in WorldManager.polylines:
-		if poly.get("render_only", false):
-			continue
-		var bb: Vector2 = poly.bbox_min
-		var bm: Vector2 = poly.bbox_max
-		if cx < bb.x - 20 or cx > bm.x + 20 or cy < bb.y - 20 or cy > bm.y + 20:
-			continue
-		var pts: PackedVector2Array = poly.points
-		var shash: Dictionary = poly.get("spatial_hash", {})
-		var cs: int = shash.get("cell_size", 32)
-		var gx: int = int(floor(cx / cs))
-		var gy: int = int(floor(cy / cs))
-		for dx in range(-1, 2):
-			for dy in range(-1, 2):
-				var key: int = (gx + dx) * 10000 + (gy + dy)
-				if not shash.has(key):
+# ── Swept AABB curve collision functions ──────────────────────────────────────
+
+func _swept_aabb_vs_quad(center: Vector2, half_size: Vector2, delta: Vector2, quad_verts: Array, edge_normals: Array, external: Array) -> Dictionary:
+	## Swept AABB vs convex quad using Separating Axis Theorem (SAT).
+	## Tests AABB axes (right, up) + external quad edge normals.
+	## Returns {hit: bool, t: float, normal: Vector2}
+	var result: Dictionary = {"hit": false, "t": 1.0, "normal": Vector2.ZERO}
+	# Collect separation axes: AABB axes + external quad edge normals
+	var axes: Array = [Vector2(1, 0), Vector2(0, 1)]
+	for ei in range(4):
+		if external[ei]:
+			var n: Vector2 = edge_normals[ei]
+			# Skip degenerate normals
+			if n.length_squared() < 0.0001:
+				continue
+			# Don't duplicate axes too close to existing ones
+			var dup: bool = false
+			for existing in axes:
+				if absf(n.dot(existing)) > 0.999:
+					dup = true
+					break
+			if not dup:
+				axes.append(n)
+	# Swept SAT: find the latest entry and earliest exit across all axes
+	var t_enter: float = -99999.0
+	var t_exit: float = 99999.0
+	var best_axis: Vector2 = Vector2.ZERO
+	for axis in axes:
+		# Project AABB onto axis
+		var aabb_half_proj: float = absf(axis.x) * half_size.x + absf(axis.y) * half_size.y
+		var aabb_center_proj: float = center.dot(axis)
+		# Project quad onto axis
+		var q_min: float = 99999.0
+		var q_max: float = -99999.0
+		for vi in range(4):
+			var p: float = quad_verts[vi].dot(axis)
+			if p < q_min:
+				q_min = p
+			if p > q_max:
+				q_max = p
+		# AABB interval: [aabb_center_proj - aabb_half_proj, aabb_center_proj + aabb_half_proj]
+		# Quad interval: [q_min, q_max]
+		var a_min: float = aabb_center_proj - aabb_half_proj
+		var a_max: float = aabb_center_proj + aabb_half_proj
+		# Sweep: project delta onto axis
+		var vel_proj: float = delta.dot(axis)
+		if absf(vel_proj) < 0.00001:
+			# Static on this axis: check overlap
+			if a_max < q_min or a_min > q_max:
+				return result  # No overlap, no hit possible
+			# Overlapping on this axis, doesn't constrain t
+		else:
+			# Moving: find entry and exit times
+			var inv_vel: float = 1.0 / vel_proj
+			var t0: float = (q_min - a_max) * inv_vel
+			var t1: float = (q_max - a_min) * inv_vel
+			var axis_sign: float = 1.0
+			if t0 > t1:
+				var tmp: float = t0
+				t0 = t1
+				t1 = tmp
+				axis_sign = -1.0
+			if t0 > t_enter:
+				t_enter = t0
+				best_axis = axis * (-axis_sign if vel_proj > 0 else axis_sign)
+			if t1 < t_exit:
+				t_exit = t1
+	# Check if there is a valid intersection
+	if t_enter > t_exit or t_enter >= 1.0 or t_exit <= 0.0:
+		return result
+	if t_enter < 0.0:
+		t_enter = 0.0
+	# Ensure the hit normal points away from the movement direction
+	if best_axis.dot(delta) > 0:
+		best_axis = -best_axis
+	result.hit = true
+	result.t = t_enter
+	result.normal = best_axis.normalized() if best_axis.length() > 0.001 else Vector2(0, -1)
+	return result
+
+func _find_curve_hits(pos: Vector2, delta: Vector2) -> Array:
+	## Query spatial hash for quads near the swept AABB, test each, return sorted hits.
+	var hits: Array = []
+	var half_size: Vector2 = Vector2(8.0, 8.0)
+	var center: Vector2 = pos + half_size  # Player center
+	var cs: int = WorldManager._curve_collider_cell
+	var hash: Dictionary = WorldManager._curve_collider_hash
+	if hash.is_empty():
+		return hits
+	# Compute swept AABB bounds
+	var sweep_min: Vector2 = Vector2(minf(center.x, center.x + delta.x) - half_size.x, minf(center.y, center.y + delta.y) - half_size.y)
+	var sweep_max: Vector2 = Vector2(maxf(center.x, center.x + delta.x) + half_size.x, maxf(center.y, center.y + delta.y) + half_size.y)
+	var gx0: int = int(floor(sweep_min.x / cs))
+	var gy0: int = int(floor(sweep_min.y / cs))
+	var gx1: int = int(floor(sweep_max.x / cs))
+	var gy1: int = int(floor(sweep_max.y / cs))
+	# Collect unique candidate quads
+	var checked: Dictionary = {}
+	var candidates: Array = []
+	for gx in range(gx0, gx1 + 1):
+		for gy in range(gy0, gy1 + 1):
+			var key: int = gx * 100000 + gy
+			if not hash.has(key):
+				continue
+			for quad in hash[key]:
+				# Use object identity via poly_idx + quad_idx as unique key
+				var qkey: int = quad.poly_idx * 100000 + quad.quad_idx
+				if checked.has(qkey):
 					continue
-				for si in shash[key]:
-					if si >= pts.size() - 1:
-						continue
-					var sa: Vector2 = pts[si]
-					var sb: Vector2 = pts[si + 1]
-					var ab: Vector2 = sb - sa
-					var ap: Vector2 = Vector2(cx, cy) - sa
-					var t: float = clampf(ap.dot(ab) / maxf(ab.dot(ab), 0.001), 0.0, 1.0)
-					var on_pt: Vector2 = sa + ab * t
-					var d: float = Vector2(cx, cy).distance_to(on_pt)
-					if d < best:
-						best = d
-	return best
+				checked[qkey] = true
+				candidates.append(quad)
+	# Test each candidate
+	for quad in candidates:
+		# Quick AABB broad phase: swept AABB vs quad AABB
+		if sweep_max.x < quad.aabb_min.x or sweep_min.x > quad.aabb_max.x:
+			continue
+		if sweep_max.y < quad.aabb_min.y or sweep_min.y > quad.aabb_max.y:
+			continue
+		var r: Dictionary = _swept_aabb_vs_quad(center, half_size, delta, quad.verts, quad.edge_normals, quad.external)
+		if r.hit:
+			hits.append({"t": r.t, "normal": r.normal, "quad": quad})
+	# Sort by time (earliest first)
+	hits.sort_custom(func(a: Dictionary, b: Dictionary) -> bool: return a.t < b.t)
+	return hits
+
+func _clip_velocity_vec(vel: Vector2, contact_normals: Array) -> Vector2:
+	## Remove velocity components going into contact normals. Two passes for stability.
+	var clipped: Vector2 = vel
+	for _pass in range(2):
+		for n in contact_normals:
+			var into: float = clipped.dot(n)
+			if into < 0:
+				clipped -= n * into
+	return clipped
+
+func _has_similar_normal(normals: Array, n: Vector2) -> bool:
+	## Check if any existing normal is very similar to n (dot > 0.95)
+	for existing in normals:
+		if existing.dot(n) > 0.95:
+			return true
+	return false
 
 func _step_position() -> void:
 	var currentSX: float = _speedX
@@ -878,13 +993,6 @@ func _step_position() -> void:
 			if rx < 0: rx += 1.0
 			if _collides_px(x, y):
 				x = ox; _speedX = 0; currentSX = osx; donex = true
-			elif not is_god_mode and WorldManager.polylines.size() > 0:
-				# Block entry into curve constraint zone (preventive, like grid tiles)
-				var _new_d: float = _dist_to_nearest_centerline(x, y)
-				if _new_d < 15.5:  # Slightly less than min_dist to allow surface riding
-					var _old_d: float = _dist_to_nearest_centerline(ox, oy)
-					if _old_d >= 15.5:  # Was outside, now inside = entering
-						x = ox; _speedX = 0; currentSX = osx; donex = true
 
 		# Step Y
 		if currentSY != 0 and not doney:
@@ -902,12 +1010,6 @@ func _step_position() -> void:
 			if ry < 0: ry += 1.0
 			if _collides_px(x, y):
 				y = oy; _speedY = 0; currentSY = osy; doney = true
-			elif not is_god_mode and WorldManager.polylines.size() > 0:
-				var _new_dy: float = _dist_to_nearest_centerline(x, y)
-				if _new_dy < 15.5:
-					var _old_dy: float = _dist_to_nearest_centerline(x, oy)
-					if _old_dy >= 15.5:
-						y = oy; _speedY = 0; currentSY = osy; doney = true
 
 
 
