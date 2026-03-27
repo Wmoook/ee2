@@ -260,8 +260,8 @@ func add_polyline(points: PackedVector2Array, side: String = "top", block_id: in
 	polylines_changed.emit()
 
 func _regenerate_curve_collision_blocks() -> void:
-	## Curve collision now handled by enforce_polyline_hard_constraint.
-	## Just remove any legacy curve_collision blocks.
+	## Curve collision handled by enforce_polyline_hard_constraint (smooth geometry).
+	## No free blocks needed — hard constraint handles sliding, V-junctions, and clipping.
 	var i: int = free_blocks.size() - 1
 	while i >= 0:
 		if free_blocks[i].get("curve_collision", false):
@@ -560,13 +560,16 @@ func enforce_polyline_hard_constraint(px: float, py: float, prev_px: float, prev
 			var seg_a: Vector2 = pts[closest_seg]
 			var seg_b: Vector2 = pts[closest_seg + 1]
 			var on_seg: Vector2 = seg_a + (seg_b - seg_a) * closest_t
-			# Always use polyline's pre-computed normal for push direction.
-			# Normals point toward the "outside" (top side). Never flip based on
-			# prev_position — at U-curves that causes pushing INTO the interior.
 			var interp_n: Vector2 = (norms[closest_seg] * (1.0 - closest_t) + norms[closest_seg + 1] * closest_t).normalized()
 			if interp_n.length() < 0.01:
 				interp_n = norms[closest_seg]
-			var push_dir: Vector2 = interp_n
+			# Push away from centerline — solid from BOTH sides
+			var to_player: Vector2 = Vector2(cx, cy) - on_seg
+			var push_dir: Vector2
+			if to_player.length() > 0.01:
+				push_dir = interp_n if to_player.dot(interp_n) >= 0 else -interp_n
+			else:
+				push_dir = interp_n
 			var pen: float = min_dist - closest_dist
 			if pen > iter_pen:
 				iter_pen = pen

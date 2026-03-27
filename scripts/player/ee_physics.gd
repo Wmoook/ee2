@@ -280,20 +280,48 @@ func tick(input_h: int, input_v: int, space_just: bool, space_held: bool) -> voi
 	_step_position()
 
 	# 7.15 Primary curve collision: enforce min distance from polyline centerlines.
-	# Uses continuous geometry (render edges = visual = hitbox). One system, no fighting.
 	if not is_god_mode and WorldManager.polylines.size() > 0:
+		# CCD: if movement crossed a polyline centerline, revert to just before crossing.
+		# This prevents _step_position from putting the player on the wrong side.
+		var _move_dist: float = Vector2(x - _pre_step_x, y - _pre_step_y).length()
+		if _move_dist > 1.0:
+			var _cross: Dictionary = WorldManager.check_polyline_crossing(
+				_pre_step_x + 8, _pre_step_y + 8, x + 8, y + 8)
+			if _cross.crossed:
+				# Revert to just before the crossing point — don't zero speed
+				# Free blocks (section 7.6) handle tangent projection
+				var _safe_t: float = maxf(_cross.t - 0.1, 0.0)
+				x = _pre_step_x + (x - _pre_step_x) * _safe_t
+				y = _pre_step_y + (y - _pre_step_y) * _safe_t
 		var _hard: Dictionary = WorldManager.enforce_polyline_hard_constraint(x, y, _pre_step_x, _pre_step_y)
 		if _hard.pushed:
 			x = _hard.x
 			y = _hard.y
-			# Tangent projection: remove speed INTO curve, preserve tangential
 			if _hard.normal.length() > 0.1:
+				# Tangent projection with speed preservation (like free blocks at junctions)
 				var _hspd: Vector2 = Vector2(_speedX, _speedY)
-				var _hinto: float = _hspd.dot(_hard.normal)
-				if _hinto < 0:
-					_hspd -= _hard.normal * _hinto
-					_speedX = _hspd.x
-					_speedY = _hspd.y
+				var _hspd_mag: float = _hspd.length()
+				var _hn: Vector2 = _hard.normal
+				var _htangent: Vector2 = Vector2(-_hn.y, _hn.x)
+				if _htangent.x < 0:
+					_htangent = -_htangent
+				var _htang_speed: float = _hspd.dot(_htangent)
+				# Add gravity contribution along tangent
+				var _hgrav2: Vector2 = Vector2(mox, moy) * _get_grav_mult() / MULT * 0.5
+				_htang_speed += _hgrav2.dot(_htangent)
+				var _hnew_spd: Vector2 = _htangent * _htang_speed
+				# Junction preservation: if projection loses >80% speed, preserve magnitude
+				var _hprev_dot: float = _prev_push_normal.dot(_hn) if _prev_push_normal.length() > 0.1 else 0.0
+				var _hat_junction: bool = _hprev_dot < 0.95
+				var _hhas_horiz: bool = absf(_pre_tick_speedX) > absf(_pre_tick_speedY) * 0.5
+				if _hspd_mag > 1.0 and _hnew_spd.length() < _hspd_mag * 0.2 and _hat_junction and _hhas_horiz:
+					var _hdir: float = sign(_pre_tick_speedX)
+					if _hdir == 0: _hdir = 1.0
+					_speedX = _htangent.x * _hspd_mag * _hdir
+					_speedY = _htangent.y * _hspd_mag * _hdir
+				else:
+					_speedX = _hnew_spd.x
+					_speedY = _hnew_spd.y
 			# Grounding
 			var _hgrav: Vector2 = Vector2(mox, moy)
 			if _hgrav.length() < 0.01: _hgrav = Vector2(0, 1)
@@ -619,6 +647,21 @@ func tick(input_h: int, input_v: int, space_just: bool, space_held: bool) -> voi
 	# 10. Purple push removed — curves now use generated free blocks for collision
 
 	# 11. Debug info (P key overlay)
+	# 10. Final curve constraint — ensures player ENDS the tick at the visual edge
+	# regardless of what sections 7.5-9 did to position/speed
+	if not is_god_mode and WorldManager.polylines.size() > 0:
+		var _final: Dictionary = WorldManager.enforce_polyline_hard_constraint(x, y, x, y)
+		if _final.pushed:
+			x = _final.x
+			y = _final.y
+			# Zero into-curve speed so input can't push past next tick
+			if _final.normal.length() > 0.1:
+				var _fspd: Vector2 = Vector2(_speedX, _speedY)
+				var _finto: float = _fspd.dot(_final.normal)
+				if _finto < 0:
+					_speedX -= _final.normal.x * _finto
+					_speedY -= _final.normal.y * _finto
+
 	debug_text = "pos=(%.1f,%.1f) spd=(%.2f,%.2f) grnd=%s val=%s vj=%s" % [x, y, _speedX, _speedY, is_grounded, in_valley, valley_jump]
 
 func _arrow_dir_to_vec(dir: int) -> Vector2:
@@ -766,6 +809,42 @@ func _dist_to_seg(cx: float, cy: float, sa: Vector2, sb: Vector2) -> float:
 	var on_pt: Vector2 = sa + ab * t
 	return Vector2(cx, cy).distance_to(on_pt)
 
+func _dist_to_nearest_centerline(px: float, py: float) -> float:
+	## Fast distance check from player center to nearest polyline centerline
+	var cx: float = px + 8.0
+	var cy: float = py + 8.0
+	var best: float = 99999.0
+	for poly in WorldManager.polylines:
+		if poly.get("render_only", false):
+			continue
+		var bb: Vector2 = poly.bbox_min
+		var bm: Vector2 = poly.bbox_max
+		if cx < bb.x - 20 or cx > bm.x + 20 or cy < bb.y - 20 or cy > bm.y + 20:
+			continue
+		var pts: PackedVector2Array = poly.points
+		var shash: Dictionary = poly.get("spatial_hash", {})
+		var cs: int = shash.get("cell_size", 32)
+		var gx: int = int(floor(cx / cs))
+		var gy: int = int(floor(cy / cs))
+		for dx in range(-1, 2):
+			for dy in range(-1, 2):
+				var key: int = (gx + dx) * 10000 + (gy + dy)
+				if not shash.has(key):
+					continue
+				for si in shash[key]:
+					if si >= pts.size() - 1:
+						continue
+					var sa: Vector2 = pts[si]
+					var sb: Vector2 = pts[si + 1]
+					var ab: Vector2 = sb - sa
+					var ap: Vector2 = Vector2(cx, cy) - sa
+					var t: float = clampf(ap.dot(ab) / maxf(ab.dot(ab), 0.001), 0.0, 1.0)
+					var on_pt: Vector2 = sa + ab * t
+					var d: float = Vector2(cx, cy).distance_to(on_pt)
+					if d < best:
+						best = d
+	return best
+
 func _step_position() -> void:
 	var currentSX: float = _speedX
 	var currentSY: float = _speedY
@@ -799,6 +878,13 @@ func _step_position() -> void:
 			if rx < 0: rx += 1.0
 			if _collides_px(x, y):
 				x = ox; _speedX = 0; currentSX = osx; donex = true
+			elif not is_god_mode and WorldManager.polylines.size() > 0:
+				# Block entry into curve constraint zone (preventive, like grid tiles)
+				var _new_d: float = _dist_to_nearest_centerline(x, y)
+				if _new_d < 15.5:  # Slightly less than min_dist to allow surface riding
+					var _old_d: float = _dist_to_nearest_centerline(ox, oy)
+					if _old_d >= 15.5:  # Was outside, now inside = entering
+						x = ox; _speedX = 0; currentSX = osx; donex = true
 
 		# Step Y
 		if currentSY != 0 and not doney:
@@ -816,6 +902,12 @@ func _step_position() -> void:
 			if ry < 0: ry += 1.0
 			if _collides_px(x, y):
 				y = oy; _speedY = 0; currentSY = osy; doney = true
+			elif not is_god_mode and WorldManager.polylines.size() > 0:
+				var _new_dy: float = _dist_to_nearest_centerline(x, y)
+				if _new_dy < 15.5:
+					var _old_dy: float = _dist_to_nearest_centerline(x, oy)
+					if _old_dy >= 15.5:
+						y = oy; _speedY = 0; currentSY = osy; doney = true
 
 
 
