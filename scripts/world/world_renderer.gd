@@ -216,12 +216,12 @@ func _draw() -> void:
 
 	# Draw free blocks: BG layer first (behind), then FG layer on top
 	for fb in WorldManager.free_blocks:
-		if fb.get("curve_visual", false):
+		if fb.get("curve_visual", false) or fb.get("curve_collision", false):
 			continue
 		if fb.get("bg", false):
 			_draw_free_block(fb, 0.55)  # BG at reduced opacity
 	for fb in WorldManager.free_blocks:
-		if fb.get("curve_visual", false):
+		if fb.get("curve_visual", false) or fb.get("curve_collision", false):
 			continue
 		if not fb.get("bg", false):
 			_draw_free_block(fb)

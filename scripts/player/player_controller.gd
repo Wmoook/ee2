@@ -154,8 +154,6 @@ func _ready() -> void:
 		_camera.limit_smoothed = true
 		# Independent camera (NOT child) - exact EE behavior
 		call_deferred("_setup_camera")
-		# Reset physics polyline cache when curves are deleted
-		WorldManager.polylines_changed.connect(_on_polylines_changed)
 	else:
 		# Remote player — init sync module, set spawn position
 		_remote_sync = RemotePlayerSync.new()
@@ -1078,16 +1076,6 @@ func _die() -> void:
 		_fire_layer.queue_redraw()
 	if not _gz_death:
 		_smiley_sprite.visible = false
-
-func _on_polylines_changed() -> void:
-	# Reset all cached polyline indices in physics — polyline array may have shifted
-	physics._stick_poly_idx = -1
-	physics._stick_poly_ticks = 99
-	physics._last_stick_poly = -1
-	physics._poly_cross_cooldown = 0
-	physics._prev_push_normal = Vector2.ZERO
-	physics.is_wedged = false
-	physics.on_rotated_block = false
 
 func set_speech(text: String) -> void:
 	_speech_text = text

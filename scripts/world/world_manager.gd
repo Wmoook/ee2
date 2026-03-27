@@ -256,9 +256,54 @@ func add_polyline(points: PackedVector2Array, side: String = "top", block_id: in
 		"uv_offset": uv_offset,
 		"from_split": uv_offset != 0.0  # Part of a split — skip mesh truncation
 	})
-	_rebuild_wedge_pairs()
-	_rebuild_global_render_hash()
+	_regenerate_curve_collision_blocks()
 	polylines_changed.emit()
+
+func _regenerate_curve_collision_blocks() -> void:
+	## Remove all existing curve collision blocks and regenerate from polylines
+	var i: int = free_blocks.size() - 1
+	while i >= 0:
+		if free_blocks[i].get("curve_collision", false):
+			free_blocks.remove_at(i)
+		i -= 1
+	for pi in range(polylines.size()):
+		var poly: Dictionary = polylines[pi]
+		if poly.get("collision_only", false):
+			continue
+		var pts: PackedVector2Array = poly.points
+		if pts.size() < 2:
+			continue
+		var bid: int = poly.get("block_id", 9)
+		# Walk the polyline, place 16x16 blocks centered on the centerline
+		var accum: float = 0.0
+		var last_placed: float = -12.0
+		for si in range(pts.size() - 1):
+			var seg_len: float = pts[si].distance_to(pts[si + 1])
+			if seg_len < 0.01:
+				accum += seg_len
+				continue
+			var seg_dir: Vector2 = (pts[si + 1] - pts[si]).normalized()
+			var seg_start: float = accum
+			while last_placed + 12.0 <= accum + seg_len:
+				var place_at: float = last_placed + 12.0
+				var t: float = (place_at - seg_start) / maxf(seg_len, 0.001)
+				t = clampf(t, 0.0, 1.0)
+				var pos: Vector2 = pts[si].lerp(pts[si + 1], t)
+				var lo_idx: int = maxi(0, si - 10)
+				var hi_idx: int = mini(pts.size() - 1, si + 11)
+				var tangent: Vector2 = (pts[hi_idx] - pts[lo_idx]).normalized()
+				if tangent.length() < 0.01:
+					tangent = seg_dir
+				var angle_deg: float = rad_to_deg(atan2(tangent.y, tangent.x))
+				free_blocks.append({
+					"pos": pos - Vector2(8, 8),
+					"id": bid,
+					"rotation": angle_deg,
+					"curve_collision": true
+				})
+				last_placed = place_at
+			accum += seg_len
+	tile_changed.emit(0, 0, 0)
 
 func _build_spatial_hash(pts: PackedVector2Array, cell_size: int) -> Dictionary:
 	## Bucket segment indices into grid cells for O(1) lookup
@@ -1264,12 +1309,11 @@ func remove_polyline_near(pos: Vector2, radius: float = 16.0) -> void:
 	for k in range(to_remove.size() - 1, -1, -1):
 		polylines.remove_at(to_remove[k])
 	# Rebuild spatial hashes and wedge pairs after removal
-	_rebuild_wedge_pairs()
-	_rebuild_global_render_hash()
 	# Invalidate cached mesh on remaining polylines (indices shifted)
 	for p in polylines:
 		p.erase("_cached_mesh")
 		p.erase("_cached_tex")
+	_regenerate_curve_collision_blocks()
 	_pending_net_poly_fullsync = true
 	polylines_changed.emit()
 
@@ -1395,6 +1439,8 @@ func serialize_world() -> Dictionary:
 				rot_data.append([x, y, fg_rotations[y][x]])
 	var free_data: Array = []
 	for fb in free_blocks:
+		if fb.get("curve_collision", false):
+			continue  # Generated from polylines, not saved
 		var fd: Dictionary = {"x": fb.pos.x, "y": fb.pos.y, "id": fb.id, "rot": fb.rotation}
 		if fb.has("spin") and fb.spin != 0:
 			fd["spin"] = fb.spin
@@ -1482,6 +1528,7 @@ func deserialize_world(data: Dictionary) -> void:
 		add_polyline(packed_pts, poly_side, poly_bid)
 	# Gravity zones
 	gravity_zones.deserialize(data.get("gravity_zones", []))
+	_regenerate_curve_collision_blocks()
 	world_loaded.emit()
 
 func add_line(start: Vector2, end: Vector2, color: Color, width: float = 3.0) -> void:

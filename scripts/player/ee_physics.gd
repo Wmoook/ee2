@@ -280,98 +280,6 @@ func tick(input_h: int, input_v: int, space_just: bool, space_held: bool) -> voi
 	var _pre_collision_speed: float = Vector2(_speedX, _speedY).length()
 	_step_position()
 
-	# 7.1 CCD backup: render edge check ALWAYS (exclude stick), centerline only when airborne
-	if not is_god_mode and WorldManager.polylines.size() > 0:
-		var _ccd_edge: bool = WorldManager.does_step_cross_render_edge(
-			_pre_step_x + 8, _pre_step_y + 8, x + 8, y + 8, _stick_poly_idx, _stick_arc_pos)
-		var _ccd_center: bool = _stick_poly_idx < 0 and WorldManager.does_step_cross_collision_only(
-			_pre_step_x + 8, _pre_step_y + 8, x + 8, y + 8, -1).crossed
-		if _ccd_edge or _ccd_center:
-			x = _pre_step_x
-			y = _pre_step_y
-			# Don't zero speed — let polyline collision (section 7.15) handle it
-			# This preserves momentum at V intersections (same as normal blocks)
-
-	# 7.15 Polyline collision
-	if not is_god_mode and WorldManager.polylines.size() > 0:
-		var _poly_any_hit: bool = false
-		var _poly_hit_normal: Vector2 = Vector2.ZERO
-		var _poly_hit_tangent: Vector2 = Vector2(1, 0)
-		var _poly_hit_against: float = -999.0
-		# Decay stick tracking: release after 5 ticks without contact
-		_stick_poly_ticks += 1
-		if _stick_poly_ticks > 5 and _stick_poly_idx >= 0:
-			# Full reset when leaving a curve — clean slate
-			_stick_poly_idx = -1
-			_last_stick_poly = -1
-			_stick_arc_pos = -1.0
-			_prev_poly_normal = Vector2.ZERO
-			_poly_cross_cooldown = 0
-		# Pass 1: check stick poly first. If no hit, check all curves for transition.
-		var poly_result: Dictionary
-		if _stick_poly_idx >= 0:
-			poly_result = WorldManager.check_polyline_collision(x, y, 16.0, 16.0, _prev_poly_normal, _stick_poly_idx, -1, _stick_poly_idx)
-			if not poly_result.hit:
-				# Stick poly missed — immediately check ALL curves for transition
-				poly_result = WorldManager.check_polyline_collision(x, y, 16.0, 16.0, _prev_poly_normal, -1)
-		else:
-			poly_result = WorldManager.check_polyline_collision(x, y, 16.0, 16.0, _prev_poly_normal, -1)
-		if poly_result.hit:
-			_poly_any_hit = true
-			# Always set hit info (needed for sandwich even if push is skipped)
-			var _p1_gn: Vector2 = Vector2(mox, moy)
-			if _p1_gn.length() < 0.01: _p1_gn = Vector2(0, 1)
-			_p1_gn = _p1_gn.normalized()
-			_poly_hit_against = -poly_result.normal.dot(_p1_gn)
-			_poly_hit_normal = poly_result.normal
-			_poly_hit_tangent = poly_result.tangent
-			var poly_vel: Vector2 = Vector2(_speedX, _speedY)
-			var vel_toward: float = poly_vel.dot(-poly_result.normal)
-			var _skip_poly: bool = vel_toward < -3.0 and poly_result.push.length() < 1.0
-			if not _skip_poly:
-				x += poly_result.push.x
-				y += poly_result.push.y
-				_stick_poly_idx = poly_result.poly_idx
-				_stick_poly_ticks = 0
-				_last_stick_poly = poly_result.poly_idx
-				if poly_result.poly_idx >= 0 and poly_result.seg >= 0:
-					var _sp_rd: Array = WorldManager.polylines[poly_result.poly_idx].render_dists
-					if poly_result.seg < _sp_rd.size():
-						_stick_arc_pos = _sp_rd[poly_result.seg]
-			_prev_poly_normal = poly_result.normal
-		# Pass 2 removed: single-curve collision via Pass 1 + CCD + purple push.
-		# U-curve wedging handled by section 8.5 (collision_only pairs).
-		# Pass 4: Safety — only check stick poly (don't find the other curve at V junctions)
-		if _stick_poly_idx >= 0:
-			for _safety_pass in range(2):
-				var poly4: Dictionary = WorldManager.check_polyline_collision(x, y, 16.0, 16.0, _prev_poly_normal, _stick_poly_idx, -1, _stick_poly_idx)
-				if not poly4.hit or poly4.push.length() < 0.1:
-					break
-				x += poly4.push.x
-				y += poly4.push.y
-		# Apply grounding/speed from the hit surface
-		if _poly_any_hit and _poly_hit_against > -0.3:
-			on_rotated_block = true
-			_surface_normal = _poly_hit_normal
-			if _poly_hit_against > 0.4 and _pre_tick_grav_speed >= 0:
-				is_grounded = true
-				# Only do tangent projection when falling/grounded (not when jumping up)
-				var poly_spd_along: float = Vector2(_speedX, _speedY).dot(_poly_hit_tangent)
-				var poly_grav_tang: float = Vector2(mox, moy).dot(_poly_hit_tangent) * _get_grav_mult() / MULT * 0.5
-				poly_spd_along += poly_grav_tang
-				_speedX = _poly_hit_tangent.x * poly_spd_along
-				_speedY = _poly_hit_tangent.y * poly_spd_along
-			elif _poly_hit_against <= 0.4 or _pre_tick_grav_speed < 0:
-				# Wall-like: zero speed into wall
-				var _w_into: float = Vector2(_speedX, _speedY).dot(-_poly_hit_normal)
-				if _w_into > 0:
-					_speedX += _poly_hit_normal.x * _w_into
-					_speedY += _poly_hit_normal.y * _w_into
-
-		# Ceiling hit: kill upward speed only on TRUE ceiling (against < -0.5 = surface opposes gravity from above)
-		if _poly_any_hit and _poly_hit_against < -0.5 and _speedY < 0 and not is_wedged and _wedge_escape_cooldown <= 0:
-			_speedY = 0
-
 	# 7.5 Line collision
 	if not is_god_mode:
 		var snap_y: float = WorldManager.check_line_collision(x, y + 2, 16.0, 16.0)
@@ -391,7 +299,6 @@ func tick(input_h: int, input_v: int, space_just: bool, space_held: bool) -> voi
 					_speedY = 0
 
 	# 7.6 Rotated block surface sliding (simple best-push)
-	var _on_polyline: bool = on_rotated_block  # Save polyline state before reset
 	var _polyline_normal: Vector2 = _surface_normal
 	on_rotated_block = false
 	in_valley = false
@@ -442,7 +349,7 @@ func tick(input_h: int, input_v: int, space_just: bool, space_held: bool) -> voi
 					var wx: float = push_lx * cos_r2 - push_ly * sin_r2
 					var wy: float = push_lx * sin_r2 + push_ly * cos_r2
 					var depth: float = Vector2(wx, wy).length()
-					var rk: int = int(round(fb.rotation)) % 180
+					var rk: int = (int(round(fb.rotation / 20.0)) * 20) % 180
 					_overlap_rots[rk] = true
 					if depth > pass_depth:
 						pass_depth = depth
@@ -499,7 +406,7 @@ func tick(input_h: int, input_v: int, space_just: bool, space_held: bool) -> voi
 			if not valley_jump:
 				# Wall-like: push nearly perpendicular to gravity (< 0.2)
 				# Floor/slope: push has gravity component (> 0.2)
-				if against_grav2 < 0.2:
+				if against_grav2 < 0.05:
 					# Wall: just zero the speed component into the wall
 					var into_wall: float = Vector2(_speedX, _speedY).dot(n)
 					if into_wall < 0:  # Moving into the wall
@@ -531,7 +438,7 @@ func tick(input_h: int, input_v: int, space_just: bool, space_held: bool) -> voi
 						_speedX = new_spd.x
 						_speedY = new_spd.y
 			# Only mark as "on rotated block" for floor/slope, not walls
-			if against_grav2 >= 0.2:
+			if against_grav2 >= 0.05:
 				on_rotated_block = true
 				_surface_normal = n
 			var grav_dir: Vector2 = Vector2(mox, moy)
@@ -541,16 +448,12 @@ func tick(input_h: int, input_v: int, space_just: bool, space_held: bool) -> voi
 			else:
 				grav_dir = Vector2(0, 1)
 			var against_grav: float = -n.dot(grav_dir)
-			if against_grav > 0.3 and not on_tile:
+			if against_grav > 0.05 and not on_tile:
 				is_grounded = true
 				_jump_cooldown = 0  # Clear cooldown on rotated block contact
 				_coyote_ticks = 4
 
 
-	# Restore polyline state if no free block collision occurred
-	if not on_rotated_block and _on_polyline and not _fb_hit:
-		on_rotated_block = true
-		_surface_normal = _polyline_normal
 
 	# Fast V-shape detection: push normal X flips + low speed = settling into valley
 	# Only for FLOOR V's (normal points against gravity), not ceiling V's
@@ -661,94 +564,7 @@ func tick(input_h: int, input_v: int, space_just: bool, space_held: bool) -> voi
 
 	_was_on_rotated = on_rotated_block
 
-	# 8.5 Dual-arm wedge detection: player sprite edge touches both split curve arms
-	if _wedge_escape_cooldown > 0:
-		_wedge_escape_cooldown -= 1
-	if not is_god_mode and not is_wedged and _wedge_escape_cooldown <= 0:
-		var _pcx: float = x + 8.0
-		var _pcy: float = y + 8.0
-		var _wedge_threshold: float = 16.35  # 8px half-sprite + 8.35px curve render edge
-		# Find consecutive collision_only pairs in polylines
-		var _polys: Array = WorldManager.polylines
-		var _pi: int = 0
-		while _pi < _polys.size() - 1:
-			var _pa: Dictionary = _polys[_pi]
-			if not _pa.get("collision_only", false):
-				_pi += 1
-				continue
-			var _pb: Dictionary = _polys[_pi + 1]
-			if not _pb.get("collision_only", false):
-				_pi += 2
-				continue
-			# Found a collision_only pair (arm A = _pa, arm B = _pb)
-			# AABB broad phase: skip if player center is far from either arm
-			var _margin: float = _wedge_threshold + 2.0
-			var _in_a: bool = _pcx >= _pa.bbox_min.x - _margin and _pcx <= _pa.bbox_max.x + _margin \
-				and _pcy >= _pa.bbox_min.y - _margin and _pcy <= _pa.bbox_max.y + _margin
-			var _in_b: bool = _pcx >= _pb.bbox_min.x - _margin and _pcx <= _pb.bbox_max.x + _margin \
-				and _pcy >= _pb.bbox_min.y - _margin and _pcy <= _pb.bbox_max.y + _margin
-			if not _in_a or not _in_b:
-				_pi += 2
-				continue
-			# Spatial hash lookup for arm A: find min distance to nearby segments
-			var _dist_a: float = 99999.0
-			var _sha: Dictionary = _pa.get("spatial_hash", {})
-			var _csa: int = _sha.get("cell_size", 32)
-			var _gxa: int = int(floor(_pcx / _csa))
-			var _gya: int = int(floor(_pcy / _csa))
-			var _pts_a: PackedVector2Array = _pa.points
-			for _dx in range(-1, 2):
-				for _dy in range(-1, 2):
-					var _key_a: int = (_gxa + _dx) * 10000 + (_gya + _dy)
-					var _segs_a: Variant = _sha.get(_key_a)
-					if _segs_a == null:
-						continue
-					for _si in _segs_a:
-						var _da: float = _dist_to_seg(_pcx, _pcy, _pts_a[_si], _pts_a[_si + 1])
-						if _da < _dist_a:
-							_dist_a = _da
-			if _dist_a >= _wedge_threshold:
-				_pi += 2
-				continue
-			# Spatial hash lookup for arm B: find min distance to nearby segments
-			var _dist_b: float = 99999.0
-			var _shb: Dictionary = _pb.get("spatial_hash", {})
-			var _csb: int = _shb.get("cell_size", 32)
-			var _gxb: int = int(floor(_pcx / _csb))
-			var _gyb: int = int(floor(_pcy / _csb))
-			var _pts_b: PackedVector2Array = _pb.points
-			for _dx in range(-1, 2):
-				for _dy in range(-1, 2):
-					var _key_b: int = (_gxb + _dx) * 10000 + (_gyb + _dy)
-					var _segs_b: Variant = _shb.get(_key_b)
-					if _segs_b == null:
-						continue
-					for _si in _segs_b:
-						var _db: float = _dist_to_seg(_pcx, _pcy, _pts_b[_si], _pts_b[_si + 1])
-						if _db < _dist_b:
-							_dist_b = _db
-			if _dist_b >= _wedge_threshold:
-				_pi += 2
-				continue
-			# Both arms within threshold — only wedge if speed is very low (settling)
-			# With momentum, let the player slide through (like free blocks at V junctions)
-			if _pre_collision_speed > 1.0:
-				_pi += 2
-				continue
-			is_wedged = true
-			is_grounded = true
-			_surface_normal = Vector2(0, -1)
-			_speedX = 0
-			_speedY = 0
-			_wedge_safe_pos = Vector2(x, y)
-			# Allowed directions: check if moving 24px opens distance from BOTH arms
-			var _wr2: float = 24.0
-			var _wd_c: float = WorldManager.dist_to_nearest_polyline(_pcx, _pcy)
-			_wedge_allow_left = WorldManager.dist_to_nearest_polyline(_pcx - _wr2, _pcy) > _wd_c + 2.0
-			_wedge_allow_right = WorldManager.dist_to_nearest_polyline(_pcx + _wr2, _pcy) > _wd_c + 2.0
-			_wedge_allow_up = true  # Always allow up (jump direction)
-			_wedge_allow_down = WorldManager.dist_to_nearest_polyline(_pcx, _pcy + _wr2) > _wd_c + 2.0
-			break
+	# 8.5 Wedge detection removed — curves now use generated free blocks
 
 	# 9. Jump — if wedged OR stuck between curves, allow straight up jump
 	if is_wedged and space_just:
@@ -761,30 +577,10 @@ func tick(input_h: int, input_v: int, space_just: bool, space_held: bool) -> voi
 		jumpCount = 0
 	_handle_jump(space_just, space_held)
 
-	# 10. ABSOLUTE PURPLE LINE FAILSAFE — OVERRIDES EVERYTHING
-	# If player center is within 7px of any purple line, push to 8px away (1px buffer).
-	# Runs every tick. No exclusions. Keeps player 1px outside purple lines at all times.
-	purple_pushed = false
-	if not is_god_mode and _stick_poly_idx < 0:
-		# Only run purple push when NOT on a curve — Pass 1 handles curve collision
-		var _pp_push: Vector2 = WorldManager.get_purple_line_push(x + 8, y + 8)
-		if _pp_push.length() > 0.01:
-			x += _pp_push.x
-			y += _pp_push.y
-			_speedX = 0
-			_speedY = 0
-			purple_pushed = true
+	# 10. Purple push removed — curves now use generated free blocks for collision
 
 	# 11. Debug info (P key overlay)
-	debug_text = "stick=%d polys=%d pos=(%.1f,%.1f) spd=(%.2f,%.2f) grnd=%s wedge=%s val=%s vj=%s pp=%s fb=%s" % [_stick_poly_idx, WorldManager.polylines.size(), x, y, _speedX, _speedY, is_grounded, is_wedged, in_valley, valley_jump, purple_pushed, _fb_hit]
-	if (WorldManager.polylines.size() >= 2 and _stick_poly_idx >= 0) or (_fb_hit and on_rotated_block):
-		var _lp: String = OS.get_executable_path().get_base_dir() + "/physics_debug.txt"
-		var _lf2: FileAccess = FileAccess.open(_lp, FileAccess.READ_WRITE)
-		if _lf2 == null: _lf2 = FileAccess.open(_lp, FileAccess.WRITE)
-		if _lf2:
-			_lf2.seek_end()
-			_lf2.store_line("spd=(%.3f,%.3f) pos=(%.1f,%.1f) stick=%d val=%s vj=%s pp=%s fb=%s wedge=%s" % [_speedX, _speedY, x, y, _stick_poly_idx, in_valley, valley_jump, purple_pushed, _fb_hit, is_wedged])
-			_lf2.close()
+	debug_text = "pos=(%.1f,%.1f) spd=(%.2f,%.2f) grnd=%s val=%s vj=%s" % [x, y, _speedX, _speedY, is_grounded, in_valley, valley_jump]
 
 func _arrow_dir_to_vec(dir: int) -> Vector2:
 	match dir:
@@ -977,12 +773,8 @@ func _step_position() -> void:
 					x += currentSX; currentSX = 0
 			rx = fmod(x, 1.0)
 			if rx < 0: rx += 1.0
-			var _cx_edge: bool = not is_god_mode and WorldManager.does_step_cross_render_edge(ox + 8, oy + 8, x + 8, y + 8, _stick_poly_idx, _stick_arc_pos)
-			var _cx_center: bool = not is_god_mode and _stick_poly_idx < 0 and _poly_cross_cooldown <= 0 and WorldManager.does_step_cross_collision_only(ox + 8, oy + 8, x + 8, y + 8, -1).crossed
 			if _collides_px(x, y):
 				x = ox; _speedX = 0; currentSX = osx; donex = true
-			elif _cx_edge or _cx_center:
-				x = ox; currentSX = 0; donex = true
 
 		# Step Y
 		if currentSY != 0 and not doney:
@@ -998,21 +790,36 @@ func _step_position() -> void:
 					y += currentSY; currentSY = 0
 			ry = fmod(y, 1.0)
 			if ry < 0: ry += 1.0
-			var _cy_edge: bool = not is_god_mode and WorldManager.does_step_cross_render_edge(x + 8, oy + 8, x + 8, y + 8, _stick_poly_idx, _stick_arc_pos)
-			var _cy_center: bool = not is_god_mode and _stick_poly_idx < 0 and _poly_cross_cooldown <= 0 and WorldManager.does_step_cross_collision_only(x + 8, oy + 8, x + 8, y + 8, -1).crossed
 			if _collides_px(x, y):
 				y = oy; _speedY = 0; currentSY = osy; doney = true
-			elif _cy_edge or _cy_center:
-				y = oy; currentSY = 0; doney = true
 
-		# Combined diagonal crossing check — render edges ALWAYS checked, centerline only when airborne
-		if not is_god_mode and (x != ox or y != oy):
-			var _cd_edge: bool = WorldManager.does_step_cross_render_edge(ox + 8, oy + 8, x + 8, y + 8, _stick_poly_idx, _stick_arc_pos)
-			var _cd_center: bool = _stick_poly_idx < 0 and _poly_cross_cooldown <= 0 and WorldManager.does_step_cross_collision_only(ox + 8, oy + 8, x + 8, y + 8, -1).crossed
-			if _cd_edge or _cd_center:
-				x = ox; donex = true
-				y = oy; doney = true
 
+
+func _collides_curve_blocks(px: float, py: float) -> bool:
+	if is_god_mode:
+		return false
+	var cx: float = px + 8.0
+	var cy: float = py + 8.0
+	for fb in WorldManager.free_blocks:
+		if not fb.get("curve_collision", false):
+			continue
+		if not GameState.is_solid(fb.id):
+			continue
+		var bcx: float = fb.pos.x + 8.0
+		var bcy: float = fb.pos.y + 8.0
+		var dx2: float = cx - bcx
+		var dy2: float = cy - bcy
+		# Quick AABB check first
+		if absf(dx2) > 20.0 or absf(dy2) > 20.0:
+			continue
+		var rot: float = deg_to_rad(fb.rotation)
+		var cos_r: float = cos(-rot)
+		var sin_r: float = sin(-rot)
+		var lx: float = dx2 * cos_r - dy2 * sin_r
+		var ly: float = dx2 * sin_r + dy2 * cos_r
+		if absf(lx) < 16.0 and absf(ly) < 16.0:
+			return true
+	return false
 
 func _collides_px(px: float, py: float) -> bool:
 	if is_god_mode:
