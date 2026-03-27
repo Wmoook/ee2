@@ -260,50 +260,13 @@ func add_polyline(points: PackedVector2Array, side: String = "top", block_id: in
 	polylines_changed.emit()
 
 func _regenerate_curve_collision_blocks() -> void:
-	## Remove all existing curve collision blocks and regenerate from polylines
+	## Curve collision now handled by enforce_polyline_hard_constraint.
+	## Just remove any legacy curve_collision blocks.
 	var i: int = free_blocks.size() - 1
 	while i >= 0:
 		if free_blocks[i].get("curve_collision", false):
 			free_blocks.remove_at(i)
 		i -= 1
-	for pi in range(polylines.size()):
-		var poly: Dictionary = polylines[pi]
-		if poly.get("collision_only", false):
-			continue
-		var pts: PackedVector2Array = poly.points
-		if pts.size() < 2:
-			continue
-		var bid: int = poly.get("block_id", 9)
-		# Walk the polyline, place 16x16 blocks centered on the centerline
-		var accum: float = 0.0
-		var last_placed: float = -12.0
-		for si in range(pts.size() - 1):
-			var seg_len: float = pts[si].distance_to(pts[si + 1])
-			if seg_len < 0.01:
-				accum += seg_len
-				continue
-			var seg_dir: Vector2 = (pts[si + 1] - pts[si]).normalized()
-			var seg_start: float = accum
-			while last_placed + 12.0 <= accum + seg_len:
-				var place_at: float = last_placed + 12.0
-				var t: float = (place_at - seg_start) / maxf(seg_len, 0.001)
-				t = clampf(t, 0.0, 1.0)
-				var pos: Vector2 = pts[si].lerp(pts[si + 1], t)
-				var lo_idx: int = maxi(0, si - 10)
-				var hi_idx: int = mini(pts.size() - 1, si + 11)
-				var tangent: Vector2 = (pts[hi_idx] - pts[lo_idx]).normalized()
-				if tangent.length() < 0.01:
-					tangent = seg_dir
-				var angle_deg: float = rad_to_deg(atan2(tangent.y, tangent.x))
-				free_blocks.append({
-					"pos": pos - Vector2(8, 8),
-					"id": bid,
-					"rotation": angle_deg,
-					"curve_collision": true,
-					"source_poly": pi
-				})
-				last_placed = place_at
-			accum += seg_len
 	tile_changed.emit(0, 0, 0)
 
 func _build_spatial_hash(pts: PackedVector2Array, cell_size: int) -> Dictionary:
@@ -551,7 +514,7 @@ func enforce_polyline_hard_constraint(px: float, py: float, prev_px: float, prev
 	var cy: float = py + 8.0
 	var prev_cx: float = prev_px + 8.0
 	var prev_cy: float = prev_py + 8.0
-	var min_dist: float = 16.5  # 8 player half + 8.35 curve visual half + 0.15 buffer
+	var min_dist: float = 16.35  # 8 player half + 8.35 curve visual half (exact visual match)
 	var total_push: Vector2 = Vector2.ZERO
 	var best_normal: Vector2 = Vector2.ZERO
 	var best_tangent: Vector2 = Vector2(1, 0)
@@ -593,24 +556,17 @@ func enforce_polyline_hard_constraint(px: float, py: float, prev_px: float, prev
 			if closest_seg < 0 or closest_dist >= min_dist:
 				continue
 			touching_polys[_pidx] = true
-			# Penetration found — compute push direction from PREVIOUS position
+			# Penetration found — push toward pre-computed normal (outside of curve)
 			var seg_a: Vector2 = pts[closest_seg]
 			var seg_b: Vector2 = pts[closest_seg + 1]
 			var on_seg: Vector2 = seg_a + (seg_b - seg_a) * closest_t
-			var to_player: Vector2 = Vector2(cx, cy) - on_seg
-			var to_prev: Vector2 = Vector2(prev_cx, prev_cy) - on_seg
-			# Push direction: use interpolated normal, sign from previous position
+			# Always use polyline's pre-computed normal for push direction.
+			# Normals point toward the "outside" (top side). Never flip based on
+			# prev_position — at U-curves that causes pushing INTO the interior.
 			var interp_n: Vector2 = (norms[closest_seg] * (1.0 - closest_t) + norms[closest_seg + 1] * closest_t).normalized()
 			if interp_n.length() < 0.01:
 				interp_n = norms[closest_seg]
-			var push_dir: Vector2
-			if to_prev.length() > 0.5:
-				# Use normal direction that matches the side the player came from
-				push_dir = interp_n if to_prev.dot(interp_n) > 0 else -interp_n
-			elif to_player.length() > 0.01:
-				push_dir = interp_n if to_player.dot(interp_n) > 0 else -interp_n
-			else:
-				push_dir = interp_n
+			var push_dir: Vector2 = interp_n
 			var pen: float = min_dist - closest_dist
 			if pen > iter_pen:
 				iter_pen = pen

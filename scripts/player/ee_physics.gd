@@ -279,6 +279,42 @@ func tick(input_h: int, input_v: int, space_just: bool, space_held: bool) -> voi
 	var _pre_collision_speed: float = Vector2(_speedX, _speedY).length()
 	_step_position()
 
+	# 7.15 Primary curve collision: enforce min distance from polyline centerlines.
+	# Uses continuous geometry (render edges = visual = hitbox). One system, no fighting.
+	if not is_god_mode and WorldManager.polylines.size() > 0:
+		var _hard: Dictionary = WorldManager.enforce_polyline_hard_constraint(x, y, _pre_step_x, _pre_step_y)
+		if _hard.pushed:
+			x = _hard.x
+			y = _hard.y
+			# Tangent projection: remove speed INTO curve, preserve tangential
+			if _hard.normal.length() > 0.1:
+				var _hspd: Vector2 = Vector2(_speedX, _speedY)
+				var _hinto: float = _hspd.dot(_hard.normal)
+				if _hinto < 0:
+					_hspd -= _hard.normal * _hinto
+					_speedX = _hspd.x
+					_speedY = _hspd.y
+			# Grounding
+			var _hgrav: Vector2 = Vector2(mox, moy)
+			if _hgrav.length() < 0.01: _hgrav = Vector2(0, 1)
+			else: _hgrav = _hgrav.normalized()
+			var _hagainst: float = -_hard.normal.dot(_hgrav)
+			if _hagainst > 0.05:
+				on_rotated_block = true
+				is_grounded = true
+				_surface_normal = _hard.normal
+				_fb_hit = true
+			# V junction wedge
+			if _hard.poly_count >= 2:
+				in_valley = true
+				is_grounded = true
+				_fb_hit = true
+				if absf(_speedX) + absf(_speedY) < 1.5:
+					is_wedged = true
+					_speedX = 0
+					_speedY = 0
+					_wedge_safe_pos = Vector2(x, y)
+
 	# 7.5 Line collision
 	if not is_god_mode:
 		var snap_y: float = WorldManager.check_line_collision(x, y + 2, 16.0, 16.0)
@@ -308,102 +344,66 @@ func tick(input_h: int, input_v: int, space_just: bool, space_held: bool) -> voi
 		var best_depth: float = 0.0
 		var hit: bool = false
 		var _overlap_rots: Dictionary = {}
-		var _curve_hit_poly: int = -1
-		var _any_curve_hit: bool = false
-		var _run_filter: int = _stick_curve
-		var _save_x: float = x
-		var _save_y: float = y
-		var _fb_attempt: int = 0
-		while _fb_attempt < 2:
-			best_push = Vector2.ZERO
-			best_depth = 0.0
-			hit = false
-			_overlap_rots.clear()
-			_curve_hit_poly = -1
-			_any_curve_hit = false
-			x = _save_x
-			y = _save_y
-			# Iterative collision: resolve overlaps multiple passes
-			for _pass in range(4):
-				var pass_push: Vector2 = Vector2.ZERO
-				var pass_depth: float = 0.0
-				for fb in WorldManager.free_blocks:
-					if not GameState.is_solid(fb.id):
-						continue
-					if fb.get("curve_visual", false):
-						continue
-					# Curve stick filter: only check blocks from current curve
-					if fb.get("curve_collision", false) and _run_filter >= 0 and fb.get("source_poly", -1) != _run_filter:
-						continue
-					var bpos: Vector2 = fb.pos
-					var rot_rad: float = deg_to_rad(fb.rotation)
-					var bcx: float = bpos.x + 8.0
-					var bcy: float = bpos.y + 8.0
-					var dx2: float = (x + 8.0) - bcx
-					var dy2: float = (y + 8.0) - bcy
-					var cos_r: float = cos(-rot_rad)
-					var sin_r: float = sin(-rot_rad)
-					var lx: float = dx2 * cos_r - dy2 * sin_r
-					var ly: float = dx2 * sin_r + dy2 * cos_r
-					var ox2: float = 16.0 - absf(lx)
-					var oy2: float = 16.0 - absf(ly)
-					# World-axis SAT: trim diamond corners for axis-aligned player
-					var abs_c: float = absf(cos(rot_rad))
-					var abs_s: float = absf(sin(rot_rad))
-					var bpx: float = 8.0 * abs_c + 8.0 * abs_s
-					var bpy: float = 8.0 * abs_s + 8.0 * abs_c
-					var wox: float = (8.0 + bpx) - absf(dx2)
-					var woy: float = (8.0 + bpy) - absf(dy2)
-					if ox2 > 0 and oy2 > 0 and wox > 0 and woy > 0:
-						var push_lx: float = 0.0
-						var push_ly: float = 0.0
-						if oy2 < ox2:
-							push_ly = oy2 * sign(ly)
-						else:
-							push_lx = ox2 * sign(lx)
-						var cos_r2: float = cos(rot_rad)
-						var sin_r2: float = sin(rot_rad)
-						var wx: float = push_lx * cos_r2 - push_ly * sin_r2
-						var wy: float = push_lx * sin_r2 + push_ly * cos_r2
-						var depth: float = Vector2(wx, wy).length()
-						var rk: int = (int(round(fb.rotation / 20.0)) * 20) % 180
-						_overlap_rots[rk] = true
-						if fb.get("curve_collision", false):
-							_any_curve_hit = true
-							_curve_hit_poly = fb.get("source_poly", -1)
-						if depth > pass_depth:
-							pass_depth = depth
-							pass_push = Vector2(wx, wy)
-							hit = true
-							_fb_hit = true
-				if pass_depth > 0.01:
-					# Apply this pass's push and re-check
-					if valley_jump:
-						pass_push.x = 0  # Keep V jump vertical
-					x += pass_push.x
-					y += pass_push.y
-					if pass_depth > best_depth:
-						best_depth = pass_depth
-						best_push = pass_push
-					# Stop iterating if overlapping 2+ rotations in ceiling config
-					if _overlap_rots.size() >= 2:
-						var _gcheck: Vector2 = Vector2(mox, moy)
-						if _gcheck.length() < 0.01: _gcheck = Vector2(0, 1)
-						if -pass_push.normalized().dot(_gcheck.normalized()) <= 0:
-							break  # Ceiling V - stop, let gravity handle it
-				else:
-					break  # No more overlaps
-			# Check if need to re-run without curve filter
-			if _run_filter >= 0 and not _any_curve_hit:
-				_run_filter = -1
-				_fb_attempt += 1
+		for _pass in range(8):
+			var pass_push: Vector2 = Vector2.ZERO
+			var pass_depth: float = 0.0
+			for fb in WorldManager.free_blocks:
+				if not GameState.is_solid(fb.id):
+					continue
+				if fb.get("curve_visual", false):
+					continue
+				var bpos: Vector2 = fb.pos
+				var rot_rad: float = deg_to_rad(fb.rotation)
+				var bcx: float = bpos.x + 8.0
+				var bcy: float = bpos.y + 8.0
+				var dx2: float = (x + 8.0) - bcx
+				var dy2: float = (y + 8.0) - bcy
+				var cos_r: float = cos(-rot_rad)
+				var sin_r: float = sin(-rot_rad)
+				var lx: float = dx2 * cos_r - dy2 * sin_r
+				var ly: float = dx2 * sin_r + dy2 * cos_r
+				var ox2: float = 16.0 - absf(lx)
+				var oy2: float = 16.0 - absf(ly)
+				var abs_c: float = absf(cos(rot_rad))
+				var abs_s: float = absf(sin(rot_rad))
+				var bpx: float = 8.0 * abs_c + 8.0 * abs_s
+				var bpy: float = 8.0 * abs_s + 8.0 * abs_c
+				var wox: float = (8.0 + bpx) - absf(dx2)
+				var woy: float = (8.0 + bpy) - absf(dy2)
+				if ox2 > 0 and oy2 > 0 and wox > 0 and woy > 0:
+					var push_lx: float = 0.0
+					var push_ly: float = 0.0
+					if oy2 < ox2:
+						push_ly = oy2 * sign(ly)
+					else:
+						push_lx = ox2 * sign(lx)
+					var cos_r2: float = cos(rot_rad)
+					var sin_r2: float = sin(rot_rad)
+					var wx: float = push_lx * cos_r2 - push_ly * sin_r2
+					var wy: float = push_lx * sin_r2 + push_ly * cos_r2
+					var depth: float = Vector2(wx, wy).length()
+					var rk: int = (int(round(fb.rotation / 20.0)) * 20) % 180
+					_overlap_rots[rk] = true
+					if depth > pass_depth:
+						pass_depth = depth
+						pass_push = Vector2(wx, wy)
+						hit = true
+						_fb_hit = true
+			if pass_depth > 0.01:
+				if valley_jump:
+					pass_push.x = 0
+				x += pass_push.x
+				y += pass_push.y
+				if pass_depth > best_depth:
+					best_depth = pass_depth
+					best_push = pass_push
+				if _overlap_rots.size() >= 2:
+					var _gcheck: Vector2 = Vector2(mox, moy)
+					if _gcheck.length() < 0.01: _gcheck = Vector2(0, 1)
+					if -pass_push.normalized().dot(_gcheck.normalized()) <= 0:
+						break
 			else:
 				break
-		# Update curve stick tracking
-		if _any_curve_hit and _curve_hit_poly >= 0:
-			_stick_curve = _curve_hit_poly
-		elif not _any_curve_hit:
-			_stick_curve = -1
 		# Detect valley: only when actually overlapping 2+ different-rotation blocks
 		var _pre_total_spd: float = absf(_pre_tick_speedX) + absf(_pre_tick_speedY)
 		# Valley detection: only for floor V's (push against gravity)
@@ -483,29 +483,6 @@ func tick(input_h: int, input_v: int, space_just: bool, space_held: bool) -> voi
 				is_grounded = true
 				_jump_cooldown = 0  # Clear cooldown on rotated block contact
 				_coyote_ticks = 4
-	# 7.65 Hard polyline constraint: prevent tunneling through curves at any speed.
-	# Uses continuous polyline geometry (no gaps between blocks).
-	# Runs AFTER section 7.6 so tangent projection is already done.
-	if not is_god_mode and WorldManager.polylines.size() > 0:
-		var _hard: Dictionary = WorldManager.enforce_polyline_hard_constraint(x, y, _pre_step_x, _pre_step_y, _stick_curve)
-		if _hard.pushed:
-			x = _hard.x
-			y = _hard.y
-			# Only remove speed component going INTO the curve, keep tangential
-			if _hard.normal.length() > 0.1:
-				var _h_spd: Vector2 = Vector2(_speedX, _speedY)
-				var _h_into: float = _h_spd.dot(_hard.normal)
-				if _h_into < 0:
-					_speedX -= _hard.normal.x * _h_into
-					_speedY -= _hard.normal.y * _h_into
-				var _h_grav: Vector2 = Vector2(mox, moy)
-				if _h_grav.length() < 0.01: _h_grav = Vector2(0, 1)
-				else: _h_grav = _h_grav.normalized()
-				if -_hard.normal.dot(_h_grav) > 0.05:
-					on_rotated_block = true
-					is_grounded = true
-					_surface_normal = _hard.normal
-					_fb_hit = true
 
 	# Wedge at V junction: in_valley (2+ curve rotations) with low speed = settled
 	if not is_wedged and not valley_jump and _wedge_escape_cooldown == 0 and in_valley:
