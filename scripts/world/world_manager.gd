@@ -299,7 +299,8 @@ func _regenerate_curve_collision_blocks() -> void:
 					"pos": pos - Vector2(8, 8),
 					"id": bid,
 					"rotation": angle_deg,
-					"curve_collision": true
+					"curve_collision": true,
+					"source_poly": pi
 				})
 				last_placed = place_at
 			accum += seg_len
@@ -550,7 +551,7 @@ func enforce_polyline_hard_constraint(px: float, py: float, prev_px: float, prev
 	var cy: float = py + 8.0
 	var prev_cx: float = prev_px + 8.0
 	var prev_cy: float = prev_py + 8.0
-	var min_dist: float = 16.1  # 8 player half + 8.35 curve visual half + 0.15 margin
+	var min_dist: float = 16.5  # 8 player half + 8.35 curve visual half + 0.15 buffer
 	var total_push: Vector2 = Vector2.ZERO
 	var best_normal: Vector2 = Vector2.ZERO
 	var best_tangent: Vector2 = Vector2(1, 0)
