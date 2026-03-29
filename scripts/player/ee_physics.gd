@@ -282,10 +282,14 @@ func tick(input_h: int, input_v: int, space_just: bool, space_held: bool) -> voi
 	# 7.15 Swept AABB curve collision: preventive quad-strip collision
 	if not is_god_mode and WorldManager.curve_colliders.size() > 0:
 		var _curve_contact_normals: Array = []
-		var remaining: Vector2 = Vector2(x - _pre_step_x, y - _pre_step_y)
-		# Revert to pre-step position; we will re-apply motion via swept collision
+		# Sweep from pre-step to current pos to find curve contacts
+		var full_motion: Vector2 = Vector2(x - _pre_step_x, y - _pre_step_y)
+		# Revert to pre-step, re-apply via sweep (preserving grid tile stops)
+		var post_step_x: float = x
+		var post_step_y: float = y
 		x = _pre_step_x
 		y = _pre_step_y
+		var remaining: Vector2 = full_motion
 		for _iter in range(4):
 			if remaining.length() < 0.001:
 				break
@@ -294,20 +298,30 @@ func tick(input_h: int, input_v: int, space_just: bool, space_held: bool) -> voi
 				x += remaining.x
 				y += remaining.y
 				break
-			# Move to just before first hit
 			var first: Dictionary = hits[0]
-			var safe_t: float = maxf(first.t - 0.001, 0.0)
-			x += remaining.x * safe_t
-			y += remaining.y * safe_t
-			# Collect contact normals from all hits at approximately same time
 			var contact_normals: Array = []
-			for h in hits:
-				if h.t <= first.t + 0.01:
-					contact_normals.append(h.normal)
-					if not _has_similar_normal(_curve_contact_normals, h.normal):
-						_curve_contact_normals.append(h.normal)
+			if first.start_pen:
+				# Start-penetrating: static depenetration push
+				x += first.normal.x * first.pen
+				y += first.normal.y * first.pen
+				contact_normals.append(first.normal)
+				if not _has_similar_normal(_curve_contact_normals, first.normal):
+					_curve_contact_normals.append(first.normal)
+			else:
+				# Normal swept hit: move to just before contact
+				var safe_t: float = maxf(first.t - 0.001, 0.0)
+				x += remaining.x * safe_t
+				y += remaining.y * safe_t
+				# Collect contact normals from all hits at approximately same time
+				for h in hits:
+					if h.t <= first.t + 0.01 and not h.start_pen:
+						contact_normals.append(h.normal)
+						if not _has_similar_normal(_curve_contact_normals, h.normal):
+							_curve_contact_normals.append(h.normal)
 			# Clip remaining motion
-			remaining = remaining * (1.0 - safe_t)
+			if not first.start_pen:
+				remaining = remaining * (1.0 - maxf(first.t - 0.001, 0.0))
+			# else: remaining stays full (depenetration didn't consume motion)
 			remaining = _clip_velocity_vec(remaining, contact_normals)
 			# Clip speed against contact normals
 			var spd_vec: Vector2 = Vector2(_speedX, _speedY)
@@ -820,6 +834,59 @@ func _dist_to_seg(cx: float, cy: float, sa: Vector2, sb: Vector2) -> float:
 
 # ── Swept AABB curve collision functions ──────────────────────────────────────
 
+func _swept_aabb_vs_line_seg(center: Vector2, half_size: Vector2, delta: Vector2, seg_a: Vector2, seg_b: Vector2, outward_normal: Vector2) -> Dictionary:
+	## Swept AABB vs line segment with correct support point and sign conventions.
+	var no_hit: Dictionary = {"hit": false, "t": 1.0, "normal": Vector2.ZERO, "start_pen": false, "pen": 0.0}
+	var seg: Vector2 = seg_b - seg_a
+	var seg_len: float = seg.length()
+	if seg_len <= 0.00001:
+		return no_hit
+	var tangent: Vector2 = seg / seg_len
+	var n: Vector2 = outward_normal.normalized()
+	# Support point: AABB corner farthest opposite the face normal (touches first)
+	var support_offset: Vector2 = Vector2.ZERO
+	if n.x > 0.0:
+		support_offset.x = -half_size.x
+	elif n.x < 0.0:
+		support_offset.x = half_size.x
+	if n.y > 0.0:
+		support_offset.y = -half_size.y
+	elif n.y < 0.0:
+		support_offset.y = half_size.y
+	var support0: Vector2 = center + support_offset
+	# Signed face distance: >0 separated, =0 touching, <0 penetrating
+	var dist: float = n.dot(support0 - seg_a)
+	# Motion relative to face: <0 moving into face, >0 moving away
+	var approach: float = n.dot(delta)
+	var touch_eps: float = 0.01
+	var pen_eps: float = 2.0  # Only depenetrate when >2px past (not surface riding drift)
+	# Deep penetration: push back out
+	if dist < -pen_eps:
+		return {"hit": true, "t": 0.0, "normal": n, "start_pen": true, "pen": -dist}
+	# Small penetration (surface riding drift): ignore
+	if dist < -touch_eps and dist >= -pen_eps:
+		return no_hit
+	var t_hit: float = 0.0
+	if dist <= touch_eps:
+		if approach >= -touch_eps:
+			return no_hit
+		t_hit = 0.0
+	else:
+		if approach >= -touch_eps:
+			return no_hit
+		t_hit = dist / -approach
+		if t_hit < 0.0 or t_hit > 1.0:
+			return no_hit
+	# Finite-segment check: project box center onto tangent at hit time
+	var center_at_hit: Vector2 = center + delta * t_hit
+	var center_u: float = tangent.dot(center_at_hit - seg_a)
+	var box_tangent_radius: float = absf(tangent.x) * half_size.x + absf(tangent.y) * half_size.y
+	if center_u + box_tangent_radius < -touch_eps:
+		return no_hit
+	if center_u - box_tangent_radius > seg_len + touch_eps:
+		return no_hit
+	return {"hit": true, "t": maxf(t_hit, 0.0), "normal": n, "start_pen": false, "pen": 0.0}
+
 func _swept_aabb_vs_quad(center: Vector2, half_size: Vector2, delta: Vector2, quad_verts: Array, edge_normals: Array, external: Array) -> Dictionary:
 	## Swept AABB vs convex quad using Separating Axis Theorem (SAT).
 	## Tests AABB axes (right, up) + external quad edge normals.
@@ -889,7 +956,7 @@ func _swept_aabb_vs_quad(center: Vector2, half_size: Vector2, delta: Vector2, qu
 	if t_enter > t_exit or t_enter >= 1.0 or t_exit <= 0.0:
 		return result
 	if t_enter < 0.0:
-		t_enter = 0.0
+		return result  # Already overlapping — don't treat as hit, let clip resolve
 	# Ensure the hit normal points away from the movement direction
 	if best_axis.dot(delta) > 0:
 		best_axis = -best_axis
@@ -899,47 +966,40 @@ func _swept_aabb_vs_quad(center: Vector2, half_size: Vector2, delta: Vector2, qu
 	return result
 
 func _find_curve_hits(pos: Vector2, delta: Vector2) -> Array:
-	## Query spatial hash for quads near the swept AABB, test each, return sorted hits.
+	## Query spatial hash for render edge segments, sweep test each, return sorted hits.
 	var hits: Array = []
 	var half_size: Vector2 = Vector2(8.0, 8.0)
 	var center: Vector2 = pos + half_size  # Player center
 	var cs: int = WorldManager._curve_collider_cell
-	var hash: Dictionary = WorldManager._curve_collider_hash
-	if hash.is_empty():
+	var hash_data: Dictionary = WorldManager._curve_collider_hash
+	if hash_data.is_empty():
 		return hits
-	# Compute swept AABB bounds
-	var sweep_min: Vector2 = Vector2(minf(center.x, center.x + delta.x) - half_size.x, minf(center.y, center.y + delta.y) - half_size.y)
-	var sweep_max: Vector2 = Vector2(maxf(center.x, center.x + delta.x) + half_size.x, maxf(center.y, center.y + delta.y) + half_size.y)
+	# Compute swept AABB bounds for spatial hash query
+	var sweep_min: Vector2 = Vector2(minf(center.x, center.x + delta.x) - half_size.x - 2, minf(center.y, center.y + delta.y) - half_size.y - 2)
+	var sweep_max: Vector2 = Vector2(maxf(center.x, center.x + delta.x) + half_size.x + 2, maxf(center.y, center.y + delta.y) + half_size.y + 2)
 	var gx0: int = int(floor(sweep_min.x / cs))
 	var gy0: int = int(floor(sweep_min.y / cs))
 	var gx1: int = int(floor(sweep_max.x / cs))
 	var gy1: int = int(floor(sweep_max.y / cs))
-	# Collect unique candidate quads
 	var checked: Dictionary = {}
-	var candidates: Array = []
 	for gx in range(gx0, gx1 + 1):
 		for gy in range(gy0, gy1 + 1):
 			var key: int = gx * 100000 + gy
-			if not hash.has(key):
+			if not hash_data.has(key):
 				continue
-			for quad in hash[key]:
-				# Use object identity via poly_idx + quad_idx as unique key
-				var qkey: int = quad.poly_idx * 100000 + quad.quad_idx
-				if checked.has(qkey):
+			for seg in hash_data[key]:
+				var seg_id: int = int(seg.a.x * 10000 + seg.a.y * 100 + seg.b.x * 10 + seg.b.y)
+				if checked.has(seg_id):
 					continue
-				checked[qkey] = true
-				candidates.append(quad)
-	# Test each candidate
-	for quad in candidates:
-		# Quick AABB broad phase: swept AABB vs quad AABB
-		if sweep_max.x < quad.aabb_min.x or sweep_min.x > quad.aabb_max.x:
-			continue
-		if sweep_max.y < quad.aabb_min.y or sweep_min.y > quad.aabb_max.y:
-			continue
-		var r: Dictionary = _swept_aabb_vs_quad(center, half_size, delta, quad.verts, quad.edge_normals, quad.external)
-		if r.hit:
-			hits.append({"t": r.t, "normal": r.normal, "quad": quad})
-	# Sort by time (earliest first)
+				checked[seg_id] = true
+				# Quick distance check: skip segments whose midpoint is far from swept path
+				var seg_mid: Vector2 = (seg.a + seg.b) * 0.5
+				var sweep_center: Vector2 = center + delta * 0.5
+				if seg_mid.distance_to(sweep_center) > 60.0:
+					continue
+				var r: Dictionary = _swept_aabb_vs_line_seg(center, half_size, delta, seg.a, seg.b, seg.normal)
+				if r.hit:
+					hits.append({"t": r.t, "normal": r.normal, "seg": seg})
 	hits.sort_custom(func(a: Dictionary, b: Dictionary) -> bool: return a.t < b.t)
 	return hits
 

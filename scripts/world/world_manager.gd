@@ -277,9 +277,8 @@ func _regenerate_curve_collision_blocks() -> void:
 	tile_changed.emit(0, 0, 0)
 
 func build_curve_colliders() -> void:
-	## Build swept-AABB quad colliders from render_top/render_bot strips.
-	## Each non-render_only polyline with render data becomes a strip of convex quads.
-	## Internal seam edges (shared between adjacent quads) are marked non-collidable.
+	## Build render edge wall segments from render_top/render_bot.
+	## Each segment is a line wall the player cannot cross.
 	curve_colliders.clear()
 	_curve_collider_hash.clear()
 	var cs: int = _curve_collider_cell
@@ -290,62 +289,37 @@ func build_curve_colliders() -> void:
 			continue
 		var rt: PackedVector2Array = poly.get("render_top", PackedVector2Array())
 		var rb: PackedVector2Array = poly.get("render_bot", PackedVector2Array())
-		if rt.size() < 2 or rb.size() < 2 or rt.size() != rb.size():
-			continue
-		var quad_count: int = rt.size() - 1
-		var quads: Array = []
-		for qi in range(quad_count):
-			# Quad verts in clockwise order:
-			# V0 = render_top[i], V1 = render_top[i+1], V2 = render_bot[i+1], V3 = render_bot[i]
-			var v0: Vector2 = rt[qi]
-			var v1: Vector2 = rt[qi + 1]
-			var v2: Vector2 = rb[qi + 1]
-			var v3: Vector2 = rb[qi]
-			var verts: Array = [v0, v1, v2, v3]
-			# Compute AABB of this quad
-			var qmin: Vector2 = Vector2(minf(minf(v0.x, v1.x), minf(v2.x, v3.x)), minf(minf(v0.y, v1.y), minf(v2.y, v3.y)))
-			var qmax: Vector2 = Vector2(maxf(maxf(v0.x, v1.x), maxf(v2.x, v3.x)), maxf(maxf(v0.y, v1.y), maxf(v2.y, v3.y)))
-			# Edge normals: outward-pointing perpendicular for each edge (clockwise winding)
-			# Edge i: verts[i] -> verts[(i+1)%4], outward normal = rotate edge 90 CW
-			var edge_normals: Array = []
-			for ei in range(4):
-				var ea: Vector2 = verts[ei]
-				var eb: Vector2 = verts[(ei + 1) % 4]
-				var edge_dir: Vector2 = eb - ea
-				# CW winding: outward normal is (edge_dir.y, -edge_dir.x)
-				var n: Vector2 = Vector2(edge_dir.y, -edge_dir.x)
-				var nl: float = n.length()
-				if nl > 0.001:
-					n = n / nl
-				edge_normals.append(n)
-			# External edges:
-			# Edge 0 (top: V0->V1): always external
-			# Edge 1 (right cross: V1->V2): internal unless last quad
-			# Edge 2 (bottom: V2->V3): always external
-			# Edge 3 (left cross: V3->V0): internal unless first quad
-			var external: Array = [true, qi == quad_count - 1, true, qi == 0]
-			var quad: Dictionary = {
-				"verts": verts,
-				"aabb_min": qmin,
-				"aabb_max": qmax,
-				"edge_normals": edge_normals,
-				"external": external,
-				"poly_idx": poly_idx,
-				"quad_idx": qi
-			}
-			quads.append(quad)
-			# Insert into spatial hash
-			var gx0: int = int(floor(qmin.x / cs))
-			var gy0: int = int(floor(qmin.y / cs))
-			var gx1: int = int(floor(qmax.x / cs))
-			var gy1: int = int(floor(qmax.y / cs))
-			for gx in range(gx0, gx1 + 1):
-				for gy in range(gy0, gy1 + 1):
-					var key: int = gx * 100000 + gy
-					if not _curve_collider_hash.has(key):
-						_curve_collider_hash[key] = []
-					_curve_collider_hash[key].append(quad)
-		curve_colliders.append({"quads": quads, "poly_idx": poly_idx})
+		# Add render_top and render_bot segments as walls
+		# render_top normal points outward (away from curve center)
+		# render_bot normal points outward (opposite direction — flipped)
+		for edge_idx in range(2):
+			var edge_arr: PackedVector2Array = rt if edge_idx == 0 else rb
+			if edge_arr.size() < 2:
+				continue
+			for si in range(edge_arr.size() - 1):
+				var a: Vector2 = edge_arr[si]
+				var b: Vector2 = edge_arr[si + 1]
+				if a.distance_to(b) < 0.1:
+					continue
+				var seg_min: Vector2 = Vector2(minf(a.x, b.x), minf(a.y, b.y))
+				var seg_max: Vector2 = Vector2(maxf(a.x, b.x), maxf(a.y, b.y))
+				var edge_dir: Vector2 = (b - a).normalized()
+				var normal: Vector2 = Vector2(edge_dir.y, -edge_dir.x)
+				# Flip render_bot normals so they point outward (opposite side)
+				if edge_idx == 1:
+					normal = -normal
+				var seg: Dictionary = {"a": a, "b": b, "normal": normal, "poly_idx": poly_idx}
+				curve_colliders.append(seg)
+				var gx0: int = int(floor(seg_min.x / cs))
+				var gy0: int = int(floor(seg_min.y / cs))
+				var gx1: int = int(floor(seg_max.x / cs))
+				var gy1: int = int(floor(seg_max.y / cs))
+				for gx in range(gx0, gx1 + 1):
+					for gy in range(gy0, gy1 + 1):
+						var key: int = gx * 100000 + gy
+						if not _curve_collider_hash.has(key):
+							_curve_collider_hash[key] = []
+						_curve_collider_hash[key].append(seg)
 
 func _build_spatial_hash(pts: PackedVector2Array, cell_size: int) -> Dictionary:
 	## Bucket segment indices into grid cells for O(1) lookup
