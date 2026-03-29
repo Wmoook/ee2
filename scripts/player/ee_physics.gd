@@ -279,108 +279,87 @@ func tick(input_h: int, input_v: int, space_just: bool, space_held: bool) -> voi
 	var _pre_collision_speed: float = Vector2(_speedX, _speedY).length()
 	_step_position()
 
-	# 7.15 Swept AABB curve collision: preventive quad-strip collision
-	if not is_god_mode and WorldManager.curve_colliders.size() > 0:
+	# 7.15 Curve collision
+	# Step 1: Binary search for safe position — find the latest point along
+	# the movement path where player is NOT within min_dist of any centerline.
+	if not is_god_mode and WorldManager.polylines.size() > 0:
+		var _post_x: float = x
+		var _post_y: float = y
+		# Check if post-step position is within min_dist of any centerline
+		# Only binary search if player ENTERED the zone (was outside at pre-step)
+		var _pre_hard: Dictionary = WorldManager.enforce_polyline_hard_constraint(_pre_step_x, _pre_step_y, _pre_step_x, _pre_step_y)
+		var _was_outside: bool = not _pre_hard.pushed
+		var _post_hard: Dictionary = WorldManager.enforce_polyline_hard_constraint(_post_x, _post_y, _pre_step_x, _pre_step_y)
+		if _post_hard.pushed and _was_outside:
+			# Player moved into a curve zone. Binary search for the latest safe point.
+			var _lo: float = 0.0
+			var _hi: float = 1.0
+			for _bs in range(8):
+				var _mid: float = (_lo + _hi) * 0.5
+				var _mx: float = _pre_step_x + (_post_x - _pre_step_x) * _mid
+				var _my: float = _pre_step_y + (_post_y - _pre_step_y) * _mid
+				var _mh: Dictionary = WorldManager.enforce_polyline_hard_constraint(_mx, _my, _pre_step_x, _pre_step_y)
+				if _mh.pushed:
+					_hi = _mid
+				else:
+					_lo = _mid
+			# Place player at the safe point
+			x = _pre_step_x + (_post_x - _pre_step_x) * _lo
+			y = _pre_step_y + (_post_y - _pre_step_y) * _lo
+			# Clip speed against the push normal
+			if _post_hard.normal.length() > 0.1:
+				var _cspd: Vector2 = Vector2(_speedX, _speedY)
+				var _cinto: float = _cspd.dot(_post_hard.normal)
+				if _cinto < 0:
+					_speedX -= _post_hard.normal.x * _cinto
+					_speedY -= _post_hard.normal.y * _cinto
+	# Step 2: Hard constraint — push to min_dist from centerline
+	if not is_god_mode and WorldManager.polylines.size() > 0:
 		var _curve_contact_normals: Array = []
-		# Sweep from pre-step to current pos to find curve contacts
-		var full_motion: Vector2 = Vector2(x - _pre_step_x, y - _pre_step_y)
-		# Revert to pre-step, re-apply via sweep (preserving grid tile stops)
-		var post_step_x: float = x
-		var post_step_y: float = y
-		x = _pre_step_x
-		y = _pre_step_y
-		var remaining: Vector2 = full_motion
-		for _iter in range(4):
-			if remaining.length() < 0.001:
-				break
-			var hits: Array = _find_curve_hits(Vector2(x, y), remaining)
-			if hits.is_empty():
-				x += remaining.x
-				y += remaining.y
-				break
-			var first: Dictionary = hits[0]
-			var contact_normals: Array = []
-			if first.start_pen:
-				# Start-penetrating: static depenetration push
-				x += first.normal.x * first.pen
-				y += first.normal.y * first.pen
-				contact_normals.append(first.normal)
-				if not _has_similar_normal(_curve_contact_normals, first.normal):
-					_curve_contact_normals.append(first.normal)
-			else:
-				# Normal swept hit: move to just before contact
-				var safe_t: float = maxf(first.t - 0.001, 0.0)
-				x += remaining.x * safe_t
-				y += remaining.y * safe_t
-				# Collect contact normals from all hits at approximately same time
-				for h in hits:
-					if h.t <= first.t + 0.01 and not h.start_pen:
-						contact_normals.append(h.normal)
-						if not _has_similar_normal(_curve_contact_normals, h.normal):
-							_curve_contact_normals.append(h.normal)
-			# Clip remaining motion
-			if not first.start_pen:
-				remaining = remaining * (1.0 - maxf(first.t - 0.001, 0.0))
-			# else: remaining stays full (depenetration didn't consume motion)
-			remaining = _clip_velocity_vec(remaining, contact_normals)
-			# Clip speed against contact normals
+		var _hard: Dictionary = WorldManager.enforce_polyline_hard_constraint(x, y, _pre_step_x, _pre_step_y)
+		if _hard.pushed:
+			x = _hard.x
+			y = _hard.y
+			if _hard.normal.length() > 0.1:
+				if not _has_similar_normal(_curve_contact_normals, _hard.normal):
+					_curve_contact_normals.append(_hard.normal)
+		# Also run from current pos (catches drift from section 7.6 later)
+		# Clip speed against contact normals
+		if _curve_contact_normals.size() > 0:
 			var spd_vec: Vector2 = Vector2(_speedX, _speedY)
-			spd_vec = _clip_velocity_vec(spd_vec, contact_normals)
-			# Speed preservation at sharp junctions (same rule as free blocks)
+			spd_vec = _clip_velocity_vec(spd_vec, _curve_contact_normals)
+			# Speed preservation at sharp junctions
 			if _pre_collision_speed > 1.0 and spd_vec.length() < _pre_collision_speed * 0.2:
 				var _hdir: float = sign(_pre_tick_speedX)
-				if _hdir == 0:
-					_hdir = 1.0
-				if contact_normals.size() > 0:
-					var cn: Vector2 = contact_normals[0]
-					var tang: Vector2 = Vector2(-cn.y, cn.x)
-					if tang.dot(Vector2(_hdir, 0)) < 0:
-						tang = -tang
-					spd_vec = tang * _pre_collision_speed
+				if _hdir == 0: _hdir = 1.0
+				var cn: Vector2 = _curve_contact_normals[0]
+				var tang: Vector2 = Vector2(-cn.y, cn.x)
+				if tang.dot(Vector2(_hdir, 0)) < 0: tang = -tang
+				spd_vec = tang * _pre_collision_speed
 			_speedX = spd_vec.x
 			_speedY = spd_vec.y
-		# Grounding from curve contacts
+		# Grounding
 		if _curve_contact_normals.size() > 0:
 			var _hgrav: Vector2 = Vector2(mox, moy)
-			if _hgrav.length() < 0.01:
-				_hgrav = Vector2(0, 1)
-			else:
-				_hgrav = _hgrav.normalized()
+			if _hgrav.length() < 0.01: _hgrav = Vector2(0, 1)
+			else: _hgrav = _hgrav.normalized()
 			for cn in _curve_contact_normals:
-				var against: float = -cn.dot(_hgrav)
-				if against > 0.05:
+				if -cn.dot(_hgrav) > 0.05:
 					on_rotated_block = true
 					is_grounded = true
 					_surface_normal = cn
 					_fb_hit = true
 					break
-		# Valley detection: 2+ contacts with different normals facing against gravity
-		if _curve_contact_normals.size() >= 2:
-			var _hgrav2: Vector2 = Vector2(mox, moy)
-			if _hgrav2.length() < 0.01:
-				_hgrav2 = Vector2(0, 1)
-			else:
-				_hgrav2 = _hgrav2.normalized()
-			var has_different: bool = false
-			for ci in range(_curve_contact_normals.size()):
-				for cj in range(ci + 1, _curve_contact_normals.size()):
-					if _curve_contact_normals[ci].dot(_curve_contact_normals[cj]) < 0.9:
-						var a1: float = -_curve_contact_normals[ci].dot(_hgrav2)
-						var a2: float = -_curve_contact_normals[cj].dot(_hgrav2)
-						if a1 > -0.1 and a2 > -0.1:
-							has_different = true
-							break
-				if has_different:
-					break
-			if has_different:
-				in_valley = true
-				is_grounded = true
-				_fb_hit = true
-				if absf(_speedX) + absf(_speedY) < 0.5:
-					is_wedged = true
-					_speedX = 0
-					_speedY = 0
-					_wedge_safe_pos = Vector2(x, y)
+		# Valley detection
+		if _hard.pushed and _hard.poly_count >= 2:
+			in_valley = true
+			is_grounded = true
+			_fb_hit = true
+			if absf(_speedX) + absf(_speedY) < 0.5:
+				is_wedged = true
+				_speedX = 0
+				_speedY = 0
+				_wedge_safe_pos = Vector2(x, y)
 
 	# 7.5 Line collision
 	if not is_god_mode:
