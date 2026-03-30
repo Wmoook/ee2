@@ -72,6 +72,7 @@ var _poly_active: bool = false
 var _poly_thresh2: float = 16.5
 var _valley_ticks: int = 0
 var _flip_count: int = 0
+var _near_pinch_ticks: int = 0  # Ticks spent near a V-junction pinch (for forced wedge)
 var _jump_cooldown: int = 0
 var _jumped_in_arrow: bool = false
 var _arrow_clear_ticks: int = 0  # Count ticks without arrows before resetting
@@ -128,14 +129,10 @@ func _get_speed_mult() -> float:
 	return 1.0
 
 func tick(input_h: int, input_v: int, space_just: bool, space_held: bool) -> void:
-	# Wedge: allow escape only if gravity won't pull player back
-	# Vertical V (gravity into wedge): only jump escapes
-	# Horizontal V (gravity perpendicular): directional input escapes
-	if is_wedged and (input_h != 0 or input_v != 0):
-		is_wedged = false
-		_wedge_escape_cooldown = 30
-		_stick_curve = -1
-		on_rotated_block = false
+	# Wedge: only JUMP escapes (section 7 handles this).
+	# Directional input while wedged is suppressed — the player is frozen.
+	# (Old behavior let any input escape, causing rapid wedge/unwedge oscillation
+	# when holding a key into the V.)
 	_now_ms += MS_PER_TICK
 	# Track speed in gravity direction to prevent jump during launch
 	var _pre_tick_speedY: float = _speedY
@@ -392,7 +389,7 @@ func tick(input_h: int, input_v: int, space_just: bool, space_held: bool) -> voi
 	in_valley = false
 	var on_tile: bool = _check_grounded() and _pre_tick_grav_speed >= 0
 	_fb_hit = false
-	if not is_god_mode and WorldManager.free_blocks.size() > 0:
+	if not is_god_mode and not is_wedged and WorldManager.free_blocks.size() > 0:
 		var best_push: Vector2 = Vector2.ZERO
 		var best_depth: float = 0.0
 		var hit: bool = false
@@ -543,7 +540,7 @@ func tick(input_h: int, input_v: int, space_just: bool, space_held: bool) -> voi
 	# KEY DIFFERENCE from free blocks: curves SUM all pushes per pass (not deepest-only).
 	# At V-junctions, both arms push simultaneously — summing gives the correct upward
 	# resultant instead of oscillating between arms.
-	if not is_god_mode and WorldManager.polylines.size() > 0:
+	if not is_god_mode and not is_wedged and WorldManager.polylines.size() > 0:
 		var _curve_hit: bool = false
 		var _curve_best_push: Vector2 = Vector2.ZERO
 		var _curve_best_depth: float = 0.0
@@ -557,9 +554,11 @@ func tick(input_h: int, input_v: int, space_just: bool, space_held: bool) -> voi
 			var _cpass_depth: float = 0.0
 			var _cpass_deepest_push: Vector2 = Vector2.ZERO
 			for _cp in _cpushes:
-				# Rotation binning: 20-degree bins mod 180 (same scheme as free blocks)
+				# Rotation binning: 40-degree bins mod 180 (wider than free blocks' 20°
+				# to prevent false positives from iterative push normal rotation on
+				# smooth single curves, while still detecting genuine V-junctions)
 				var _cangle: float = rad_to_deg(atan2(_cp.normal.y, _cp.normal.x))
-				var _crk: int = (int(round(_cangle / 20.0)) * 20) % 180
+				var _crk: int = (int(round(_cangle / 40.0)) * 40) % 180
 				if _crk < 0: _crk += 180
 				_curve_rots[_crk] = true
 				_curve_polys[_cp.poly_idx] = true
@@ -724,20 +723,26 @@ func tick(input_h: int, input_v: int, space_just: bool, space_held: bool) -> voi
 				is_grounded = true
 				_jump_cooldown = 0
 				_coyote_ticks = 4
-		# Valley detection for curves: 2+ different polylines with 2+ rotation bins = V-junction
-		# (A single polyline can produce 2+ rotation bins from iterative push passes on
-		# curved surfaces — that's NOT a V-junction, just a curve with changing normals.)
-		if _curve_hit and _curve_rots.size() >= 2 and _curve_polys.size() >= 2:
-			var _cgd: Vector2 = Vector2(mox, moy)
-			if _cgd.length() < 0.01: _cgd = Vector2(0, 1)
-			var _cbp_against: float = -_curve_best_push.normalized().dot(_cgd.normalized())
-			if _cbp_against > 0.0:  # Push against gravity = floor V
-				in_valley = true
-				is_grounded = true
-				_fb_hit = true
-		# Valley speed zeroing (same as free blocks: zero X when settling)
-		if _curve_hit and in_valley and absf(_speedX) < 0.5 and absf(_speedY) < 0.5:
-			_speedX = 0
+		# Valley detection for curves: 2+ different 40-degree rotation bins = V-junction.
+		# The 40° bin size prevents false positives from iterative push normal rotation
+		# on smooth single curves (which only rotates by ~10-20° across passes).
+		if _curve_hit and _curve_rots.size() >= 2:
+			in_valley = true
+			is_grounded = true
+			_fb_hit = true
+		# Valley speed zeroing and forced valley_jump after sustained in_valley.
+		# When in_valley persists for 5+ ticks, trigger valley_jump which suppresses
+		# input (line ~176). Without input adding speed, the player settles and wedges.
+		if _curve_hit and in_valley:
+			_valley_ticks += 1
+			if absf(_speedX) < 0.5 and absf(_speedY) < 0.5:
+				_speedX = 0
+			if _valley_ticks >= 5 and not valley_jump:
+				valley_jump = true
+				_valley_center = Vector2(x, y)
+				_pos_history = [x, x, x, x]
+		elif _curve_hit:
+			_valley_ticks = 0
 		# Track curve push normal for next-tick junction detection
 		if _curve_hit and _curve_best_push.length() > 0.01:
 			_prev_poly_normal = _curve_best_push.normalized()
@@ -749,15 +754,53 @@ func tick(input_h: int, input_v: int, space_just: bool, space_held: bool) -> voi
 	# players slid past it by holding a key along one arm. The adaptive bisector
 	# computes escape direction from actual arm normals at each position.)
 
+	# When wedged, undo any push-out drift and re-lock to the wedge position.
+	# Both free block and curve push-outs can move the player while wedged
+	# (overlap detection still fires at zero speed), causing visual jitter.
+	if is_wedged:
+		x = _wedge_safe_pos.x
+		y = _wedge_safe_pos.y
+		_speedX = 0
+		_speedY = 0
+
 	# Wedge at V junction: in_valley (2+ curve rotations) with low speed = settled
 	if not is_wedged and not valley_jump and _wedge_escape_cooldown == 0 and in_valley:
 		var _total_spd: float = absf(_speedX) + absf(_speedY)
 		if _total_spd < 1.5:
 			is_wedged = true
+			valley_jump = false
+			_valley_center = Vector2(-1, -1)
+			_near_pinch_ticks = 0
 			_speedX = 0
 			_speedY = 0
 			is_grounded = true
 			_wedge_safe_pos = Vector2(x, y)
+	# Fallback wedge: if player has been near a V-junction pinch for 20+ ticks
+	# without settling (oscillation not decaying), force the wedge.
+	# This catches cases where the adaptive bisector overshoot sustains oscillation
+	# or where in_valley doesn't trigger (sideways/ceiling V angles).
+	if not is_wedged and not valley_jump and _wedge_escape_cooldown == 0 and WorldManager.wedge_pairs.size() > 0:
+		var _pc: Vector2 = Vector2(x + 8.0, y + 8.0)
+		var _near_any_pinch: bool = false
+		var _nearest_pinch: Vector2 = Vector2.ZERO
+		for _wp in WorldManager.wedge_pairs:
+			if _pc.distance_to(_wp.pinch_point) < 32.0:
+				_near_any_pinch = true
+				_nearest_pinch = _wp.pinch_point
+				break
+		if _near_any_pinch:
+			_near_pinch_ticks += 1
+			if _near_pinch_ticks >= 20:
+				is_wedged = true
+				valley_jump = false
+				_valley_center = Vector2(-1, -1)
+				_near_pinch_ticks = 0
+				_speedX = 0
+				_speedY = 0
+				is_grounded = true
+				_wedge_safe_pos = Vector2(x, y)
+		else:
+			_near_pinch_ticks = 0
 
 	# Fast V-shape detection: push normal X flips + low speed = settling into valley
 	# Only for FLOOR V's (normal points against gravity), not ceiling V's
@@ -881,7 +924,7 @@ func tick(input_h: int, input_v: int, space_just: bool, space_held: bool) -> voi
 
 	# 10. (Curve collision is now in section 7.65 — iterative push-out + tangent projection)
 
-	debug_text = "pos=(%.1f,%.1f) spd=(%.2f,%.2f) grnd=%s val=%s vj=%s" % [x, y, _speedX, _speedY, is_grounded, in_valley, valley_jump]
+	debug_text = "pos=(%.1f,%.1f) spd=(%.2f,%.2f) grnd=%s val=%s vj=%s w=%s pt=%d" % [x, y, _speedX, _speedY, is_grounded, in_valley, valley_jump, is_wedged, _near_pinch_ticks]
 
 func _arrow_dir_to_vec(dir: int) -> Vector2:
 	match dir:
