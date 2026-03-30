@@ -456,9 +456,11 @@ func tick(input_h: int, input_v: int, space_just: bool, space_held: bool) -> voi
 				# Prospective check: if standard push would create a tile or
 				# new free block collision, the gap is too narrow. Block the
 				# player like a wall — don't push, zero speed, stay put.
-				# Skip at V/X junctions (2+ rotation bins) — those use their
-				# own ceiling-V exit logic and the player should fall out.
-				if _overlap_rots.size() < 2:
+				# Only when push goes WITH gravity (squeeze into gap). At
+				# X-crossings the push goes against/sideways — player falls out.
+				var _sq_grav: Vector2 = Vector2(mox, moy)
+				if _sq_grav.length() < 0.01: _sq_grav = Vector2(0, 1)
+				if pass_push.normalized().dot(_sq_grav.normalized()) > 0.1:
 					if _collides_px(x + pass_push.x, y + pass_push.y) or \
 						_count_free_block_overlaps(x + pass_push.x, y + pass_push.y) > _count_free_block_overlaps(x, y):
 						x = _pre_step_x
