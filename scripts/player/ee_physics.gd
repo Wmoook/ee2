@@ -72,7 +72,6 @@ var _poly_active: bool = false
 var _poly_thresh2: float = 16.5
 var _valley_ticks: int = 0
 var _flip_count: int = 0
-var _near_pinch_ticks: int = 0  # Ticks spent near a V-junction pinch (for forced wedge)
 var _jump_cooldown: int = 0
 var _jumped_in_arrow: bool = false
 var _arrow_clear_ticks: int = 0  # Count ticks without arrows before resetting
@@ -395,9 +394,11 @@ func tick(input_h: int, input_v: int, space_just: bool, space_held: bool) -> voi
 		var hit: bool = false
 		var _overlap_rots: Dictionary = {}
 		var _ceiling_v_exit: bool = false  # Set when ceiling V early-exit fires
+		var _sat_origin: Vector2 = Vector2(x, y)  # Pre-SAT position for safety checks
 		for _pass in range(8):
 			var pass_push: Vector2 = Vector2.ZERO
 			var pass_depth: float = 0.0
+			var pass_alt_push: Vector2 = Vector2.ZERO  # Alternative axis push
 			for fb in WorldManager.free_blocks:
 				if not GameState.is_solid(fb.id):
 					continue
@@ -438,11 +439,31 @@ func tick(input_h: int, input_v: int, space_just: bool, space_held: bool) -> voi
 					if depth > pass_depth:
 						pass_depth = depth
 						pass_push = Vector2(wx, wy)
+						# Compute alternative push (other local axis)
+						var _alt_lx: float = 0.0
+						var _alt_ly: float = 0.0
+						if oy2 < ox2:
+							_alt_lx = ox2 * sign(lx)
+						else:
+							_alt_ly = oy2 * sign(ly)
+						pass_alt_push = Vector2(_alt_lx * cos_r2 - _alt_ly * sin_r2, _alt_lx * sin_r2 + _alt_ly * cos_r2)
 						hit = true
 						_fb_hit = true
 			if pass_depth > 0.01:
 				if valley_jump:
 					pass_push.x = 0
+					pass_alt_push.x = 0
+				# Prospective check: if standard push would create a tile or
+				# new free block collision, the gap is too narrow. Block the
+				# player like a wall — don't push, zero speed, stay put.
+				if _collides_px(x + pass_push.x, y + pass_push.y) or \
+					_count_free_block_overlaps(x + pass_push.x, y + pass_push.y) > _count_free_block_overlaps(x, y):
+					x = _pre_step_x
+					y = _pre_step_y
+					_speedX = 0
+					_speedY = 0
+					is_grounded = true
+					break
 				x += pass_push.x
 				y += pass_push.y
 				if pass_depth > best_depth:
@@ -470,14 +491,15 @@ func tick(input_h: int, input_v: int, space_just: bool, space_held: bool) -> voi
 			# Valley: zero speed only when settling (low speed), not when entering at speed
 			if in_valley and absf(_speedX) < 0.5 and absf(_speedY) < 0.5:
 				_speedX = 0
-			# Check if iterative pushes put us into a grid tile — undo if so
+			# Fallback: if SAT still pushed into a grid tile, snap back
+			var _sat_total: Vector2 = Vector2(x, y) - _sat_origin
 			if _collides_px(x, y):
-				x -= best_push.x
-				y -= best_push.y
-				if not _collides_px(x + best_push.x, y):
-					x += best_push.x
-				elif not _collides_px(x, y + best_push.y):
-					y += best_push.y
+				x = _sat_origin.x
+				y = _sat_origin.y
+				if not _collides_px(_sat_origin.x + _sat_total.x, _sat_origin.y):
+					x = _sat_origin.x + _sat_total.x
+				elif not _collides_px(_sat_origin.x, _sat_origin.y + _sat_total.y):
+					y = _sat_origin.y + _sat_total.y
 			var n: Vector2 = best_push.normalized() if best_push.length() > 0.01 else Vector2(0, -1)
 			# Check if push is wall-like or floor-like relative to gravity
 			var grav_dir2: Vector2 = Vector2(mox, moy)
@@ -534,9 +556,10 @@ func tick(input_h: int, input_v: int, space_just: bool, space_held: bool) -> voi
 			var against_grav: float = -n.dot(grav_dir)
 			if against_grav > 0.05 and not on_tile:
 				is_grounded = true
-				_jump_cooldown = 0
-				if against_grav > 0.45:  # Only grant coyote time on non-steep surfaces
+				if against_grav > 0.45:  # Non-steep: instant re-jump + coyote time
+					_jump_cooldown = 0
 					_coyote_ticks = 4
+				# Steep (0.05-0.45): grounded but keep 5-tick cooldown — prevents wall climbing
 
 	# 7.65 Curve collision — iterative push-out matching free block SAT behavior
 	# Runs AFTER free blocks so state persists into valley detection below.
@@ -728,9 +751,10 @@ func tick(input_h: int, input_v: int, space_just: bool, space_held: bool) -> voi
 			var _con_tile: bool = _check_grounded() and _pre_tick_grav_speed >= 0
 			if _cagainst_grav > 0.05 and not _con_tile:
 				is_grounded = true
-				_jump_cooldown = 0
-				if _cagainst_grav > 0.45:  # Only grant coyote time on non-steep surfaces
+				if _cagainst_grav > 0.45:  # Non-steep: instant re-jump + coyote time
+					_jump_cooldown = 0
 					_coyote_ticks = 4
+				# Steep (0.05-0.45): grounded but keep 5-tick cooldown — prevents wall climbing
 		# Valley detection for curves: 2+ different 40-degree rotation bins = V-junction.
 		# Only for floor and horizontal V's — NOT ceiling V's (where gravity pulls player out).
 		if _curve_hit and _curve_rots.size() >= 2 and not _cv_on_tile:
@@ -795,7 +819,6 @@ func tick(input_h: int, input_v: int, space_just: bool, space_held: bool) -> voi
 				is_wedged = true
 				valley_jump = false
 				_valley_center = Vector2(-1, -1)
-				_near_pinch_ticks = 0
 				_speedX = 0
 				_speedY = 0
 				is_grounded = true
@@ -924,7 +947,7 @@ func tick(input_h: int, input_v: int, space_just: bool, space_held: bool) -> voi
 
 	# 10. (Curve collision is now in section 7.65 — iterative push-out + tangent projection)
 
-	debug_text = "pos=(%.1f,%.1f) spd=(%.2f,%.2f) grnd=%s val=%s vj=%s w=%s pt=%d" % [x, y, _speedX, _speedY, is_grounded, in_valley, valley_jump, is_wedged, _near_pinch_ticks]
+	debug_text = "pos=(%.1f,%.1f) spd=(%.2f,%.2f) grnd=%s val=%s vj=%s" % [x, y, _speedX, _speedY, is_grounded, in_valley, valley_jump]
 
 func _arrow_dir_to_vec(dir: int) -> Vector2:
 	match dir:
@@ -1600,6 +1623,24 @@ func _collides_free_blocks(px: float, py: float, shrink: float = 0.0) -> bool:
 		if absf(local.x) < half and absf(local.y) < half:
 			return true
 	return false
+
+func _count_free_block_overlaps(px: float, py: float) -> int:
+	# Count how many free blocks the player overlaps at (px, py)
+	var count: int = 0
+	for fb in WorldManager.free_blocks:
+		if not GameState.is_solid(fb.id):
+			continue
+		if fb.get("curve_visual", false):
+			continue
+		var bpos: Vector2 = fb.pos
+		var rot: float = deg_to_rad(fb.rotation)
+		var bcenter: Vector2 = bpos + Vector2(8, 8)
+		var pcenter: Vector2 = Vector2(px + 8, py + 8)
+		var rel: Vector2 = pcenter - bcenter
+		var local: Vector2 = rel.rotated(-rot)
+		if absf(local.x) < 16.0 and absf(local.y) < 16.0:
+			count += 1
+	return count
 
 func _collides_free_blocks_axis(px: float, py: float) -> bool:
 	# Like _collides_free_blocks but ONLY checks axis-aligned blocks (0/90/180/270)
