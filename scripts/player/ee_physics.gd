@@ -774,18 +774,33 @@ func tick(input_h: int, input_v: int, space_just: bool, space_held: bool) -> voi
 		_speedX = 0
 		_speedY = 0
 
-	# Wedge at V junction: in_valley (2+ curve rotations) with low speed = settled
+	# Wedge at V junction: in_valley (2+ curve rotations) with low speed = settled.
+	# Skip wedging if gravity would pull player out (ceiling V / X-crossing):
+	# test by temporarily adding gravity and checking if push-out still holds.
 	if not is_wedged and not valley_jump and _wedge_escape_cooldown == 0 and in_valley:
 		var _total_spd: float = absf(_speedX) + absf(_speedY)
 		if _total_spd < 1.5:
-			is_wedged = true
-			valley_jump = false
-			_valley_center = Vector2(-1, -1)
-			_near_pinch_ticks = 0
-			_speedX = 0
-			_speedY = 0
-			is_grounded = true
-			_wedge_safe_pos = Vector2(x, y)
+			# Would gravity pull us out? Check if a position slightly toward gravity
+			# is still within curve collision range (both arms still push).
+			var _grav_test: Vector2 = Vector2(mox, moy).normalized() if Vector2(mox, moy).length() > 0.01 else Vector2(0, 1)
+			var _test_pushes: Array = WorldManager.get_curve_push_data(x + 8.0 + _grav_test.x * 4.0, y + 8.0 + _grav_test.y * 4.0)
+			var _test_rots: Dictionary = {}
+			for _tp in _test_pushes:
+				var _ta: float = rad_to_deg(atan2(_tp.normal.y, _tp.normal.x))
+				var _trk: int = (int(round(_ta / 40.0)) * 40) % 180
+				if _trk < 0: _trk += 180
+				_test_rots[_trk] = true
+			if _test_rots.size() >= 2:
+				# Both arms still push 4px toward gravity = real V, wedge it
+				is_wedged = true
+				valley_jump = false
+				_valley_center = Vector2(-1, -1)
+				_near_pinch_ticks = 0
+				_speedX = 0
+				_speedY = 0
+				is_grounded = true
+				_wedge_safe_pos = Vector2(x, y)
+			# else: gravity would pull us out of the V — don't wedge, let player fall
 
 	# Fast V-shape detection: push normal X flips + low speed = settling into valley
 	# Only for FLOOR V's (normal points against gravity), not ceiling V's
