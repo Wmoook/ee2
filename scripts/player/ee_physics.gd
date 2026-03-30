@@ -394,6 +394,7 @@ func tick(input_h: int, input_v: int, space_just: bool, space_held: bool) -> voi
 		var best_depth: float = 0.0
 		var hit: bool = false
 		var _overlap_rots: Dictionary = {}
+		var _ceiling_v_exit: bool = false  # Set when ceiling V early-exit fires
 		for _pass in range(8):
 			var pass_push: Vector2 = Vector2.ZERO
 			var pass_depth: float = 0.0
@@ -451,17 +452,18 @@ func tick(input_h: int, input_v: int, space_just: bool, space_held: bool) -> voi
 					var _gcheck: Vector2 = Vector2(mox, moy)
 					if _gcheck.length() < 0.01: _gcheck = Vector2(0, 1)
 					if -pass_push.normalized().dot(_gcheck.normalized()) <= 0:
+						_ceiling_v_exit = true
 						break
 			else:
 				break
 		# Detect valley: only when actually overlapping 2+ different-rotation blocks
 		var _pre_total_spd: float = absf(_pre_tick_speedX) + absf(_pre_tick_speedY)
 		# Valley detection: only for floor V's (push against gravity)
-		if hit and _overlap_rots.size() >= 2:
+		if hit and _overlap_rots.size() >= 2 and not _ceiling_v_exit:
 			var _gd3: Vector2 = Vector2(mox, moy)
 			if _gd3.length() < 0.01: _gd3 = Vector2(0, 1)
 			var _bp_against: float = -best_push.normalized().dot(_gd3.normalized())
-			if _bp_against > 0.0:  # Push is against gravity = floor V
+			if _bp_against > 0.3:  # Strong floor V only — exposed/ceiling V's let player slide out
 				in_valley = true
 				is_grounded = true
 		if hit and best_depth > 0.01:
@@ -484,13 +486,14 @@ func tick(input_h: int, input_v: int, space_just: bool, space_held: bool) -> voi
 			else:
 				grav_dir2 = grav_dir2.normalized()
 			var against_grav2: float = -n.dot(grav_dir2)  # Positive = floor, negative = ceiling
+			var _is_ceiling_v: bool = _overlap_rots.size() >= 2 and against_grav2 < 0.3
 			if not valley_jump:
-				# Wall-like: push nearly perpendicular to gravity (< 0.2)
-				# Floor/slope: push has gravity component (> 0.2)
-				if against_grav2 < 0.05:
-					# Wall: just zero the speed component into the wall
+				if against_grav2 < 0.05 or _is_ceiling_v:
+					# Wall or ceiling V: just zero the speed component into the surface.
+					# Don't do tangent projection — for walls it bleeds speed, for ceiling V's
+					# it eats the gravity component that should pull the player out.
 					var into_wall: float = Vector2(_speedX, _speedY).dot(n)
-					if into_wall < 0:  # Moving into the wall
+					if into_wall < 0:
 						_speedX -= n.x * into_wall
 						_speedY -= n.y * into_wall
 				else:
@@ -531,8 +534,9 @@ func tick(input_h: int, input_v: int, space_just: bool, space_held: bool) -> voi
 			var against_grav: float = -n.dot(grav_dir)
 			if against_grav > 0.05 and not on_tile:
 				is_grounded = true
-				_jump_cooldown = 0  # Clear cooldown on rotated block contact
-				_coyote_ticks = 4
+				_jump_cooldown = 0
+				if against_grav > 0.45:  # Only grant coyote time on non-steep surfaces
+					_coyote_ticks = 4
 
 	# 7.65 Curve collision — iterative push-out matching free block SAT behavior
 	# Runs AFTER free blocks so state persists into valley detection below.
@@ -540,11 +544,13 @@ func tick(input_h: int, input_v: int, space_just: bool, space_held: bool) -> voi
 	# KEY DIFFERENCE from free blocks: curves SUM all pushes per pass (not deepest-only).
 	# At V-junctions, both arms push simultaneously — summing gives the correct upward
 	# resultant instead of oscillating between arms.
+	var _cv_on_tile: bool = _check_grounded()  # On grid tiles = no curve valley (check BEFORE push-out)
 	if not is_god_mode and not is_wedged and WorldManager.polylines.size() > 0:
 		var _curve_hit: bool = false
 		var _curve_best_push: Vector2 = Vector2.ZERO
 		var _curve_best_depth: float = 0.0
 		var _curve_rots: Dictionary = {}  # Rotation bins for valley detection
+		var _curve_had_cancellation: bool = false  # True when pushes actually opposed (real V)
 		var _curve_polys: Dictionary = {}  # Distinct polyline indices pushing
 		var _curve_deepest_arm_normal: Vector2 = Vector2.ZERO  # Deepest individual arm normal (for tangent projection at V-junctions)
 		var _curve_deepest_arm_depth: float = 0.0
@@ -577,6 +583,7 @@ func tick(input_h: int, input_v: int, space_just: bool, space_held: bool) -> voi
 			# at the player's current position (not a flat pre-computed plane).
 			var _cpass_mag: float = _cpass_push.length()
 			if _cpushes.size() >= 2 and _cpass_mag < _cpass_depth * 0.5 and _cpass_depth > 0.5:
+				_curve_had_cancellation = true  # Pushes actually opposed — real V
 				# Direction: normalized sum of push normals = local bisector
 				var _bisector: Vector2 = Vector2.ZERO
 				for _cp2 in _cpushes:
@@ -722,14 +729,18 @@ func tick(input_h: int, input_v: int, space_just: bool, space_held: bool) -> voi
 			if _cagainst_grav > 0.05 and not _con_tile:
 				is_grounded = true
 				_jump_cooldown = 0
-				_coyote_ticks = 4
+				if _cagainst_grav > 0.45:  # Only grant coyote time on non-steep surfaces
+					_coyote_ticks = 4
 		# Valley detection for curves: 2+ different 40-degree rotation bins = V-junction.
-		# The 40° bin size prevents false positives from iterative push normal rotation
-		# on smooth single curves (which only rotates by ~10-20° across passes).
-		if _curve_hit and _curve_rots.size() >= 2:
-			in_valley = true
-			is_grounded = true
-			_fb_hit = true
+		# Only for floor and horizontal V's — NOT ceiling V's (where gravity pulls player out).
+		if _curve_hit and _curve_rots.size() >= 2 and not _cv_on_tile:
+			var _cgd: Vector2 = Vector2(mox, moy)
+			if _cgd.length() < 0.01: _cgd = Vector2(0, 1)
+			var _cbp_against: float = -_curve_best_push.normalized().dot(_cgd.normalized())
+			if _cbp_against > -0.3:  # Floor V (>0), horizontal V (~0) = valley. Ceiling V (<-0.3) = fall out.
+				in_valley = true
+				is_grounded = true
+				_fb_hit = true
 		# Valley speed zeroing and forced valley_jump after sustained in_valley.
 		# When in_valley persists for 5+ ticks, trigger valley_jump which suppresses
 		# input (line ~176). Without input adding speed, the player settles and wedges.
@@ -737,7 +748,7 @@ func tick(input_h: int, input_v: int, space_just: bool, space_held: bool) -> voi
 			_valley_ticks += 1
 			if absf(_speedX) < 0.5 and absf(_speedY) < 0.5:
 				_speedX = 0
-			if _valley_ticks >= 5 and not valley_jump:
+			if _valley_ticks >= 15 and not valley_jump:
 				valley_jump = true
 				_valley_center = Vector2(x, y)
 				_pos_history = [x, x, x, x]
@@ -775,32 +786,6 @@ func tick(input_h: int, input_v: int, space_just: bool, space_held: bool) -> voi
 			_speedY = 0
 			is_grounded = true
 			_wedge_safe_pos = Vector2(x, y)
-	# Fallback wedge: if player has been near a V-junction pinch for 20+ ticks
-	# without settling (oscillation not decaying), force the wedge.
-	# This catches cases where the adaptive bisector overshoot sustains oscillation
-	# or where in_valley doesn't trigger (sideways/ceiling V angles).
-	if not is_wedged and not valley_jump and _wedge_escape_cooldown == 0 and WorldManager.wedge_pairs.size() > 0:
-		var _pc: Vector2 = Vector2(x + 8.0, y + 8.0)
-		var _near_any_pinch: bool = false
-		var _nearest_pinch: Vector2 = Vector2.ZERO
-		for _wp in WorldManager.wedge_pairs:
-			if _pc.distance_to(_wp.pinch_point) < 32.0:
-				_near_any_pinch = true
-				_nearest_pinch = _wp.pinch_point
-				break
-		if _near_any_pinch:
-			_near_pinch_ticks += 1
-			if _near_pinch_ticks >= 20:
-				is_wedged = true
-				valley_jump = false
-				_valley_center = Vector2(-1, -1)
-				_near_pinch_ticks = 0
-				_speedX = 0
-				_speedY = 0
-				is_grounded = true
-				_wedge_safe_pos = Vector2(x, y)
-		else:
-			_near_pinch_ticks = 0
 
 	# Fast V-shape detection: push normal X flips + low speed = settling into valley
 	# Only for FLOOR V's (normal points against gravity), not ceiling V's
@@ -1046,8 +1031,8 @@ func _handle_jump(space_just: bool, space_held: bool) -> void:
 			if maxJumps < 1000: jumpCount += 1
 			var jump_speed: float = absf(mory) * _jump_height * _get_jump_mult() * 0.995 * TICK_SCALE / MULT
 			_speedY = -sign(mory) * jump_speed
-			# Slope boost
-			var slope_boost: float = _surface_normal.x * jump_speed
+			# Slope boost — capped so steep/vertical surfaces don't launch sideways
+			var slope_boost: float = clampf(_surface_normal.x, -0.5, 0.5) * jump_speed
 			if slope_boost != 0:
 				if _speedX == 0 or sign(slope_boost) == sign(_speedX):
 					_speedX += slope_boost
