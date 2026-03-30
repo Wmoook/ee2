@@ -510,10 +510,9 @@ func tick(input_h: int, input_v: int, space_just: bool, space_held: bool) -> voi
 			var against_grav2: float = -n.dot(grav_dir2)  # Positive = floor, negative = ceiling
 			var _is_ceiling_v: bool = _overlap_rots.size() >= 2 and against_grav2 < 0.3
 			if not valley_jump:
-				if against_grav2 < 0.05 or _is_ceiling_v:
-					# Wall or ceiling V: just zero the speed component into the surface.
-					# Don't do tangent projection — for walls it bleeds speed, for ceiling V's
-					# it eats the gravity component that should pull the player out.
+				if against_grav2 < 0.35 or _is_ceiling_v:
+					# Wall/steep or ceiling V: just zero the speed component into the surface.
+					# No tangent projection — prevents speed boost on steep surfaces.
 					var into_wall: float = Vector2(_speedX, _speedY).dot(n)
 					if into_wall < 0:
 						_speedX -= n.x * into_wall
@@ -554,12 +553,11 @@ func tick(input_h: int, input_v: int, space_just: bool, space_held: bool) -> voi
 			else:
 				grav_dir = Vector2(0, 1)
 			var against_grav: float = -n.dot(grav_dir)
-			if against_grav > 0.05 and not on_tile:
+			if against_grav > 0.35 and not on_tile:  # ~70° from horizontal max
 				is_grounded = true
 				if against_grav > 0.45:  # Non-steep: instant re-jump + coyote time
 					_jump_cooldown = 0
 					_coyote_ticks = 4
-				# Steep (0.05-0.45): grounded but keep 5-tick cooldown — prevents wall climbing
 
 	# 7.65 Curve collision — iterative push-out matching free block SAT behavior
 	# Runs AFTER free blocks so state persists into valley detection below.
@@ -712,8 +710,8 @@ func tick(input_h: int, input_v: int, space_just: bool, space_held: bool) -> voi
 				if _pre_step_spd_vec.length() > _cspd_for_proj.length() + 0.5:
 					_cspd_for_proj = _pre_step_spd_vec
 			if not valley_jump:
-				if _cagainst_grav < 0.05:
-					# Wall: zero speed component going into wall
+				if _cagainst_grav < 0.35:
+					# Wall/steep: zero speed component going into surface
 					var _cinto: float = _cspd_for_proj.dot(_cn)
 					if _cinto < 0:
 						_speedX = _cspd_for_proj.x - _cn.x * _cinto
@@ -749,12 +747,11 @@ func tick(input_h: int, input_v: int, space_just: bool, space_held: bool) -> voi
 				on_rotated_block = true
 				_surface_normal = _cn
 			var _con_tile: bool = _check_grounded() and _pre_tick_grav_speed >= 0
-			if _cagainst_grav > 0.05 and not _con_tile:
+			if _cagainst_grav > 0.35 and not _con_tile:  # ~70° from horizontal max
 				is_grounded = true
 				if _cagainst_grav > 0.45:  # Non-steep: instant re-jump + coyote time
 					_jump_cooldown = 0
 					_coyote_ticks = 4
-				# Steep (0.05-0.45): grounded but keep 5-tick cooldown — prevents wall climbing
 		# Valley detection for curves: 2+ different 40-degree rotation bins = V-junction.
 		# Only for floor and horizontal V's — NOT ceiling V's (where gravity pulls player out).
 		if _curve_hit and _curve_rots.size() >= 2 and not _cv_on_tile:
@@ -934,12 +931,8 @@ func tick(input_h: int, input_v: int, space_just: bool, space_held: bool) -> voi
 
 	_was_on_rotated = on_rotated_block
 
-	# 9. Jump — if wedged OR stuck between curves, allow straight up jump
+	# 9. Jump — if wedged, allow straight up jump
 	if is_wedged and space_just:
-		is_grounded = true
-		_surface_normal = Vector2(0, -1)
-		jumpCount = 0
-	elif on_rotated_block and not is_grounded and space_just:
 		is_grounded = true
 		_surface_normal = Vector2(0, -1)
 		jumpCount = 0
