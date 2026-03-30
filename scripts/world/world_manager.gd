@@ -112,8 +112,18 @@ func _find_pinch_point(pts: PackedVector2Array) -> Dictionary:
 						continue
 					var d: float = pts[i].distance_to(pts[j])
 					if d < PINCH_DIST:
-						var lo: int = mini(i, j)
-						var hi: int = maxi(i, j)
+						# Verify actual fold-back: arc-length between i and j must be
+						# significantly larger than straight-line distance. On a straight
+						# line, arc ≈ distance. On a real U/V, arc >> distance.
+						var lo2: int = mini(i, j)
+						var hi2: int = maxi(i, j)
+						var arc_len: float = 0.0
+						for k in range(lo2, hi2):
+							arc_len += pts[k].distance_to(pts[k + 1])
+						if arc_len < d * 2.5:
+							continue  # Not a real fold — just nearby on a straight/gentle curve
+						var lo: int = lo2
+						var hi: int = hi2
 						var mid: int = int((lo + hi) / 2)
 						# Reject splits too close to edges
 						if mid <= _min_pts or mid >= pts.size() - _min_pts:
@@ -152,6 +162,7 @@ func add_polyline(points: PackedVector2Array, side: String = "top", block_id: in
 			var _arm_b_idx: int = polylines.size() - 1
 			polylines[_arm_a_idx]["split_pair"] = _arm_b_idx
 			polylines[_arm_b_idx]["split_pair"] = _arm_a_idx
+			_rebuild_wedge_pairs()  # Both arms now have collision_only + split_pair
 			return
 	# Compute per-vertex normals by averaging adjacent segment normals
 	var vert_normals: Array = []
@@ -265,6 +276,7 @@ func add_polyline(points: PackedVector2Array, side: String = "top", block_id: in
 	})
 	_regenerate_curve_collision_blocks()
 	build_curve_colliders()
+	_rebuild_wedge_pairs()
 	polylines_changed.emit()
 
 func _regenerate_curve_collision_blocks() -> void:
@@ -354,7 +366,28 @@ func _rebuild_wedge_pairs() -> void:
 		if seen.has(key):
 			continue
 		seen[key] = true
-		wedge_pairs.append({"a": polylines[lo], "b": polylines[hi]})
+		var poly_lo: Dictionary = polylines[lo]
+		var poly_hi: Dictionary = polylines[hi]
+		# Pinch point: last point of arm A (lo) = first point of arm B (hi)
+		var pts_lo: PackedVector2Array = poly_lo.points
+		var pts_hi: PackedVector2Array = poly_hi.points
+		var pinch: Vector2 = pts_lo[pts_lo.size() - 1]
+		# Compute bisector normal pointing toward the V OPENING.
+		# dir_a: arm A's direction approaching the pinch (last segment)
+		# dir_b: arm B's direction leaving the pinch (first segment)
+		var dir_a: Vector2 = Vector2.ZERO
+		var dir_b: Vector2 = Vector2.ZERO
+		if pts_lo.size() >= 2:
+			dir_a = (pts_lo[pts_lo.size() - 1] - pts_lo[pts_lo.size() - 2]).normalized()
+		if pts_hi.size() >= 2:
+			dir_b = (pts_hi[1] - pts_hi[0]).normalized()
+		# bisector_normal = (dir_b - dir_a).normalized() points toward the V opening
+		var bn: Vector2 = (dir_b - dir_a)
+		if bn.length() > 0.01:
+			bn = bn.normalized()
+		else:
+			bn = Vector2(0, -1)  # Fallback: up
+		wedge_pairs.append({"a": poly_lo, "b": poly_hi, "pinch_point": pinch, "bisector_normal": bn})
 
 func _rebuild_global_render_hash() -> void:
 	_global_render_hash.clear()
@@ -636,6 +669,75 @@ func enforce_polyline_hard_constraint(px: float, py: float, prev_px: float, prev
 		total_push += iter_push
 		pushed = true
 	return {"pushed": pushed, "x": cx - 8.0, "y": cy - 8.0, "push": total_push, "normal": best_normal, "tangent": best_tangent, "poly_count": touching_polys.size()}
+
+func get_curve_push_data(cx: float, cy: float) -> Array:
+	## Compute push vectors to keep player center >= 16.35px from polyline centerlines.
+	## Uses per-polyline spatial hash for O(1) lookup. Each polyline contributes at most
+	## one push (from the closest segment). Returns [{push, normal, depth, poly_idx}].
+	var result: Array = []
+	var min_dist: float = 16.35
+	for pi in range(polylines.size()):
+		var poly: Dictionary = polylines[pi]
+		if poly.get("render_only", false):
+			continue
+		var bb_min: Vector2 = poly.bbox_min
+		var bb_max: Vector2 = poly.bbox_max
+		if cx < bb_min.x - 20 or cx > bb_max.x + 20 or cy < bb_min.y - 20 or cy > bb_max.y + 20:
+			continue
+		var shash: Dictionary = poly.get("spatial_hash", {})
+		var cs: int = shash.get("cell_size", 32)
+		var pts: PackedVector2Array = poly.points
+		var norms: Array = poly.normals
+		var gx: int = int(floor(cx / cs))
+		var gy: int = int(floor(cy / cs))
+		var best_dist: float = 99999.0
+		var best_seg: int = -1
+		var best_t: float = 0.0
+		var best_on: Vector2 = Vector2.ZERO
+		var checked: Dictionary = {}
+		for dx in range(-2, 3):
+			for dy in range(-2, 3):
+				var key: int = (gx + dx) * 10000 + (gy + dy)
+				if not shash.has(key):
+					continue
+				for si in shash[key]:
+					if checked.has(si):
+						continue
+					checked[si] = true
+					if si >= pts.size() - 1:
+						continue
+					var sa: Vector2 = pts[si]
+					var sb: Vector2 = pts[si + 1]
+					var ab: Vector2 = sb - sa
+					var ap: Vector2 = Vector2(cx, cy) - sa
+					var ab_dot: float = ab.dot(ab)
+					var seg_t: float = clampf(ap.dot(ab) / maxf(ab_dot, 0.001), 0.0, 1.0)
+					var on_pt: Vector2 = sa + ab * seg_t
+					var dist: float = Vector2(cx, cy).distance_to(on_pt)
+					if dist < best_dist:
+						best_dist = dist
+						best_seg = si
+						best_t = seg_t
+						best_on = on_pt
+		if best_seg < 0 or best_dist >= min_dist:
+			continue
+		# Interpolate normal at closest point
+		var n0: Vector2 = norms[best_seg]
+		var n1: Vector2 = norms[mini(best_seg + 1, norms.size() - 1)]
+		var interp_n: Vector2 = (n0 * (1.0 - best_t) + n1 * best_t).normalized()
+		if interp_n.length() < 0.01:
+			interp_n = n0
+		# Push direction: always AWAY from centerline (correct side determined by player pos)
+		var to_player: Vector2 = Vector2(cx, cy) - best_on
+		var push_dir: Vector2
+		if to_player.length() > 0.5:
+			push_dir = interp_n if to_player.dot(interp_n) >= 0 else -interp_n
+		else:
+			# Very close to centerline — use normal direction as fallback
+			push_dir = interp_n
+		var depth: float = min_dist - best_dist
+		result.append({"push": push_dir * depth, "normal": push_dir, "depth": depth, "poly_idx": pi, "closest_pt": best_on})
+	return result
 
 func check_curve_wall(cx: float, cy: float, stick_poly: int, stick_arc: float, arc_exclude: float = 40.0, only_poly: int = -1) -> Dictionary:
 	## Check if player center (cx,cy) is within 16.5px of any "wall" polyline segment.
@@ -1327,6 +1429,7 @@ func remove_polyline_near(pos: Vector2, radius: float = 16.0) -> void:
 		p.erase("_cached_tex")
 	_regenerate_curve_collision_blocks()
 	build_curve_colliders()
+	_rebuild_wedge_pairs()
 	_pending_net_poly_fullsync = true
 	polylines_changed.emit()
 

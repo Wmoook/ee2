@@ -277,89 +277,96 @@ func tick(input_h: int, input_v: int, space_just: bool, space_held: bool) -> voi
 	var _pre_step_x: float = x
 	var _pre_step_y: float = y
 	var _pre_collision_speed: float = Vector2(_speedX, _speedY).length()
+	# 7.05 CCD: prevent centerline crossing + V-junction overshoot
+	if not is_god_mode and WorldManager.polylines.size() > 0:
+		var _ccd_spd: float = absf(_speedX) + absf(_speedY)
+		if _ccd_spd > 4.0:
+			# Phase 1: prevent centerline crossing (anti-tunnel)
+			# Skip when already riding the crossed curve (within 18px = normal riding distance).
+			# Only clip when approaching from far away (actual tunneling).
+			var _cross: Dictionary = WorldManager.check_polyline_crossing(x, y, x + _speedX, y + _speedY)
+			if _cross.crossed:
+				var _cross_dist: float = WorldManager.dist_to_polyline_idx(x + 8.0, y + 8.0, _cross.poly_idx)
+				if _cross_dist > 18.0:
+					var _safe_t: float = maxf(_cross.t - 0.1, 0.0)
+					_speedX *= _safe_t
+					_speedY *= _safe_t
+		# Phase 2: prevent overshooting V-junction pinch points (ray-sphere test)
+		# Only checks pre-computed wedge pair pinch points — no stutter on normal riding.
+		if _ccd_spd > 2.0 and WorldManager.wedge_pairs.size() > 0:
+			var _pre_cx: float = x + 8.0
+			var _pre_cy: float = y + 8.0
+			var _spd_vec: Vector2 = Vector2(_speedX, _speedY)
+			var _spd_len: float = _spd_vec.length()
+			if _spd_len > 0.1:
+				var _spd_dir: Vector2 = _spd_vec / _spd_len
+				var _min_scale: float = 1.0
+				for _wp in WorldManager.wedge_pairs:
+					var _pinch: Vector2 = _wp.pinch_point
+					var _to_pinch: Vector2 = _pinch - Vector2(_pre_cx, _pre_cy)
+					var _pre_dist: float = _to_pinch.length()
+					if _pre_dist < 16.35:
+						continue  # Inside pinch zone — post-movement check handles this
+					var _approach: float = _to_pinch.dot(_spd_dir)
+					if _approach <= 0:
+						continue  # Moving away from pinch
+					# Perpendicular distance squared from ray to pinch
+					var _perp_sq: float = _pre_dist * _pre_dist - _approach * _approach
+					var _r_sq: float = 16.35 * 16.35
+					if _perp_sq >= _r_sq:
+						continue  # Ray misses the pinch sphere
+					# Distance along ray to sphere entry point
+					var _entry: float = _approach - sqrt(_r_sq - _perp_sq)
+					if _entry < 0:
+						_entry = 0
+					if _entry < _spd_len:
+						var _scale: float = _entry / _spd_len
+						if _scale < _min_scale:
+							_min_scale = _scale
+				if _min_scale < 1.0:
+					_speedX *= _min_scale
+					_speedY *= _min_scale
+	var _pre_step_sX: float = _speedX  # Save for curve tangent projection after tile hits
+	var _pre_step_sY: float = _speedY
 	_step_position()
 
-	# 7.15 Curve collision
-	# Step 1: Binary search for safe position — find the latest point along
-	# the movement path where player is NOT within min_dist of any centerline.
-	if not is_god_mode and WorldManager.polylines.size() > 0:
-		var _post_x: float = x
-		var _post_y: float = y
-		# Check if post-step position is within min_dist of any centerline
-		# Only binary search if player ENTERED the zone (was outside at pre-step)
-		var _pre_hard: Dictionary = WorldManager.enforce_polyline_hard_constraint(_pre_step_x, _pre_step_y, _pre_step_x, _pre_step_y)
-		var _was_outside: bool = not _pre_hard.pushed
-		var _post_hard: Dictionary = WorldManager.enforce_polyline_hard_constraint(_post_x, _post_y, _pre_step_x, _pre_step_y)
-		if _post_hard.pushed and _was_outside:
-			# Player moved into a curve zone. Binary search for the latest safe point.
-			var _lo: float = 0.0
-			var _hi: float = 1.0
-			for _bs in range(8):
-				var _mid: float = (_lo + _hi) * 0.5
-				var _mx: float = _pre_step_x + (_post_x - _pre_step_x) * _mid
-				var _my: float = _pre_step_y + (_post_y - _pre_step_y) * _mid
-				var _mh: Dictionary = WorldManager.enforce_polyline_hard_constraint(_mx, _my, _pre_step_x, _pre_step_y)
-				if _mh.pushed:
-					_hi = _mid
-				else:
-					_lo = _mid
-			# Place player at the safe point
-			x = _pre_step_x + (_post_x - _pre_step_x) * _lo
-			y = _pre_step_y + (_post_y - _pre_step_y) * _lo
-			# Clip speed against the push normal
-			if _post_hard.normal.length() > 0.1:
-				var _cspd: Vector2 = Vector2(_speedX, _speedY)
-				var _cinto: float = _cspd.dot(_post_hard.normal)
-				if _cinto < 0:
-					_speedX -= _post_hard.normal.x * _cinto
-					_speedY -= _post_hard.normal.y * _cinto
-	# Step 2: Hard constraint — push to min_dist from centerline
-	if not is_god_mode and WorldManager.polylines.size() > 0:
-		var _curve_contact_normals: Array = []
-		var _hard: Dictionary = WorldManager.enforce_polyline_hard_constraint(x, y, _pre_step_x, _pre_step_y)
-		if _hard.pushed:
-			x = _hard.x
-			y = _hard.y
-			if _hard.normal.length() > 0.1:
-				if not _has_similar_normal(_curve_contact_normals, _hard.normal):
-					_curve_contact_normals.append(_hard.normal)
-		# Also run from current pos (catches drift from section 7.6 later)
-		# Clip speed against contact normals
-		if _curve_contact_normals.size() > 0:
-			var spd_vec: Vector2 = Vector2(_speedX, _speedY)
-			spd_vec = _clip_velocity_vec(spd_vec, _curve_contact_normals)
-			# Speed preservation at sharp junctions
-			if _pre_collision_speed > 1.0 and spd_vec.length() < _pre_collision_speed * 0.2:
-				var _hdir: float = sign(_pre_tick_speedX)
-				if _hdir == 0: _hdir = 1.0
-				var cn: Vector2 = _curve_contact_normals[0]
-				var tang: Vector2 = Vector2(-cn.y, cn.x)
-				if tang.dot(Vector2(_hdir, 0)) < 0: tang = -tang
-				spd_vec = tang * _pre_collision_speed
-			_speedX = spd_vec.x
-			_speedY = spd_vec.y
-		# Grounding
-		if _curve_contact_normals.size() > 0:
-			var _hgrav: Vector2 = Vector2(mox, moy)
-			if _hgrav.length() < 0.01: _hgrav = Vector2(0, 1)
-			else: _hgrav = _hgrav.normalized()
-			for cn in _curve_contact_normals:
-				if -cn.dot(_hgrav) > 0.05:
-					on_rotated_block = true
-					is_grounded = true
-					_surface_normal = cn
-					_fb_hit = true
-					break
-		# Valley detection
-		if _hard.pushed and _hard.poly_count >= 2:
-			in_valley = true
-			is_grounded = true
-			_fb_hit = true
-			if absf(_speedX) + absf(_speedY) < 0.5:
-				is_wedged = true
-				_speedX = 0
-				_speedY = 0
-				_wedge_safe_pos = Vector2(x, y)
+	# 7.07 Post-movement V-junction tunneling detection.
+	# Only fires when the movement path actually crossed through a pinch point
+	# (sign change on bisector plane while close to pinch). Does NOT interfere
+	# with normal riding or oscillation — only catches genuine tunneling.
+	if not is_god_mode and WorldManager.wedge_pairs.size() > 0:
+		var _pm_pre: Vector2 = Vector2(_pre_step_x + 8.0, _pre_step_y + 8.0)
+		var _pm_post: Vector2 = Vector2(x + 8.0, y + 8.0)
+		var _pm_move: Vector2 = _pm_post - _pm_pre
+		if _pm_move.length() > 2.0:
+			for _wp in WorldManager.wedge_pairs:
+				var _pinch: Vector2 = _wp.pinch_point
+				var _bn: Vector2 = _wp.bisector_normal
+				# Point-to-segment distance: did movement pass close to pinch?
+				var _pm_len_sq: float = _pm_move.dot(_pm_move)
+				var _pm_t: float = clampf((_pinch - _pm_pre).dot(_pm_move) / maxf(_pm_len_sq, 0.001), 0.0, 1.0)
+				var _pm_closest: Vector2 = _pm_pre + _pm_move * _pm_t
+				if _pm_closest.distance_to(_pinch) < 24.0:
+					# Movement passed near pinch — check for plane crossing
+					var _pm_pre_s: float = (_pm_pre - _pinch).dot(_bn)
+					var _pm_post_s: float = (_pm_post - _pinch).dot(_bn)
+					if _pm_pre_s > 0 and _pm_post_s < 0.0:
+						# Crossed from open side deep into V interior — tunneling!
+						# Snap to where signed_dist = 1.0 (safe margin on open side)
+						var _pm_ds: float = _pm_pre_s - _pm_post_s
+						if _pm_ds > 0.01:
+							var _pm_safe_t: float = clampf((_pm_pre_s - 1.0) / _pm_ds, 0.0, 1.0)
+							var _pm_safe: Vector2 = _pm_pre + _pm_move * _pm_safe_t
+							x = _pm_safe.x - 8.0
+							y = _pm_safe.y - 8.0
+						else:
+							x = _pre_step_x
+							y = _pre_step_y
+						# Zero speed into V, preserve along-V speed
+						var _pm_into: float = Vector2(_speedX, _speedY).dot(-_bn)
+						if _pm_into > 0:
+							_speedX += _bn.x * _pm_into
+							_speedY += _bn.y * _pm_into
 
 	# 7.5 Line collision
 	if not is_god_mode:
@@ -530,6 +537,218 @@ func tick(input_h: int, input_v: int, space_just: bool, space_held: bool) -> voi
 				_jump_cooldown = 0  # Clear cooldown on rotated block contact
 				_coyote_ticks = 4
 
+	# 7.65 Curve collision — iterative push-out matching free block SAT behavior
+	# Runs AFTER free blocks so state persists into valley detection below.
+	# Uses centerline distance + interpolated normals, NOT render edges (no two-edge trap).
+	# KEY DIFFERENCE from free blocks: curves SUM all pushes per pass (not deepest-only).
+	# At V-junctions, both arms push simultaneously — summing gives the correct upward
+	# resultant instead of oscillating between arms.
+	if not is_god_mode and WorldManager.polylines.size() > 0:
+		var _curve_hit: bool = false
+		var _curve_best_push: Vector2 = Vector2.ZERO
+		var _curve_best_depth: float = 0.0
+		var _curve_rots: Dictionary = {}  # Rotation bins for valley detection
+		var _curve_polys: Dictionary = {}  # Distinct polyline indices pushing
+		var _curve_deepest_arm_normal: Vector2 = Vector2.ZERO  # Deepest individual arm normal (for tangent projection at V-junctions)
+		var _curve_deepest_arm_depth: float = 0.0
+		for _cpass in range(8):
+			var _cpushes: Array = WorldManager.get_curve_push_data(x + 8.0, y + 8.0)
+			var _cpass_push: Vector2 = Vector2.ZERO
+			var _cpass_depth: float = 0.0
+			var _cpass_deepest_push: Vector2 = Vector2.ZERO
+			for _cp in _cpushes:
+				# Rotation binning: 20-degree bins mod 180 (same scheme as free blocks)
+				var _cangle: float = rad_to_deg(atan2(_cp.normal.y, _cp.normal.x))
+				var _crk: int = (int(round(_cangle / 20.0)) * 20) % 180
+				if _crk < 0: _crk += 180
+				_curve_rots[_crk] = true
+				_curve_polys[_cp.poly_idx] = true
+				# SUM all pushes
+				_cpass_push += _cp.push
+				if _cp.depth > _cpass_depth:
+					_cpass_depth = _cp.depth
+					_cpass_deepest_push = _cp.push
+				# Track deepest individual arm across ALL passes (for V-junction tangent)
+				if _cp.depth > _curve_deepest_arm_depth:
+					_curve_deepest_arm_depth = _cp.depth
+					_curve_deepest_arm_normal = _cp.normal
+				_curve_hit = true
+			# Detect push cancellation: if sum < 50% of max depth, pushes oppose.
+			# ADAPTIVE BISECTOR: compute escape direction from actual arm normals
+			# at the player's current position (not a flat pre-computed plane).
+			var _cpass_mag: float = _cpass_push.length()
+			if _cpushes.size() >= 2 and _cpass_mag < _cpass_depth * 0.5 and _cpass_depth > 0.5:
+				# Direction: normalized sum of push normals = local bisector
+				var _bisector: Vector2 = Vector2.ZERO
+				for _cp2 in _cpushes:
+					_bisector += _cp2.normal
+				var _bisector_len: float = _bisector.length()
+				if _bisector_len >= 0.1:
+					_bisector = _bisector / _bisector_len
+				else:
+					# Full cancellation: normals perfectly opposing.
+					# Fallback: push from midpoint of closest centerline points toward player.
+					var _mid: Vector2 = Vector2.ZERO
+					for _cp2 in _cpushes:
+						_mid += _cp2.closest_pt
+					_mid /= _cpushes.size()
+					var _to_pl: Vector2 = Vector2(x + 8.0, y + 8.0) - _mid
+					if _to_pl.length() >= 0.5:
+						_bisector = _to_pl.normalized()
+					else:
+						# Ultimate fallback: push from nearest pinch toward player
+						var _best_wp_dist: float = 99999.0
+						var _best_wp_pinch: Vector2 = Vector2.ZERO
+						for _wp3 in WorldManager.wedge_pairs:
+							var _d3: float = Vector2(x + 8.0, y + 8.0).distance_to(_wp3.pinch_point)
+							if _d3 < _best_wp_dist:
+								_best_wp_dist = _d3
+								_best_wp_pinch = _wp3.pinch_point
+						if _best_wp_dist < 100.0:
+							var _tp2: Vector2 = Vector2(x + 8.0, y + 8.0) - _best_wp_pinch
+							if _tp2.length() >= 0.5:
+								_bisector = _tp2.normalized()
+							else:
+								var _gfb: Vector2 = Vector2(mox, moy)
+								_bisector = -_gfb.normalized() if _gfb.length() > 0.01 else Vector2(0, -1)
+						else:
+							var _gfb: Vector2 = Vector2(mox, moy)
+							_bisector = -_gfb.normalized() if _gfb.length() > 0.01 else Vector2(0, -1)
+				# Magnitude: push along bisector enough to clear ALL arms simultaneously.
+				# For each arm: needed = depth / cos(angle between bisector and arm normal).
+				var _needed_mag: float = 0.0
+				for _cp2 in _cpushes:
+					var _cos_a: float = _bisector.dot(_cp2.normal)
+					if _cos_a > 0.1:
+						_needed_mag = maxf(_needed_mag, _cp2.depth / _cos_a)
+					else:
+						# Bisector nearly perpendicular to arm normal (very acute V)
+						_needed_mag = maxf(_needed_mag, _cp2.depth * 3.0)
+				_needed_mag = minf(_needed_mag, _cpass_depth * 4.0)
+				_cpass_push = _bisector * _needed_mag
+			else:
+				# Normal case (no cancellation): clamp sum to 2x deepest depth
+				_cpass_mag = _cpass_push.length()
+				if _cpass_mag > _cpass_depth * 2.0 and _cpass_mag > 0.01:
+					_cpass_push = _cpass_push * (_cpass_depth * 2.0 / _cpass_mag)
+			if _cpass_depth > 0.01:
+				if valley_jump:
+					_cpass_push.x = 0
+				x += _cpass_push.x
+				y += _cpass_push.y
+				if _cpass_depth > _curve_best_depth:
+					_curve_best_depth = _cpass_depth
+					_curve_best_push = _cpass_push
+				# Early exit for ceiling V (push not against gravity)
+				if _curve_rots.size() >= 2:
+					var _cgcheck: Vector2 = Vector2(mox, moy)
+					if _cgcheck.length() < 0.01: _cgcheck = Vector2(0, 1)
+					if -_cpass_push.normalized().dot(_cgcheck.normalized()) <= 0:
+						break
+			else:
+				break
+		if _curve_hit and _curve_best_depth > 0.01:
+			_fb_hit = true
+			# Grid tile safety: undo push if it landed inside a tile
+			if _collides_px(x, y):
+				x -= _curve_best_push.x
+				y -= _curve_best_push.y
+				if not _collides_px(x + _curve_best_push.x, y):
+					x += _curve_best_push.x
+				elif not _collides_px(x, y + _curve_best_push.y):
+					y += _curve_best_push.y
+			# For tangent projection at V-junctions: use the deepest individual arm's
+			# normal, not the bisector. The bisector is correct for POSITION (pushing
+			# out of the V), but the arm normal is correct for SPEED (preserving
+			# momentum along the arm surface, enabling oscillation like free blocks).
+			var _cn: Vector2
+			if _curve_polys.size() >= 2 and _curve_deepest_arm_normal.length() > 0.01:
+				_cn = _curve_deepest_arm_normal
+			else:
+				_cn = _curve_best_push.normalized() if _curve_best_push.length() > 0.01 else Vector2(0, -1)
+			var _cgrav_dir: Vector2 = Vector2(mox, moy)
+			if _cgrav_dir.length() < 0.01:
+				_cgrav_dir = Vector2(0, 1)
+			else:
+				_cgrav_dir = _cgrav_dir.normalized()
+			var _cagainst_grav: float = -_cn.dot(_cgrav_dir)
+			# Tangent speed projection (mirrors free block section 7.6 exactly)
+			# _step_position() may have zeroed speed on one axis due to a grid tile hit.
+			# If the curve push-out moved us to a valid position (not in a tile), use
+			# pre-step speed for tangent projection — the tile hit was transient, the
+			# curve is the actual surface, and momentum should be preserved along it.
+			var _cspd_for_proj: Vector2 = Vector2(_speedX, _speedY)
+			if not _collides_px(x, y):
+				var _pre_step_spd_vec: Vector2 = Vector2(_pre_step_sX, _pre_step_sY)
+				if _pre_step_spd_vec.length() > _cspd_for_proj.length() + 0.5:
+					_cspd_for_proj = _pre_step_spd_vec
+			if not valley_jump:
+				if _cagainst_grav < 0.05:
+					# Wall: zero speed component going into wall
+					var _cinto: float = _cspd_for_proj.dot(_cn)
+					if _cinto < 0:
+						_speedX = _cspd_for_proj.x - _cn.x * _cinto
+						_speedY = _cspd_for_proj.y - _cn.y * _cinto
+					else:
+						_speedX = _cspd_for_proj.x
+						_speedY = _cspd_for_proj.y
+				else:
+					# Floor/slope: tangent projection with junction speed preservation
+					var _ctangent: Vector2 = Vector2(-_cn.y, _cn.x)
+					if _ctangent.x < 0:
+						_ctangent = -_ctangent
+					var _cspd: Vector2 = _cspd_for_proj
+					var _cspd_mag: float = _cspd.length()
+					var _cprev_n_dot: float = _prev_poly_normal.dot(_cn) if _prev_poly_normal.length() > 0.1 else 0.0
+					var _ctangent_speed: float = _cspd.dot(_ctangent)
+					var _cgrav_half: Vector2 = Vector2(mox, moy) * _get_grav_mult() / MULT * 0.5
+					_ctangent_speed += _cgrav_half.dot(_ctangent)
+					var _cnew_spd: Vector2 = _ctangent * _ctangent_speed
+					var _cfalling_v: bool = _curve_rots.size() >= 2 and absf(_pre_tick_speedY) > absf(_pre_tick_speedX) * 1.5
+					var _chas_horiz: bool = absf(_pre_tick_speedX) > absf(_pre_tick_speedY) * 0.5
+					var _cat_junction: bool = _cprev_n_dot < 0.95
+					if _cspd_mag > 1.0 and _cnew_spd.length() < _cspd_mag * 0.2 and not _cfalling_v and _cat_junction and (_was_on_rotated or _chas_horiz):
+						var _cdir: float = sign(_pre_tick_speedX)
+						if _cdir == 0: _cdir = 1.0
+						_speedX = _ctangent.x * _cspd_mag * _cdir
+						_speedY = _ctangent.y * _cspd_mag * _cdir
+					else:
+						_speedX = _cnew_spd.x
+						_speedY = _cnew_spd.y
+			# Grounding from curves
+			if _cagainst_grav >= 0.05:
+				on_rotated_block = true
+				_surface_normal = _cn
+			var _con_tile: bool = _check_grounded() and _pre_tick_grav_speed >= 0
+			if _cagainst_grav > 0.05 and not _con_tile:
+				is_grounded = true
+				_jump_cooldown = 0
+				_coyote_ticks = 4
+		# Valley detection for curves: 2+ different polylines with 2+ rotation bins = V-junction
+		# (A single polyline can produce 2+ rotation bins from iterative push passes on
+		# curved surfaces — that's NOT a V-junction, just a curve with changing normals.)
+		if _curve_hit and _curve_rots.size() >= 2 and _curve_polys.size() >= 2:
+			var _cgd: Vector2 = Vector2(mox, moy)
+			if _cgd.length() < 0.01: _cgd = Vector2(0, 1)
+			var _cbp_against: float = -_curve_best_push.normalized().dot(_cgd.normalized())
+			if _cbp_against > 0.0:  # Push against gravity = floor V
+				in_valley = true
+				is_grounded = true
+				_fb_hit = true
+		# Valley speed zeroing (same as free blocks: zero X when settling)
+		if _curve_hit and in_valley and absf(_speedX) < 0.5 and absf(_speedY) < 0.5:
+			_speedX = 0
+		# Track curve push normal for next-tick junction detection
+		if _curve_hit and _curve_best_push.length() > 0.01:
+			_prev_poly_normal = _curve_best_push.normalized()
+		elif not _fb_hit:
+			_prev_poly_normal = Vector2.ZERO
+
+	# (Section 7.66 removed: flat bisector plane constraint replaced by adaptive
+	# bisector in section 7.65. The flat plane couldn't follow curved arms —
+	# players slid past it by holding a key along one arm. The adaptive bisector
+	# computes escape direction from actual arm normals at each position.)
+
 	# Wedge at V junction: in_valley (2+ curve rotations) with low speed = settled
 	if not is_wedged and not valley_jump and _wedge_escape_cooldown == 0 and in_valley:
 		var _total_spd: float = absf(_speedX) + absf(_speedY)
@@ -547,7 +766,7 @@ func tick(input_h: int, input_v: int, space_just: bool, space_held: bool) -> voi
 		var _gd: Vector2 = Vector2(mox, moy)
 		if _gd.length() < 0.01: _gd = Vector2(0, 1)
 		_is_floor_v = -_surface_normal.dot(_gd.normalized()) > 0.2
-	if on_rotated_block and not valley_jump and _prev_push_normal.length() > 0.1 and _is_floor_v and _fb_hit:
+	if on_rotated_block and not valley_jump and _prev_push_normal.length() > 0.1 and _is_floor_v and _fb_hit and in_valley:
 		if _prev_push_normal.x * _surface_normal.x < -0.1 and absf(_surface_normal.x) > 0.3 and absf(_speedX) < 0.5:
 			in_valley = true
 			valley_jump = true
@@ -576,12 +795,12 @@ func tick(input_h: int, input_v: int, space_just: bool, space_held: bool) -> voi
 	_pos_history.append(x)
 	if _pos_history.size() > 4:
 		_pos_history.pop_front()
-	if _pos_history.size() == 4 and on_rotated_block and _is_floor_v and _fb_hit:
-		# Check A-B-A-B pattern (position alternating)
+	if _pos_history.size() == 4 and on_rotated_block and _is_floor_v and _fb_hit and in_valley:
+		# Check A-B-A-B pattern (position alternating) — only at actual V-junctions (2+ rotation bins)
 		var d01: float = absf(_pos_history[0] - _pos_history[1])
 		var d02: float = absf(_pos_history[0] - _pos_history[2])
 		var d13: float = absf(_pos_history[1] - _pos_history[3])
-		if d01 > 0.1 and d02 < 0.05 and d13 < 0.05:
+		if d01 > 0.5 and d02 < 0.05 and d13 < 0.05:
 			in_valley = true
 			valley_jump = true
 			is_grounded = true
@@ -649,8 +868,6 @@ func tick(input_h: int, input_v: int, space_just: bool, space_held: bool) -> voi
 
 	_was_on_rotated = on_rotated_block
 
-	# 8.5 Wedge detection removed — curves now use generated free blocks
-
 	# 9. Jump — if wedged OR stuck between curves, allow straight up jump
 	if is_wedged and space_just:
 		is_grounded = true
@@ -662,7 +879,7 @@ func tick(input_h: int, input_v: int, space_just: bool, space_held: bool) -> voi
 		jumpCount = 0
 	_handle_jump(space_just, space_held)
 
-	# 10. (Removed — swept AABB in section 7.15 replaces final hard constraint)
+	# 10. (Curve collision is now in section 7.65 — iterative push-out + tangent projection)
 
 	debug_text = "pos=(%.1f,%.1f) spd=(%.2f,%.2f) grnd=%s val=%s vj=%s" % [x, y, _speedX, _speedY, is_grounded, in_valley, valley_jump]
 
