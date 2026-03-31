@@ -94,6 +94,7 @@ var _delayed_action_rot: int = 0
 var _now_ms: float = 0.0
 var _last_input_h: float = 0.0  # Stored for slope input projection
 var _fb_hit: bool = false
+var _step_hit_free_block: bool = false  # Set by _step_position when free block stops movement
 
 var _collides_fn: Callable = Callable()
 
@@ -325,7 +326,6 @@ func tick(input_h: int, input_v: int, space_just: bool, space_held: bool) -> voi
 	var _pre_step_sX: float = _speedX  # Save for curve tangent projection after tile hits
 	var _pre_step_sY: float = _speedY
 	_step_position()
-
 	# 7.07 Post-movement V-junction tunneling detection.
 	# Only fires when the movement path actually crossed through a pinch point
 	# (sign change on bisector plane while close to pinch). Does NOT interfere
@@ -709,8 +709,9 @@ func tick(input_h: int, input_v: int, space_just: bool, space_held: bool) -> voi
 			# If the curve push-out moved us to a valid position (not in a tile), use
 			# pre-step speed for tangent projection — the tile hit was transient, the
 			# curve is the actual surface, and momentum should be preserved along it.
+			# Don't restore if speed was zeroed by a free block hit (block is real obstacle).
 			var _cspd_for_proj: Vector2 = Vector2(_speedX, _speedY)
-			if not _collides_px(x, y):
+			if not _collides_px(x, y) and not _step_hit_free_block:
 				var _pre_step_spd_vec: Vector2 = Vector2(_pre_step_sX, _pre_step_sY)
 				if _pre_step_spd_vec.length() > _cspd_for_proj.length() + 0.5:
 					_cspd_for_proj = _pre_step_spd_vec
@@ -1281,6 +1282,7 @@ func _has_similar_normal(normals: Array, n: Vector2) -> bool:
 	return false
 
 func _step_position() -> void:
+	_step_hit_free_block = false
 	var currentSX: float = _speedX
 	var currentSY: float = _speedY
 	var rx: float = fmod(x, 1.0)
@@ -1290,6 +1292,21 @@ func _step_position() -> void:
 	var donex: bool = false
 	var doney: bool = false
 	var ox: float; var oy: float; var osx: float; var osy: float
+	# Check free blocks during stepping to prevent tunneling at any speed.
+	# Only check blocks NOT already overlapping at start (so SAT sliding still works).
+	var _check_fb: bool = not is_god_mode and WorldManager.free_blocks.size() > 0
+	var _step_fb_skip: Array = []  # Indices of free blocks already overlapping at start
+	if _check_fb:
+		for _fi in range(WorldManager.free_blocks.size()):
+			var _fb: Dictionary = WorldManager.free_blocks[_fi]
+			if not GameState.is_solid(_fb.id):
+				continue
+			if _fb.get("curve_visual", false):
+				continue
+			var _rel: Vector2 = Vector2(x + 8.0, y + 8.0) - (_fb.pos + Vector2(8, 8))
+			var _loc: Vector2 = _rel.rotated(-deg_to_rad(_fb.rotation))
+			if absf(_loc.x) < 16.0 and absf(_loc.y) < 16.0:
+				_step_fb_skip.append(_fi)
 
 
 	var guard: int = 0
@@ -1311,7 +1328,9 @@ func _step_position() -> void:
 					x += currentSX; currentSX = 0
 			rx = fmod(x, 1.0)
 			if rx < 0: rx += 1.0
-			if _collides_px(x, y):
+			var _x_tile_hit: bool = _collides_px(x, y)
+			if _x_tile_hit or (_check_fb and _collides_free_blocks_skip(x, y, _step_fb_skip)):
+				if not _x_tile_hit: _step_hit_free_block = true
 				x = ox; _speedX = 0; currentSX = osx; donex = true
 
 		# Step Y
@@ -1328,7 +1347,9 @@ func _step_position() -> void:
 					y += currentSY; currentSY = 0
 			ry = fmod(y, 1.0)
 			if ry < 0: ry += 1.0
-			if _collides_px(x, y):
+			var _y_tile_hit: bool = _collides_px(x, y)
+			if _y_tile_hit or (_check_fb and _collides_free_blocks_skip(x, y, _step_fb_skip)):
+				if not _y_tile_hit: _step_hit_free_block = true
 				y = oy; _speedY = 0; currentSY = osy; doney = true
 
 
@@ -1657,6 +1678,24 @@ func _collides_free_blocks_axis(px: float, py: float) -> bool:
 		var rel: Vector2 = pcenter - bcenter
 		var local: Vector2 = rel.rotated(-rot)
 		if absf(local.x) < 16 and absf(local.y) < 16:
+			return true
+	return false
+
+func _collides_free_blocks_skip(px: float, py: float, skip_indices: Array) -> bool:
+	## Like _collides_free_blocks but skips blocks at given indices (already overlapping at step start)
+	var pcenter: Vector2 = Vector2(px + 8, py + 8)
+	for fi in range(WorldManager.free_blocks.size()):
+		if skip_indices.has(fi):
+			continue
+		var fb: Dictionary = WorldManager.free_blocks[fi]
+		if not GameState.is_solid(fb.id):
+			continue
+		if fb.get("curve_visual", false):
+			continue
+		var bcenter: Vector2 = fb.pos + Vector2(8, 8)
+		var rel: Vector2 = pcenter - bcenter
+		var local: Vector2 = rel.rotated(-deg_to_rad(fb.rotation))
+		if absf(local.x) < 16.0 and absf(local.y) < 16.0:
 			return true
 	return false
 
