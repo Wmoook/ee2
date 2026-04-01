@@ -564,6 +564,7 @@ func tick(input_h: int, input_v: int, space_just: bool, space_held: bool) -> voi
 					_jump_cooldown = 0
 					_coyote_ticks = 4
 
+	var _fb_hit_from_blocks: bool = _fb_hit  # Save before curve section also sets _fb_hit
 	# 7.65 Curve collision — iterative push-out matching free block SAT behavior
 	# Runs AFTER free blocks so state persists into valley detection below.
 	# Uses centerline distance + interpolated normals, NOT render edges (no two-edge trap).
@@ -710,7 +711,7 @@ func tick(input_h: int, input_v: int, space_just: bool, space_held: bool) -> voi
 			# pre-step speed for tangent projection — the tile hit was transient, the
 			# curve is the actual surface, and momentum should be preserved along it.
 			var _cspd_for_proj: Vector2 = Vector2(_speedX, _speedY)
-			if not _collides_px(x, y) and not _fb_hit:
+			if not _collides_px(x, y) and not _fb_hit_from_blocks:
 				var _pre_step_spd_vec: Vector2 = Vector2(_pre_step_sX, _pre_step_sY)
 				if _pre_step_spd_vec.length() > _cspd_for_proj.length() + 0.5:
 					_cspd_for_proj = _pre_step_spd_vec
