@@ -220,6 +220,40 @@ func _process(delta: float) -> void:
 				env_dead = true
 		if env_dead:
 			_kill_bot()
+	# Ball-vs-ball collision: equal-mass elastic swap with a little extra pop —
+	# slam into a still opponent and THEY go flying (and you stop), with a bonk.
+	if not bot.dead and is_instance_valid(player) and not player._is_dead:
+		var pc: Vector2 = Vector2(player.physics.x + 8.0, player.physics.y + 8.0)
+		var bc2: Vector2 = bot.get_center()
+		var dvec: Vector2 = bc2 - pc
+		var d: float = dvec.length()
+		if d < 16.0 and d > 0.01:
+			var n: Vector2 = dvec / d
+			var overlap: float = 16.0 - d
+			player.physics.x -= n.x * overlap * 0.5
+			player.physics.y -= n.y * overlap * 0.5
+			bot.physics.x += n.x * overlap * 0.5
+			bot.physics.y += n.y * overlap * 0.5
+			var pv: Vector2 = Vector2(player.physics._speedX, player.physics._speedY)
+			var bv: Vector2 = Vector2(bot.physics._speedX, bot.physics._speedY)
+			var p_n: float = pv.dot(n)
+			var b_n: float = bv.dot(n)
+			var approach: float = p_n - b_n
+			if approach > 0.0:
+				var pop: float = 1.05
+				pv += n * (b_n * pop - p_n)
+				bv += n * (p_n * pop - b_n)
+				player.physics._speedX = pv.x
+				player.physics._speedY = pv.y
+				bot.physics._speedX = bv.x
+				bot.physics._speedY = bv.y
+				if approach > 1.2:
+					var mid: Vector2 = (pc + bc2) * 0.5
+					weapons.play_sfx("bonk", mid, 0.08, clampf(1.5 - approach * 0.07, 0.7, 1.5))
+					weapons.spawn_hit(mid, Color(0.9, 0.95, 1.0), n)
+					GameState.cam_shake += clampf(approach * 0.35, 0.5, 4.0)
+					if approach > 4.5:
+						weapons.spawn_ring(mid, Color(0.9, 0.95, 1.0), 3.0, 18.0, 0.16)
 	# Bot respawn (far spawn from the player)
 	if _bot_respawn_in > 0.0:
 		_bot_respawn_in -= delta

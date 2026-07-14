@@ -65,7 +65,7 @@ var _beam_audio: AudioStreamPlayer2D
 
 func _ready() -> void:
 	z_index = 3
-	for n in ["shoot_blaster", "shoot_scatter", "shoot_rail", "hit", "explode", "pickup", "doom_spawn", "doom_beam"]:
+	for n in ["shoot_blaster", "shoot_scatter", "shoot_rail", "hit", "explode", "pickup", "doom_spawn", "doom_beam", "bonk"]:
 		var stream: AudioStream = load("res://assets/sfx/%s.wav" % n) as AudioStream
 		if stream:
 			_sfx[n] = stream
@@ -101,7 +101,7 @@ func register_actor(id: String, team: int, get_center: Callable, get_vel: Callab
 		"weapon_left": -1.0, "beam_on": false, "beam_end": Vector2.ZERO, "beam_tick": 0.0,
 		"dash_cd": 0.0, "dash_time": 0.0,
 		"shield_req": false, "shield_on": false, "shield_energy": SHIELD_MAX,
-		"stun_left": 0.0,
+		"shield_broken": false, "shield_lock": 0.0, "stun_left": 0.0,
 	}
 
 
@@ -202,6 +202,9 @@ func try_dash(id: String) -> bool:
 		return false
 	a.dash_cd = DASH_CD
 	a.dash_time = DASH_WINDOW
+	# Attacking drops the shield — no turtling while punching
+	a.shield_on = false
+	a.shield_lock = 0.45
 	var c: Vector2 = a.get_center.call()
 	for _i in range(10):
 		var side: Vector2 = Vector2(-a.aim.y, a.aim.x) * randf_range(-4.0, 4.0)
@@ -332,17 +335,32 @@ func _process(delta: float) -> void:
 			a.dash_time = maxf(0.0, a.dash_time - delta)
 		if a.stun_left > 0.0:
 			a.stun_left = maxf(0.0, a.stun_left - delta)
-		# Shield: only while unarmed, drains on use, regens when down
+		if a.shield_lock > 0.0:
+			a.shield_lock = maxf(0.0, a.shield_lock - delta)
+		# Shield: only while unarmed, drains on use, regens when down.
+		# BREAKS at empty and needs a FULL recharge (2s) before it can come
+		# back up. Attacking (dash) drops it and locks it briefly.
 		var was_shielded: bool = a.shield_on
-		a.shield_on = a.shield_req and a.weapon == "" and a.stun_left <= 0.0 and a.shield_energy > 0.05 and a.is_alive.call()
+		if a.shield_broken and a.shield_energy >= SHIELD_MAX:
+			a.shield_broken = false
+		a.shield_on = a.shield_req and not a.shield_broken and a.shield_lock <= 0.0 and a.weapon == "" and a.stun_left <= 0.0 and a.shield_energy > 0.0 and a.is_alive.call()
 		if a.shield_on and not was_shielded:
 			play_sfx("pickup", a.get_center.call(), 0.03, 0.7)  # Shield hum-up
 			spawn_ring(a.get_center.call(), Color(0.5, 0.9, 1.0), 4.0, 15.0, 0.15)
-		elif was_shielded and not a.shield_on and a.shield_energy <= 0.05:
-			play_sfx("hit", a.get_center.call(), 0.05, 0.55)  # Shield fizzles out
-			spawn_ring(a.get_center.call(), Color(0.4, 0.6, 0.8), 13.0, 4.0, 0.2)
 		if a.shield_on:
 			a.shield_energy = maxf(0.0, a.shield_energy - delta)
+			if a.shield_energy <= 0.0:
+				a.shield_broken = true
+				a.shield_on = false
+				play_sfx("hit", a.get_center.call(), 0.05, 0.55)  # Shield SHATTERS
+				spawn_ring(a.get_center.call(), Color(0.4, 0.6, 0.8), 14.0, 4.0, 0.22)
+				for _i in range(8):
+					var shard_ang: float = randf() * TAU
+					_fx.append({
+						"pos": a.get_center.call(), "vel": Vector2.from_angle(shard_ang) * randf_range(50.0, 150.0),
+						"life": randf_range(0.1, 0.25), "max_life": 0.25,
+						"color": Color(0.5, 0.8, 1.0), "size": randf_range(1.2, 2.4),
+					})
 		else:
 			a.shield_energy = minf(SHIELD_MAX, a.shield_energy + delta * 0.6)
 		# Dash afterimages: a bright motion trail while the punch window is live

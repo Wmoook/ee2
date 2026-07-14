@@ -29,6 +29,7 @@ var _strafe_dir: int = 1
 var _strafe_timer: float = 0.0
 var _shoot_timer: float = 0.0
 var _shield_want: bool = false
+var _backoff_timer: float = 0.0  # Backing up to build a run-up over spikes
 
 
 func _ready() -> void:
@@ -275,16 +276,37 @@ func _think() -> void:
 			var head_y: int = int(floor(my_c.y / 16.0))
 			if WorldManager.is_solid_at(ahead_x, head_y) or WorldManager.is_solid_at(ahead_x, head_y - 1):
 				want_jump = true
-			# Hop hazards (plasma spikes): probe two distances ahead at foot
-			# level so fast approaches still clear them
+			# SPIKE INTELLIGENCE: measure the hazard span ahead and only jump
+			# if current speed will actually CLEAR the far edge; if too slow,
+			# back off and build a run-up instead of hopping short onto them.
 			var speed_px: float = absf(physics._speedX) * physics.EE_TICK_FRAC * physics.TPS
-			var far_x: int = int(floor((my_c.x + _in_h * (34.0 + speed_px * 0.12)) / 16.0))
 			var foot_y: int = int(floor((my_c.y + 6.0) / 16.0))
-			for probe_x in [ahead_x, far_x]:
-				if GameState.is_hazard(WorldManager.get_tile(probe_x, foot_y)) \
-						or GameState.is_hazard(WorldManager.get_tile(probe_x, foot_y + 1)):
-					want_jump = true
+			var tile_x: int = int(floor(my_c.x / 16.0))
+			var first_h: int = 0
+			var last_h: int = 0
+			var found_h: bool = false
+			for look in range(1, 9):
+				var tx: int = tile_x + _in_h * look
+				var hz: bool = _hazard_col(tx, foot_y)
+				if hz and not found_h:
+					found_h = true
+					first_h = tx
+					last_h = tx
+				elif hz and found_h:
+					last_h = tx
+				elif found_h:
 					break
+			if found_h:
+				var near_px: float = first_h * 16.0 + (16.0 if _in_h < 0 else 0.0)
+				var far_px: float = last_h * 16.0 + (0.0 if _in_h < 0 else 16.0)
+				var dist_to: float = absf(near_px - my_c.x)
+				var needed: float = absf(far_px - my_c.x) + 22.0
+				var travel: float = maxf(speed_px, 60.0) * 0.62  # Air distance of a full jump
+				if dist_to < 64.0:
+					if travel >= needed:
+						want_jump = true
+					else:
+						_backoff_timer = 0.35  # Too slow to clear — take a run-up
 		if goal.y < my_c.y - 40.0:
 			want_jump = true
 		if armed and not escaping and randf() < 0.05:
@@ -311,8 +333,31 @@ func _think() -> void:
 				break
 		if not still_threat:
 			_shield_want = false
+	# Airborne spike awareness: if falling toward hazards below (knockback,
+	# short hop), air-steer toward the nearest safe column
+	if not physics.is_grounded and physics._speedY > 0.0:
+		var below_y: int = int(floor((my_c.y + 22.0) / 16.0))
+		var col: int = int(floor(my_c.x / 16.0))
+		if _hazard_col(col, below_y) or _hazard_col(col, below_y + 1):
+			for off in [1, 2, 3]:
+				if not _hazard_col(col + off, below_y) and not _hazard_col(col + off, below_y + 1):
+					_in_h = 1
+					break
+				if not _hazard_col(col - off, below_y) and not _hazard_col(col - off, below_y + 1):
+					_in_h = -1
+					break
+	# Run-up backoff: reverse away from the spikes to gather speed
+	_backoff_timer = maxf(0.0, _backoff_timer - 0.033)
+	if _backoff_timer > 0.0 and physics.is_grounded:
+		_in_h = -_in_h
+		want_jump = false
 	if want_jump:
 		_jump_queued = true
 		_in_jump_held = true
 	else:
 		_in_jump_held = goal.y < my_c.y - 60.0  # Hold to climb tall gaps
+
+
+func _hazard_col(tx: int, foot_y: int) -> bool:
+	return GameState.is_hazard(WorldManager.get_tile(tx, foot_y)) \
+		or GameState.is_hazard(WorldManager.get_tile(tx, foot_y + 1))
