@@ -63,6 +63,8 @@ var _curr_tick_pos: Vector2 = Vector2.ZERO
 var _last_tick_time_ms: float = 0.0
 var _smooth_look: Vector2 = Vector2.ZERO  # Smoothed look-ahead offset
 # Multiplayer sync
+signal died  # Emitted once per death (battle mode counts lives)
+
 var _remote_sync: RemotePlayerSync = null
 var _sync_accum: float = 0.0  # Time-based net broadcast (~33Hz at any FPS)
 # EE camera catch-up: 1/16 per original 100Hz tick, compounded to 240Hz ticks
@@ -407,6 +409,8 @@ func _tick_update(delta: float) -> void:
 		if _camera:
 			var player_center: Vector2 = Vector2(physics.get_pixel_x() + 8, physics.get_pixel_y() + 8)
 			var target: Vector2 = player_center + GameState.camera_offset
+			if GameState.cam_shake > 0.01:
+				target += Vector2(randf_range(-1.0, 1.0), randf_range(-1.0, 1.0)) * minf(GameState.cam_shake, 14.0)
 			var cam: Vector2 = _camera.global_position
 			cam.x = cam.x + (target.x - cam.x) * _cam_lerp
 			cam.y = cam.y + (target.y - cam.y) * _cam_lerp
@@ -547,7 +551,7 @@ func _tick_update(delta: float) -> void:
 			_smiley_sprite.rotation = lerp_angle(_smiley_sprite.rotation, 0.0, _rc(0.3, delta))
 		else:
 			var spd_total: float = absf(physics._speedX) + absf(physics._speedY)
-			if spd_total > 0.3:
+			if spd_total > 0.3 and GameState.rotation_enabled:
 				# Gear roll: one full rotation per block of travel
 				_smiley_sprite.rotation = fmod(_smiley_sprite.rotation + (_roll_dx / ROLL_PX_PER_REV) * TAU, TAU)
 			else:
@@ -780,6 +784,9 @@ func _process(delta: float) -> void:
 	# input every rendered frame (on a 240Hz display that is one tick per
 	# frame — no batching, minimal input latency).
 	_tick_update(delta)
+	# Combat screen shake decays fast (half-life ~75ms)
+	if is_local and GameState.cam_shake > 0.001:
+		GameState.cam_shake *= pow(0.0001, delta)
 	# Frame interpolation: smooth position between physics ticks at uncapped render FPS.
 	if is_local and not _is_dead and _last_tick_time_ms > 0.0:
 		var now_ms: float = Time.get_ticks_msec()
@@ -1108,6 +1115,7 @@ func _die() -> void:
 		_fire_layer.queue_redraw()
 	if not _gz_death:
 		_smiley_sprite.visible = false
+	died.emit()
 
 func set_speech(text: String) -> void:
 	_speech_text = text

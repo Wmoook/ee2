@@ -24,6 +24,21 @@ func _ready() -> void:
 	name_input.text = GameState.player_name
 	smiley_input.value = GameState.player_smiley_id
 
+	# 1v1 Bot: offline arena duel vs a hard AI
+	var battle_btn: Button = Button.new()
+	battle_btn.text = "1v1 Bot"
+	battle_btn.tooltip_text = "Offline arena duel vs a hard AI — 10 lives each, weapons, black hole"
+	battle_btn.pressed.connect(_on_battle)
+	$VBox.add_child(battle_btn)
+	$VBox.move_child(battle_btn, quit_btn.get_index())
+
+func _on_battle() -> void:
+	_apply_settings()
+	GameState.battle_mode = true
+	GameState.set_edit_mode(false)
+	BattleMap.build()
+	get_tree().change_scene_to_file("res://scenes/world/game.tscn")
+
 func _on_host() -> void:
 	_apply_settings()
 	var port := int(port_input.text) if port_input.text.is_valid_int() else 7777

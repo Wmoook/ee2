@@ -639,6 +639,7 @@ var _chat_messages: Array = []
 const MAX_CHAT_MESSAGES: int = 50
 
 var _zoom_container: HBoxContainer
+var _rotate_btn: Button
 var _zoom_label: Label
 var _trails_btn: Button
 
@@ -694,6 +695,16 @@ func _build_zoom_buttons() -> void:
 	_trails_btn.focus_mode = Control.FOCUS_NONE
 	_trails_btn.pressed.connect(_on_trails_toggle)
 	_zoom_container.add_child(_trails_btn)
+
+	# Ball rotation toggle (next to Trails)
+	_rotate_btn = Button.new()
+	_rotate_btn.text = "Rotate ON"
+	_rotate_btn.custom_minimum_size = Vector2(80, 32)
+	_rotate_btn.add_theme_font_size_override("font_size", 11)
+	_rotate_btn.add_theme_stylebox_override("normal", btn_style)
+	_rotate_btn.focus_mode = Control.FOCUS_NONE
+	_rotate_btn.pressed.connect(_on_rotate_toggle)
+	_zoom_container.add_child(_rotate_btn)
 
 func _get_camera() -> Camera2D:
 	return get_viewport().get_camera_2d()
@@ -771,6 +782,10 @@ func _close_chat() -> void:
 func _on_trails_toggle() -> void:
 	GameState.trails_enabled = not GameState.trails_enabled
 	_trails_btn.text = "Trails ON" if GameState.trails_enabled else "Trails OFF"
+
+func _on_rotate_toggle() -> void:
+	GameState.rotation_enabled = not GameState.rotation_enabled
+	_rotate_btn.text = "Rotate ON" if GameState.rotation_enabled else "Rotate OFF"
 
 func _on_zoom_out() -> void:
 	var cam: Camera2D = _get_camera()

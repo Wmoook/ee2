@@ -16,8 +16,9 @@ func _ready() -> void:
 	NetworkManager.player_disconnected.connect(_on_player_disconnected)
 	NetworkManager.chat_received.connect(_on_chat_for_speech)
 
-	# Load world: host loads from file, client already has it (loaded in main_menu)
-	if NetworkManager.is_host or NetworkManager._peer == null:
+	# Load world: host loads from file, client already has it (loaded in main_menu).
+	# Battle mode skips this — the arena was already built by BattleMap.build().
+	if (NetworkManager.is_host or NetworkManager._peer == null) and not GameState.battle_mode:
 		# Host or singleplayer — load world from file
 		if not _world_ready:
 			if WorldManager.load_from_file("user://world_save.json") != OK:
@@ -73,6 +74,12 @@ func _setup_scene() -> void:
 	# HUD on top
 	var hud: CanvasLayer = preload("res://scripts/ui/game_hud.gd").new()
 	add_child(hud)
+
+	# 1v1 Bot battle mode (weapons, AI opponent, lives HUD)
+	if GameState.battle_mode:
+		var battle: BattleMode = BattleMode.new()
+		battle.name = "BattleMode"
+		add_child(battle)
 
 	# Show tunnel URL with copy button when hosting
 	if NetworkManager.is_host:
@@ -183,13 +190,17 @@ func _input(event: InputEvent) -> void:
 	if focused is LineEdit or focused is TextEdit:
 		return
 	if event is InputEventKey and event.pressed and not event.echo:
-		if event.physical_keycode == KEY_E:
+		if event.physical_keycode == KEY_E and not GameState.battle_mode:
 			GameState.set_edit_mode(not GameState.is_edit_mode)
 			get_viewport().set_input_as_handled()
 		if event.physical_keycode == KEY_ESCAPE:
-			# Save world, disconnect, go back to main menu
-			WorldManager.save_to_file("user://world_save.json")
+			# Save world — but NEVER in battle mode (the arena must not
+			# overwrite the player's saved world)
+			if not GameState.battle_mode:
+				WorldManager.save_to_file("user://world_save.json")
+			GameState.battle_mode = false
+			GameState.cam_shake = 0.0
 			NetworkManager.disconnect_game()
 			get_tree().change_scene_to_file("res://scenes/ui/main_menu.tscn")
-	if event.is_action_pressed("save_world"):
+	if event.is_action_pressed("save_world") and not GameState.battle_mode:
 		WorldManager.save_to_file("user://world_save.json")

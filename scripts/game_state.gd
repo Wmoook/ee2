@@ -22,7 +22,7 @@ const SlopeGenerator = preload("res://scripts/world/slope_generator.gd")
 # All sub-themes merged into these 4 tabs like real EE
 var BLOCK_CATEGORIES: Array = [
 	{"name": "Blocks", "ids": [
-		5000, 5001, 5002, 5003, 5004,
+		5000, 5001, 5002, 5003, 5004, 5005, 5006,
 	]},
 	{"name": "Slopes", "ids": [
 		2000, 2001, 2002, 2003,
@@ -145,12 +145,19 @@ var _switch_set: Dictionary = {}
 
 var camera_offset: Vector2 = Vector2.ZERO  # Manual camera pan offset
 var trails_enabled: bool = true  # Fire trail toggle
+var rotation_enabled: bool = true  # Ball roll visual toggle (HUD "Rotate" button)
+var battle_mode: bool = false  # 1v1 bot arena active — blocks world saves + editing
+var cam_shake: float = 0.0  # Screen shake impulse (added by combat, decays in player controller)
 
 signal edit_mode_changed(enabled: bool)
 signal block_selected(block_id: int)
 signal state_channel_changed(channel_id: int, value: int)
 
 func _ready() -> void:
+	# Uncapped FPS + no vsync so render framerate is independent of physics (100Hz).
+	# Frame interpolation in player_controller makes motion smooth at any FPS.
+	Engine.max_fps = 0
+	DisplayServer.window_set_vsync_mode(DisplayServer.VSYNC_DISABLED)
 	# Load items_map.json
 	_load_items_map()
 	# Register custom blocks (40x40 textures scaled to 16x16)
@@ -169,6 +176,8 @@ func _register_custom_blocks() -> void:
 		{"id": 5002, "path": "res://assets/sprites/NEW_BLOCK_SPRITE/block_3.png", "path16": "res://assets/sprites/NEW_BLOCK_SPRITE/block_3_16.png"},
 		{"id": 5003, "path": "res://assets/sprites/NEW_BLOCK_SPRITE/block_4.png", "path16": "res://assets/sprites/NEW_BLOCK_SPRITE/block_4_16.png"},
 		{"id": 5004, "path": "res://assets/sprites/NEW_BLOCK_SPRITE/block_5.png", "path16": "res://assets/sprites/NEW_BLOCK_SPRITE/block_5_16.png"},
+		{"id": 5005, "path": "res://assets/sprites/NEW_BLOCK_SPRITE/block_6.png", "path16": "res://assets/sprites/NEW_BLOCK_SPRITE/block_6_16.png"},
+		{"id": 5006, "path": "res://assets/sprites/NEW_BLOCK_SPRITE/block_7.png", "path16": "res://assets/sprites/NEW_BLOCK_SPRITE/block_7_16.png"},
 	]
 	for cb in custom_blocks:
 		var tex: Texture2D = load(cb.path) as Texture2D
@@ -423,7 +432,9 @@ func is_custom_block(id: int) -> bool:
 
 var _custom_block_warps: Dictionary = {
 	5000: Vector2(0.0, 0.35), 5001: Vector2(0.0, 0.35), 5002: Vector2(0.0, 0.35), 5003: Vector2(0.0, 0.35), 5004: Vector2(0.0, 0.35),
+	5005: Vector2(0.0, 0.35), 5006: Vector2(0.0, 0.35),
 	5100: Vector2(0.0, 0.35), 5101: Vector2(0.0, 0.35), 5102: Vector2(0.0, 0.35), 5103: Vector2(0.0, 0.35), 5104: Vector2(0.0, 0.35),
+	5105: Vector2(0.0, 0.35), 5106: Vector2(0.0, 0.35),
 }  # Baked warp for 40x40 blocks (FG + BG versions)
 
 func get_custom_block_warp(id: int) -> Vector2:
