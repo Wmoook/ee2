@@ -64,10 +64,19 @@ var _last_tick_time_ms: float = 0.0
 var _smooth_look: Vector2 = Vector2.ZERO  # Smoothed look-ahead offset
 # Multiplayer sync
 var _remote_sync: RemotePlayerSync = null
-var _sync_tick_counter: int = 0
+var _sync_accum: float = 0.0  # Time-based net broadcast (~33Hz at any FPS)
 # EE camera catch-up: 1/16 per original 100Hz tick, compounded to 240Hz ticks
 # so the camera lag FEEL is identical at the higher tick rate.
 var _cam_lerp: float = 1.0 - pow(1.0 - 0.0625, EEPhysics.EE_TICK_FRAC)
+# Visual smoothing and particle rates below were tuned when this code ran in
+# _physics_process at a fixed 60Hz. It now runs once per rendered frame, so
+# every per-call rate must be scaled by delta to keep the exact same look at
+# any FPS. _rc() converts a per-60Hz-frame lerp factor to this frame's delta.
+const VISUAL_TUNE_HZ: float = 60.0
+const ROLL_RATE: float = VISUAL_TUNE_HZ / 8.0  # Smiley roll: was _speedX/8 per 60Hz frame
+
+func _rc(f: float, delta: float) -> float:
+	return 1.0 - pow(1.0 - f, delta * VISUAL_TUNE_HZ)
 var _smooth_normal: Vector2 = Vector2(0, -1)  # Smoothed surface normal for smiley
 var _speech_label: Label = null
 var _speech_text: String = ""
@@ -235,8 +244,8 @@ func _tick_update(delta: float) -> void:
 		if _camera and _gz_death:
 			var target: Vector2 = position + Vector2(8, 8)
 			var cam: Vector2 = _camera.global_position
-			cam.x += (target.x - cam.x) * 0.0625
-			cam.y += (target.y - cam.y) * 0.0625
+			cam.x += (target.x - cam.x) * _rc(0.0625, delta)
+			cam.y += (target.y - cam.y) * _rc(0.0625, delta)
 			_camera.global_position = cam
 		if _gz_death:
 			# Force clear ALL stray particles at 1.5s — no exceptions
@@ -297,7 +306,7 @@ func _tick_update(delta: float) -> void:
 					var af: int = clampi(_remote_sync.anim_frame, 0, _anim_textures.size() - 1)
 					_smiley_sprite.texture = _anim_textures[af]
 				_smiley_sprite.flip_h = _remote_sync.flip_h
-				_smiley_sprite.rotation = lerp_angle(_smiley_sprite.rotation, _remote_sync.rotation, 0.4)
+				_smiley_sprite.rotation = lerp_angle(_smiley_sprite.rotation, _remote_sync.rotation, _rc(0.4, delta))
 				_smiley_sprite.modulate = Color(0.6, 0.8, 1.0, 0.5) if _remote_sync.is_god else Color.WHITE
 			# Generate fire trail for remote player based on their speed
 			if _use_anim_sprite and not _remote_sync.is_god:
@@ -310,7 +319,8 @@ func _tick_update(delta: float) -> void:
 						_prev_fire_pos = r_center
 					var r_move: float = r_center.distance_to(_prev_fire_pos)
 					var r_steps: int = maxi(1, int(r_move / 2.0))
-					var r_per: int = maxi(2, int(8.0 / r_steps))
+					var r_budget: float = maxf(8.0 * delta * VISUAL_TUNE_HZ, r_move)
+					var r_per: int = maxi(1, int(ceil(r_budget / r_steps)))
 					for r_step in range(r_steps):
 						var r_lerp_t: float = float(r_step) / float(r_steps)
 						var r_spawn: Vector2 = _prev_fire_pos.lerp(r_center, r_lerp_t)
@@ -400,10 +410,10 @@ func _tick_update(delta: float) -> void:
 	_space_just = false
 	_cbf_consumed_jump = false  # Reset for next frame
 
-	# Broadcast position to other players (every 7 ticks @240Hz = ~34Hz for low lag)
-	_sync_tick_counter += 1
-	if _sync_tick_counter >= 7 and NetworkManager._peer != null:
-		_sync_tick_counter = 0
+	# Broadcast position to other players (~33Hz, time-based so FPS doesn't matter)
+	_sync_accum += delta
+	if _sync_accum >= 0.03 and NetworkManager._peer != null:
+		_sync_accum = 0.0
 		var af: int = _anim_frame
 		var fh: bool = _smiley_sprite.flip_h if _smiley_sprite else false
 		var rot: float = fmod(_smiley_sprite.rotation, TAU) if _smiley_sprite else 0.0
@@ -520,18 +530,18 @@ func _tick_update(delta: float) -> void:
 	if _use_anim_sprite and _smiley_sprite:
 		if physics.is_wedged:
 			# Wedged between curves: perfectly upright, no rolling
-			_smiley_sprite.rotation = lerp_angle(_smiley_sprite.rotation, 0.0, 0.5)
+			_smiley_sprite.rotation = lerp_angle(_smiley_sprite.rotation, 0.0, _rc(0.5, delta))
 		elif physics.is_god_mode:
 			# God mode: no rolling, stay upright (animation handles direction)
-			_smiley_sprite.rotation = lerp_angle(_smiley_sprite.rotation, 0.0, 0.3)
+			_smiley_sprite.rotation = lerp_angle(_smiley_sprite.rotation, 0.0, _rc(0.3, delta))
 		else:
 			var spd_total: float = absf(physics._speedX) + absf(physics._speedY)
 			if spd_total > 0.3:
-				# Rolling ball: accumulate rotation from horizontal speed
-				_smiley_sprite.rotation = fmod(_smiley_sprite.rotation + physics._speedX / 8.0, TAU)
+				# Rolling ball: time-based roll (same look as the original 60Hz tuning)
+				_smiley_sprite.rotation = fmod(_smiley_sprite.rotation + physics._speedX * ROLL_RATE * delta, TAU)
 			else:
 				# No momentum: lerp back to upright so directional sprites look correct
-				_smiley_sprite.rotation = lerp_angle(_smiley_sprite.rotation, 0.0, 0.3)
+				_smiley_sprite.rotation = lerp_angle(_smiley_sprite.rotation, 0.0, _rc(0.3, delta))
 	# Fire trail (WORLD-SPACE so particles detach) + fire glow ring
 	if _use_anim_sprite:
 		if physics.is_god_mode:
@@ -553,7 +563,7 @@ func _tick_update(delta: float) -> void:
 			var target: float = clampf((spd - GLOW_START_SPEED) / (MAX_SPEED_THRESHOLD - GLOW_START_SPEED), 0.0, 1.0)
 			if _is_boxed:
 				target = 0.0  # Suppress trail when boxed in
-			_glow_intensity = lerpf(_glow_intensity, target, 0.15)
+			_glow_intensity = lerpf(_glow_intensity, target, _rc(0.15, delta))
 			if _glow_intensity > 0.1 and GameState.trails_enabled:
 				var vel: Vector2 = Vector2(physics._speedX, physics._speedY)
 				var spd_len: float = vel.length()
@@ -566,7 +576,9 @@ func _tick_update(delta: float) -> void:
 					# Interpolate spawn positions between prev and current to fill gaps
 					var move_dist: float = ball_center.distance_to(_prev_fire_pos)
 					var steps: int = maxi(1, int(move_dist / 1.0))  # One burst per ~1px
-					var per_step: int = maxi(4, int((15 + _glow_intensity * 15) / steps))
+					# Time-scaled budget (tuned at 60Hz): same particles/second at any FPS
+					var _budget: float = maxf((15.0 + _glow_intensity * 15.0) * delta * VISUAL_TUNE_HZ, 4.0 * move_dist)
+					var per_step: int = maxi(1, int(ceil(_budget / steps)))
 					for step in range(steps):
 						var lerp_t: float = float(step) / float(steps)
 						var spawn_center: Vector2 = _prev_fire_pos.lerp(ball_center, lerp_t)
@@ -598,7 +610,7 @@ func _tick_update(delta: float) -> void:
 					var meteor_intensity: float = clampf((fall_speed - 3.0) / 10.0, 0.0, 1.0)
 					if meteor_intensity > 0.1:
 						var meteor_amt: float = meteor_intensity
-						var meteor_count: int = int(5 + meteor_amt * 60)
+						var meteor_count: int = int(round((5.0 + meteor_amt * 60.0) * delta * VISUAL_TUNE_HZ))
 						for _ri in range(meteor_count):
 							# Crescent grows wider + more intense with speed
 							var arc_width: float = lerpf(0.4, 1.8, meteor_amt)
@@ -668,7 +680,7 @@ func _tick_update(delta: float) -> void:
 	elif _smiley_sprite:
 		# Legacy smiley rotation for non-animated sprites
 		if physics.is_god_mode:
-			_smiley_sprite.rotation = lerp_angle(_smiley_sprite.rotation, 0.0, 0.3)
+			_smiley_sprite.rotation = lerp_angle(_smiley_sprite.rotation, 0.0, _rc(0.3, delta))
 		elif physics.in_valley:
 			_smiley_sprite.rotation = 0.0
 			_valley_smiley_ticks = 10
@@ -676,11 +688,11 @@ func _tick_update(delta: float) -> void:
 			# In air or on grid: clear flip state and lerp back to upright
 			_last_normal = Vector2(0, -1)
 			_valley_smiley_ticks = 0
-			_smiley_sprite.rotation = lerp_angle(_smiley_sprite.rotation, 0.0, 0.3)
+			_smiley_sprite.rotation = lerp_angle(_smiley_sprite.rotation, 0.0, _rc(0.3, delta))
 		elif physics.on_rotated_block and physics.is_grounded:
 			var n: Vector2 = physics._surface_normal
 			# Smooth the normal to prevent flicker
-			_smooth_normal = _smooth_normal.lerp(n, 0.15)
+			_smooth_normal = _smooth_normal.lerp(n, _rc(0.15, delta))
 			if _smooth_normal.length() > 0.01:
 				_smooth_normal = _smooth_normal.normalized()
 			# Flip detection: normal X flips = V-shape, smiley stays upright
@@ -691,9 +703,9 @@ func _tick_update(delta: float) -> void:
 			var spd_total: float = absf(physics._speedX) + absf(physics._speedY)
 			if _valley_smiley_ticks > 0:
 				_valley_smiley_ticks -= 1
-				_smiley_sprite.rotation = lerp_angle(_smiley_sprite.rotation, 0.0, 0.3)
+				_smiley_sprite.rotation = lerp_angle(_smiley_sprite.rotation, 0.0, _rc(0.3, delta))
 			elif spd_total < 0.3:
-				_smiley_sprite.rotation = lerp_angle(_smiley_sprite.rotation, 0.0, 0.1)
+				_smiley_sprite.rotation = lerp_angle(_smiley_sprite.rotation, 0.0, _rc(0.1, delta))
 			else:
 				# Use velocity direction for rotation when moving (feels natural on curves)
 				var vel: Vector2 = Vector2(physics._speedX, physics._speedY)
@@ -708,9 +720,9 @@ func _tick_update(delta: float) -> void:
 					target_angle = atan2(vel_up.x, -vel_up.y)
 				else:
 					target_angle = atan2(_smooth_normal.x, -_smooth_normal.y)
-				_smiley_sprite.rotation = lerp_angle(_smiley_sprite.rotation, target_angle, 0.15)
+				_smiley_sprite.rotation = lerp_angle(_smiley_sprite.rotation, target_angle, _rc(0.15, delta))
 		elif physics.is_grounded:
-			_smiley_sprite.rotation = lerp_angle(_smiley_sprite.rotation, 0.0, 0.2)
+			_smiley_sprite.rotation = lerp_angle(_smiley_sprite.rotation, 0.0, _rc(0.2, delta))
 
 	# Camera updated inside tick loop above
 
