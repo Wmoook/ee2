@@ -22,7 +22,7 @@ const SlopeGenerator = preload("res://scripts/world/slope_generator.gd")
 # All sub-themes merged into these 4 tabs like real EE
 var BLOCK_CATEGORIES: Array = [
 	{"name": "Blocks", "ids": [
-		5000, 5001, 5002, 5003, 5004, 5005, 5006,
+		5000, 5001, 5002, 5003, 5004, 5005, 5006, 5007, 5008, 5009, 5010,
 	]},
 	{"name": "Slopes", "ids": [
 		2000, 2001, 2002, 2003,
@@ -178,6 +178,10 @@ func _register_custom_blocks() -> void:
 		{"id": 5004, "path": "res://assets/sprites/NEW_BLOCK_SPRITE/block_5.png", "path16": "res://assets/sprites/NEW_BLOCK_SPRITE/block_5_16.png"},
 		{"id": 5005, "path": "res://assets/sprites/NEW_BLOCK_SPRITE/block_6.png", "path16": "res://assets/sprites/NEW_BLOCK_SPRITE/block_6_16.png"},
 		{"id": 5006, "path": "res://assets/sprites/NEW_BLOCK_SPRITE/block_7.png", "path16": "res://assets/sprites/NEW_BLOCK_SPRITE/block_7_16.png"},
+		{"id": 5007, "path": "res://assets/sprites/NEW_BLOCK_SPRITE/block_8.png", "path16": "res://assets/sprites/NEW_BLOCK_SPRITE/block_8_16.png"},
+		{"id": 5008, "path": "res://assets/sprites/NEW_BLOCK_SPRITE/block_9.png", "path16": "res://assets/sprites/NEW_BLOCK_SPRITE/block_9_16.png"},
+		{"id": 5009, "path": "res://assets/sprites/NEW_BLOCK_SPRITE/block_10.png", "path16": "res://assets/sprites/NEW_BLOCK_SPRITE/block_10_16.png"},
+		{"id": 5010, "path": "res://assets/sprites/NEW_BLOCK_SPRITE/block_11.png", "path16": "res://assets/sprites/NEW_BLOCK_SPRITE/block_11_16.png"},
 	]
 	for cb in custom_blocks:
 		var tex: Texture2D = load(cb.path) as Texture2D
@@ -362,6 +366,7 @@ func _build_lookups() -> void:
 	_hazard_set[119] = true   # water
 	_hazard_set[416] = true   # lava liquid
 	_hazard_set[369] = true   # mud
+	_hazard_set[5010] = true  # plasma spikes (custom arena hazard)
 	for hid in _hazard_set.keys():
 		_non_solid_fg[hid] = true
 
@@ -432,9 +437,11 @@ func is_custom_block(id: int) -> bool:
 
 var _custom_block_warps: Dictionary = {
 	5000: Vector2(0.0, 0.35), 5001: Vector2(0.0, 0.35), 5002: Vector2(0.0, 0.35), 5003: Vector2(0.0, 0.35), 5004: Vector2(0.0, 0.35),
-	5005: Vector2(0.0, 0.35), 5006: Vector2(0.0, 0.35),
+	5005: Vector2(0.0, 0.35), 5006: Vector2(0.0, 0.35), 5007: Vector2(0.0, 0.35), 5008: Vector2(0.0, 0.35),
+	5009: Vector2(0.0, 0.35), 5010: Vector2(0.0, 0.35),
 	5100: Vector2(0.0, 0.35), 5101: Vector2(0.0, 0.35), 5102: Vector2(0.0, 0.35), 5103: Vector2(0.0, 0.35), 5104: Vector2(0.0, 0.35),
-	5105: Vector2(0.0, 0.35), 5106: Vector2(0.0, 0.35),
+	5105: Vector2(0.0, 0.35), 5106: Vector2(0.0, 0.35), 5107: Vector2(0.0, 0.35), 5108: Vector2(0.0, 0.35),
+	5109: Vector2(0.0, 0.35), 5110: Vector2(0.0, 0.35),
 }  # Baked warp for 40x40 blocks (FG + BG versions)
 
 func get_custom_block_warp(id: int) -> Vector2:

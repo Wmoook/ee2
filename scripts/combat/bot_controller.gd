@@ -200,17 +200,41 @@ func _think() -> void:
 			goal = my_c + (my_c - player_c)  # Back off
 		else:
 			goal = my_c + Vector2(_strafe_dir * 80.0, 0)
-	# Black hole avoidance: strong sideways bias when inside a zone's pull
+	# Black hole MASTERY: never blunder into the pull, escape hard if caught,
+	# and route around the hole instead of cutting straight through it.
+	# Getting sucked in should only happen when outplayed (knockback etc).
+	var escaping: bool = false
 	for gz in WorldManager.gravity_zones.zones:
 		var to_me: Vector2 = my_c - gz.center
-		if to_me.length() < gz.radius * 0.85:
-			goal = gz.center + to_me.normalized() * (gz.radius + 60.0)
-	# Horizontal input with a deadzone
+		var d: float = to_me.length()
+		if d < gz.radius * 1.15:
+			# Inside or skirting the pull: overriding priority — leave radially
+			var out_dir: Vector2 = to_me.normalized() if d > 1.0 else Vector2.RIGHT
+			goal = gz.center + out_dir * (gz.radius + 80.0)
+			escaping = d < gz.radius
+		else:
+			# If the straight path to the goal passes through the pull,
+			# stay on my side of the hole instead of jumping across it
+			var seg: Vector2 = goal - my_c
+			var t: float = clampf((gz.center - my_c).dot(seg) / maxf(seg.length_squared(), 0.001), 0.0, 1.0)
+			if (my_c + seg * t).distance_to(gz.center) < gz.radius + 20.0:
+				if my_c.y > gz.center.y:
+					goal.y = maxf(goal.y, gz.center.y + gz.radius + 48.0)
+				else:
+					goal.y = minf(goal.y, gz.center.y - gz.radius - 48.0)
+	# Horizontal input with a deadzone (no deadzone while escaping the hole)
 	var dx: float = goal.x - my_c.x
-	_in_h = 0 if absf(dx) < 10.0 else (1 if dx > 0.0 else -1)
-	# Jumping: blocked ahead, goal above, or a dodge hop
+	if escaping:
+		_in_h = 1 if dx >= 0.0 else -1
+	else:
+		_in_h = 0 if absf(dx) < 10.0 else (1 if dx > 0.0 else -1)
+	# Jumping: blocked ahead, goal above, escape launch, or a dodge hop
 	var want_jump: bool = false
 	if physics.is_grounded:
+		if escaping:
+			# Inside a gravity zone, jumps launch AWAY from the center —
+			# the fastest way out when touching any surface
+			want_jump = true
 		if _in_h != 0:
 			var ahead_x: int = int(floor((my_c.x + _in_h * 20.0) / 16.0))
 			var head_y: int = int(floor(my_c.y / 16.0))
@@ -218,10 +242,10 @@ func _think() -> void:
 				want_jump = true
 		if goal.y < my_c.y - 40.0:
 			want_jump = true
-		if armed and randf() < 0.05:
+		if armed and not escaping and randf() < 0.05:
 			want_jump = true  # Unpredictable dodge hop
 		# Dodge incoming projectiles (hard: reacts most of the time)
-		if weapon_system and randf() < 0.8:
+		if weapon_system and not escaping and randf() < 0.8:
 			for pr in weapon_system._projectiles:
 				if pr.team != 1 and pr.pos.distance_to(my_c) < 110.0 and pr.vel.dot(my_c - pr.pos) > 0.0:
 					want_jump = true

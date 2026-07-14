@@ -3,20 +3,27 @@ extends RefCounted
 ## Builds the 1v1 bot arena directly into WorldManager (never touches the
 ## player's saved world — saving is disabled while battle_mode is active).
 ##
-## Layout (64x36 tiles): symmetric arena around a central BLACK HOLE.
-## Quarter-pipe curves in both corners, a curved mound under the hole,
-## three platform tiers with hazard-striped edges, side towers with slopes,
-## and four weapon pads (blaster low, scatter mid, rail on the top bridge).
+## Art: 100% custom generated arena sprites (5005-5010) — none of the regular
+## palette blocks appear here. Curves use the energy block (5009).
+##
+## Traversability rules baked into the layout:
+##   * every platform tier is exactly 3 tiles (48px) above the previous one —
+##     jump apex is ~63px, so every hop is comfortable
+##   * every curve END POINT is buried inside solid tiles (wall or floor), so
+##     the exposed surface is only the smooth arc — no tail creases to wedge in
+##   * the corner pockets behind the quarter-pipes are fully sealed dead space
+##   * the top bridge (rail gun) is the skill prize: reach it with a
+##     quarter-pipe speed launch or a black-hole slingshot
 
 const W: int = 64
 const H: int = 36
 
-const PLATE: int = 5005     # Arena plate (cyan-edged gunmetal, generated art)
-const CORE: int = 5006      # Hazard core (amber warning stripes, generated art)
-const STONE_A: int = 5000
-const STONE_B: int = 5001
-const CURVE_BLOCK: int = 5002
-const SPIKE: int = 368      # Classic hazard (kills on touch)
+const PLATE: int = 5005    # Wall/platform plate (cyan-edged gunmetal)
+const CORE: int = 5006     # Amber hazard-striped accent
+const FLOOR: int = 5007    # Brushed steel floor plate with cyan seam
+const FILL: int = 5008     # Deep dark fill
+const ENERGY: int = 5009   # Violet energy block (curves)
+const SPIKES: int = 5010   # Plasma spikes (custom hazard, kills on touch)
 
 
 static func build() -> void:
@@ -31,7 +38,7 @@ static func build() -> void:
 	WorldManager.gravity_zones.zones.clear()
 	WorldManager.spawn_points.clear()
 
-	# ── Shell: replace the plain border with arena plate ──
+	# ── Shell (2 thick) ──
 	for x in range(W):
 		_fg(x, 0, PLATE)
 		_fg(x, 1, PLATE)
@@ -42,61 +49,71 @@ static func build() -> void:
 		_fg(W - 2, y, PLATE)
 		_fg(W - 1, y, PLATE)
 
-	# ── Floor (y=32 surface, filled below) with plate/stone detail ──
+	# ── Floor: bright plate surface over dark fill ──
 	for x in range(2, W - 2):
-		_fg(x, 32, PLATE if (x % 4 != 3) else STONE_B)
-		_fg(x, 33, STONE_A)
-		_fg(x, 34, STONE_A)
-		_fg(x, 35, PLATE)
+		_fg(x, 32, FLOOR)
+		_fg(x, 33, FILL)
+		_fg(x, 34, FILL)
 
-	# ── Central spike trench under the hole (punishes falling out of orbit) ──
+	# ── Plasma spike trench under the black hole ──
 	for x in range(29, 35):
-		WorldManager.fg_tiles[31][x] = SPIKE
+		_fg(x, 31, SPIKES)
 
-	# ── Mid platforms flanking the hole (hazard-striped inner tips) ──
-	for x in range(16, 25):
-		_fg(x, 20, CORE if x >= 23 else PLATE)
-	for x in range(39, 48):
-		_fg(x, 20, CORE if x <= 40 else PLATE)
+	# ── Platform tiers (all 3-tile hops, mirrored) ──
+	# Low: y=29
+	for x in range(9, 15):
+		_fg(x, 29, PLATE)
+	for x in range(49, 55):
+		_fg(x, 29, PLATE)
+	_fg(14, 29, CORE)
+	_fg(49, 29, CORE)
+	# Mid: y=26
+	for x in range(16, 22):
+		_fg(x, 26, PLATE)
+	for x in range(42, 48):
+		_fg(x, 26, PLATE)
+	_fg(21, 26, CORE)
+	_fg(42, 26, CORE)
+	# Hole flanks: y=23 (just outside the pull radius)
+	for x in range(22, 28):
+		_fg(x, 23, PLATE)
+	for x in range(36, 42):
+		_fg(x, 23, PLATE)
+	_fg(27, 23, CORE)
+	_fg(36, 23, CORE)
+	# Wall cover ledges (decor/cover, reachable via pipe launch)
+	for x in range(4, 8):
+		_fg(x, 19, PLATE)
+	for x in range(56, 60):
+		_fg(x, 19, PLATE)
+	# Top bridge: y=9 — the rail gun prize
+	for x in range(28, 36):
+		_fg(x, 9, CORE if (x == 28 or x == 35) else PLATE)
 
-	# ── Low side platforms ──
-	for x in range(8, 15):
-		_fg(x, 26, STONE_B)
-	for x in range(49, 56):
-		_fg(x, 26, STONE_B)
-
-	# ── High perches ──
-	for x in range(12, 17):
-		_fg(x, 13, STONE_A)
-	for x in range(47, 52):
-		_fg(x, 13, STONE_A)
-
-	# ── Top bridge (rail weapon lives here — worth the climb) ──
-	for x in range(27, 37):
-		_fg(x, 8, CORE if (x == 27 or x == 36) else PLATE)
-
-	# ── Background depth behind the arena center (dim plate pattern) ──
+	# ── Background depth pattern (custom plate BG) ──
 	for y in range(6, 31):
 		for x in range(4, W - 4):
 			if (x + y) % 7 == 0:
 				WorldManager.set_bg_tile(x, y, PLATE + 100)
 
-	# ── Curves: corner quarter-pipes + a mound under the black hole ──
+	# ── Curves (energy block art) — ALL end points buried in solids ──
+	# Left quarter-pipe: starts inside the wall, ends under the floor
 	WorldManager.add_polyline(_spline([
-		Vector2(40, 340), Vector2(52, 420), Vector2(96, 480), Vector2(180, 505),
-	]), "both", CURVE_BLOCK)
+		Vector2(18, 320), Vector2(28, 420), Vector2(64, 482), Vector2(140, 502), Vector2(208, 526),
+	]), "both", ENERGY)
+	# Right quarter-pipe (mirror)
 	WorldManager.add_polyline(_spline([
-		Vector2(984, 340), Vector2(972, 420), Vector2(928, 480), Vector2(844, 505),
-	]), "both", CURVE_BLOCK)
+		Vector2(1006, 320), Vector2(996, 420), Vector2(960, 482), Vector2(884, 502), Vector2(816, 526),
+	]), "both", ENERGY)
+	# Center mound under the hole — both ends buried under the floor
 	WorldManager.add_polyline(_spline([
-		Vector2(400, 510), Vector2(452, 468), Vector2(512, 452), Vector2(572, 468), Vector2(624, 510),
-	]), "both", CURVE_BLOCK)
+		Vector2(380, 526), Vector2(448, 460), Vector2(512, 444), Vector2(576, 460), Vector2(644, 526),
+	]), "both", ENERGY)
 
 	# ── THE BLACK HOLE ──
 	WorldManager.gravity_zones.add_zone(Vector2(512, 250), 128.0, 2.4, 10.0)
 
-	# ── Spawns: open floor just past the quarter-pipe tails (the corner
-	# pockets behind the pipes are sealed dead space — never spawn there) ──
+	# ── Spawns: open floor past the pipe tails, next to the blaster pads ──
 	WorldManager.spawn_points.append(Vector2(14, 30))
 	WorldManager.spawn_points.append(Vector2(49, 30))
 
@@ -107,11 +124,11 @@ static func build() -> void:
 
 
 static func add_weapon_pads(ws: WeaponSystem) -> void:
-	ws.add_pad(Vector2(248, 494), "blaster")     # Left floor
-	ws.add_pad(Vector2(776, 494), "blaster")     # Right floor
-	ws.add_pad(Vector2(328, 302), "scatter")     # Left mid platform
-	ws.add_pad(Vector2(696, 302), "scatter")     # Right mid platform
-	ws.add_pad(Vector2(512, 110), "rail")        # Top bridge, above the hole
+	ws.add_pad(Vector2(248, 494), "blaster")     # Left floor, by the spawn
+	ws.add_pad(Vector2(776, 494), "blaster")     # Right floor, by the spawn
+	ws.add_pad(Vector2(392, 350), "scatter")     # Left hole-flank platform
+	ws.add_pad(Vector2(632, 350), "scatter")     # Right hole-flank platform
+	ws.add_pad(Vector2(512, 126), "rail")        # Top bridge, above the hole
 
 
 static func _fg(x: int, y: int, id: int) -> void:

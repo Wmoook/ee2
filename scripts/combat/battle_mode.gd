@@ -197,6 +197,24 @@ func _process(delta: float) -> void:
 	if _over:
 		_layout_hud()
 		return
+	# Bot environmental deaths: hazard tiles + the black hole core.
+	# (The player controller already handles both for the player.)
+	if not bot.dead:
+		var env_dead: bool = false
+		var bt0x: int = int(floor(bot.physics.x / 16.0))
+		var bt0y: int = int(floor(bot.physics.y / 16.0))
+		var bt1x: int = int(floor((bot.physics.x + 15.0) / 16.0))
+		var bt1y: int = int(floor((bot.physics.y + 15.0) / 16.0))
+		for ty in range(bt0y, bt1y + 1):
+			for tx in range(bt0x, bt1x + 1):
+				if GameState.is_hazard(WorldManager.get_tile(tx, ty)):
+					env_dead = true
+		var bc: Vector2 = bot.get_center()
+		for gz in WorldManager.gravity_zones.zones:
+			if bc.distance_to(gz.center) < gz.get("center_radius", 8.0) + 8.0:
+				env_dead = true
+		if env_dead:
+			_kill_bot()
 	# Bot respawn (far spawn from the player)
 	if _bot_respawn_in > 0.0:
 		_bot_respawn_in -= delta
