@@ -1396,7 +1396,26 @@ func _process(_delta: float) -> void:
 				var new_pos: Vector2 = pivot + fb.base_offset.rotated(rad) - Vector2(8, 8)
 				fb.pos = new_pos
 				fb.rotation = fb.base_rot + fb.spin_angle
+	# Cursor sync: mouse-motion events don't fire when only the CAMERA moves
+	# (walking with a key held, camera lag catching up, zooming). The hover
+	# highlight, drag previews and held-button painting would then point at a
+	# stale tile while clicks used the real one. Recompute from the live
+	# canvas transform every frame so the grid cursor always matches the OS
+	# cursor.
 	if GameState.is_edit_mode:
+		var t_now: Vector2i = _get_tile()
+		if t_now != _hover:
+			_hover = t_now
+			if not _is_mouse_over_ui() and not Input.is_key_pressed(KEY_SHIFT) and not _shift_dragging \
+					and not _align_mode and not _curve_mode and not _line_mode and not _grav_zone_mode:
+				if Input.is_action_pressed("place_block"):
+					if t_now != _last_place:
+						_place_at(t_now)
+						_last_place = t_now
+				elif Input.is_action_pressed("remove_block"):
+					_erase_at(t_now)
+		if _curve_mode and _curve_points.size() >= 1:
+			_curve_preview = _compute_spline_blocks(_curve_points, get_global_mouse_position())
 		queue_redraw()
 
 func _draw() -> void:
