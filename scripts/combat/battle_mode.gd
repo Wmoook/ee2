@@ -56,7 +56,7 @@ func _wire_up() -> void:
 	weapons.register_actor("player", 0,
 		func() -> Vector2: return Vector2(player.physics.x + 8.0, player.physics.y + 8.0),
 		func() -> Vector2: return Vector2(player.physics._speedX, player.physics._speedY) * EEPhysics.EE_TICK_FRAC * EEPhysics.TPS,
-		func() -> bool: return is_instance_valid(player) and not player._is_dead and _player_invuln <= 0.0,
+		func() -> bool: return is_instance_valid(player) and not player._is_dead,
 		_hurt_player,
 		func() -> int: return player_hp, MAX_HP,
 		func() -> bool: return player.physics.is_grounded,
@@ -65,7 +65,7 @@ func _wire_up() -> void:
 			player.physics._speedY += v.y)
 	weapons.register_actor("bot", 1,
 		bot.get_center, bot.get_vel_pxs,
-		func() -> bool: return not bot.dead and _bot_invuln <= 0.0,
+		func() -> bool: return not bot.dead,
 		_hurt_bot,
 		func() -> int: return bot_hp, MAX_HP,
 		func() -> bool: return bot.physics.is_grounded,
@@ -134,7 +134,7 @@ func _hurt_player(dmg: int, dir: Vector2) -> void:
 	if _over or _player_invuln > 0.0 or player._is_dead:
 		return
 	player_hp -= dmg
-	_player_invuln = 0.35
+	_player_invuln = 0.15  # Brief damage immunity — hits still visibly land
 	player.physics._speedX += dir.x * 2.2
 	player.physics._speedY += dir.y * 2.2
 	GameState.cam_shake += 4.0
@@ -146,18 +146,19 @@ func _hurt_bot(dmg: int, dir: Vector2) -> void:
 	if _over or _bot_invuln > 0.0 or bot.dead:
 		return
 	bot_hp -= dmg
-	_bot_invuln = 0.3
+	_bot_invuln = 0.15
 	bot.apply_knockback(dir, 2.2)
 	if bot_hp <= 0:
 		_kill_bot()
 
 
 func _kill_bot() -> void:
-	print("BOT DEATH at (%.0f, %.0f) tile (%d, %d) spd=(%.1f, %.1f) grounded=%s dash_t=%.2f commit=%d chold=%.2f" % [
+	print("BOT DEATH at (%.0f, %.0f) tile (%d, %d) spd=(%.1f, %.1f) grounded=%s dash_t=%.2f commit=%d chold=%.2f | last_jump %dms ago: %s" % [
 		bot.get_center().x, bot.get_center().y,
 		int(bot.get_center().x / 16.0), int(bot.get_center().y / 16.0),
 		bot.physics._speedX, bot.physics._speedY, bot.physics.is_grounded,
-		weapons._actors["bot"].dash_time, bot._committed_h, bot._charge_hold])
+		weapons._actors["bot"].dash_time, bot._committed_h, bot._charge_hold,
+		Time.get_ticks_msec() - bot.last_jump_ms, bot.last_jump_info])
 	weapons.spawn_explosion(bot.get_center(), Color(1.0, 0.35, 0.25))
 	weapons.strip_weapon("bot")
 	bot.set_dead(true)

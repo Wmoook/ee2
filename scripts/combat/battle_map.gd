@@ -117,12 +117,11 @@ static func build() -> void:
 	_fg(28, 29, CORE)
 	_fg(67, 29, CORE)
 
-	# ── No floor spike strips. Across many iterations the center strip
-	# manufactured unfair deaths through five distinct mechanisms (dropped
-	# inputs, hold-repeat hops, uncommitted arcs, boundary grazes, shaft
-	# falls) — for bot AND player alike. The arena's danger comes from
-	# weapons, the exposed lift ride and knockback plays instead. The plasma
-	# spike block (5010) remains available in the editor palette. ──
+	# ── Spike strip: center floor, under the LIFT (160px of open sky above,
+	# every hop clears with huge margin, and the shaft + aprons catch any
+	# fall from above). ──
+	for x in [47, 48]:
+		_fg(x, 31, SPIKES)
 
 	# ── Top bridge y=9: dismount balconies around the central lift slot ──
 	for x in range(45, 51):

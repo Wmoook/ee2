@@ -35,6 +35,8 @@ var _threat_react: float = -1.0  # Human-limit reaction delay to incoming melee
 var _shield_hold: float = 0.0    # Holding the shield through a parry window
 var _jump_verified: bool = false # This think-tick's jump already passed simulation
 var _stuck_timer: float = 0.0    # Progress watchdog
+var last_jump_info: String = ""  # Forensics: last verified jump launch + prediction
+var last_jump_ms: int = 0
 var _stuck_anchor: Vector2 = Vector2.ZERO
 var _reroute: float = 0.0        # Walking away to break a futile hop loop
 var _reroute_dir: int = 1
@@ -128,7 +130,10 @@ func _process(delta: float) -> void:
 	# enough back to gain 16px of height at the current speed; anything
 	# closer is aborted. Grounded spike deaths become impossible — only a
 	# genuine mid-air outplay can put the bot in spikes.
-	if physics.is_grounded and absf(physics._speedX) > 0.05:
+	# (Stands down during a committed arc: is_grounded reads stale-true for
+	# the first frames after launch, and braking there shortened verified
+	# jumps by ~60px — right onto the spikes they had cleared in simulation.)
+	if physics.is_grounded and not _commit_active and absf(physics._speedX) > 0.05:
 		var move_dir: int = int(sign(physics._speedX))
 		var speed_pxs: float = absf(physics._speedX) * physics.EE_TICK_FRAC * physics.TPS
 		var bcx: float = physics.x + 8.0
@@ -436,6 +441,8 @@ func _think() -> void:
 					if sim.safe and progressed:
 						want_jump = true
 						_jump_verified = true
+						last_jump_info = "gauntlet(%.0f,%.0f) ih=%d spd=%.1f pred_end=%.0f" % [my_c.x, my_c.y, _in_h, physics._speedX, sim.end_x + 8.0]
+						last_jump_ms = Time.get_ticks_msec()
 					else:
 						# Bailout ladder: a jump while PULLING BACK often lands
 						# short of the hazard even when too fast to stop
@@ -514,6 +521,8 @@ func _think() -> void:
 			_backoff_timer = maxf(_backoff_timer, 0.3)
 		else:
 			_jump_verified = true  # Survivor — commit its input like any other
+			last_jump_info = "launch(%.0f,%.0f) ih=%d spd=%.1f pred_end=%.0f" % [my_c.x, my_c.y, _in_h, physics._speedX, survival.end_x + 8.0]
+			last_jump_ms = Time.get_ticks_msec()
 	if want_jump:
 		_jump_queued = true
 		if _jump_verified:
@@ -567,8 +576,26 @@ func _simulate_jump(ih: int, max_ticks: int, impulse: Vector2 = Vector2.ZERO, do
 	ghost.y = physics.y
 	ghost._speedX = physics._speedX + impulse.x
 	ghost._speedY = physics._speedY + impulse.y
-	ghost.is_grounded = true
-	ghost.jumpCount = 0
+	# FULL state clone — the ghost must fly EXACTLY like the real bot would.
+	# (Arrow gravity lingers in the delayed action queue for ~21ms: jumps
+	# near the lift flew lower than ghosts that started with a clean queue.)
+	ghost.is_grounded = physics.is_grounded
+	ghost.jumpCount = physics.jumpCount if not physics.is_grounded else 0
+	ghost._jump_cooldown = physics._jump_cooldown
+	ghost._coyote_ticks = physics._coyote_ticks
+	ghost._action_queue = physics._action_queue.duplicate()
+	ghost._action_queue_rot = physics._action_queue_rot.duplicate()
+	ghost._current_action_id = physics._current_action_id
+	ghost._delayed_action_id = physics._delayed_action_id
+	ghost._current_action_rot = physics._current_action_rot
+	ghost._delayed_action_rot = physics._delayed_action_rot
+	ghost._active_arrow_dir = physics._active_arrow_dir
+	ghost.on_dot = physics.on_dot
+	ghost.slow_dot = physics.slow_dot
+	ghost.mox = physics.mox
+	ghost.moy = physics.moy
+	ghost.morx = physics.morx
+	ghost.mory = physics.mory
 	var space: bool = do_jump
 	var died: bool = false
 	var landed: bool = false
