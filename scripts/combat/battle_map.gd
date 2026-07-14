@@ -117,11 +117,12 @@ static func build() -> void:
 	_fg(28, 29, CORE)
 	_fg(67, 29, CORE)
 
-	# ── Spike strip: directly under the LIFT (160px of open sky above it —
-	# every hop clears trivially, and falling arcs have half a second to
-	# steer away). Reads clean too: don't stand under the elevator. ──
-	for x in [47, 48]:
-		_fg(x, 31, SPIKES)
+	# ── No floor spike strips. Across many iterations the center strip
+	# manufactured unfair deaths through five distinct mechanisms (dropped
+	# inputs, hold-repeat hops, uncommitted arcs, boundary grazes, shaft
+	# falls) — for bot AND player alike. The arena's danger comes from
+	# weapons, the exposed lift ride and knockback plays instead. The plasma
+	# spike block (5010) remains available in the editor palette. ──
 
 	# ── Top bridge y=9: dismount balconies around the central lift slot ──
 	for x in range(45, 51):

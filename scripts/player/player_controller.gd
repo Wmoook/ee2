@@ -361,6 +361,12 @@ func _tick_update(delta: float) -> void:
 	_space_held = Input.is_key_pressed(KEY_SPACE)
 	if not _cbf_consumed_jump and Input.is_action_just_pressed("jump") and Input.is_key_pressed(KEY_SPACE):
 		_space_just = true
+	# Parried in battle: full control loss for the stun duration
+	if GameState.battle_mode and GameState.player_stunned:
+		ix = 0
+		iy = 0
+		_space_just = false
+		_space_held = false
 
 	# Save pre-tick position for interpolation
 	_prev_pos = Vector2(physics.get_pixel_x(), physics.get_pixel_y())

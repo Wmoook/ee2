@@ -4,15 +4,26 @@ extends Node
 
 func _ready() -> void:
 	GameState.battle_mode = true
+	GameState.battle_guns_enabled = false  # FISTS soak: pure chase = max center crossings
 	BattleMap.build()
 	var game: Node = (load("res://scenes/world/game.tscn") as PackedScene).instantiate()
 	add_child(game)
-	await get_tree().create_timer(20.0).timeout
+	# Teleport the player side to side so the bot must cross the center strip
+	# over and over — the worst case for spike deaths.
+	for cycle in range(7):
+		await get_tree().create_timer(4.0).timeout
+		var pl: Node = game._get_player(1)
+		if pl and not pl._is_dead:
+			pl.physics.x = 250.0 if (cycle % 2 == 0) else 1250.0
+			pl.physics.y = 464.0
+			pl.physics._speedX = 0.0
+			pl.physics._speedY = 0.0
 	var img: Image = get_viewport().get_texture().get_image()
 	img.save_png("user://battle_check.png")
 	print("SHOT SAVED")
 	var battle: Node = game.get_node_or_null("BattleMode")
 	if battle:
-		print("AFK SOAK 20s -> bot lives: %d/10, player lives: %d/10" % [battle.bot_lives, battle.player_lives])
+		print("FISTS CROSSING SOAK 28s -> bot lives: %d/10, player lives: %d/10" % [battle.bot_lives, battle.player_lives])
 	GameState.battle_mode = false
+	GameState.battle_guns_enabled = true
 	get_tree().quit(0)

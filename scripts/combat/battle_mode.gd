@@ -23,6 +23,7 @@ var _over: bool = false
 var _fight_timer: float = 1.6
 
 var _lmb_was_down: bool = false
+var _player_was_stunned: bool = false
 var _hud: CanvasLayer
 var _score_label: Label
 var _weapon_label: Label
@@ -200,6 +201,7 @@ func _end(player_won: bool) -> void:
 func _return_to_menu() -> void:
 	GameState.battle_mode = false
 	GameState.cam_shake = 0.0
+	GameState.player_stunned = false
 	NetworkManager.disconnect_game()
 	get_tree().change_scene_to_file("res://scenes/ui/main_menu.tscn")
 
@@ -209,6 +211,17 @@ func _process(delta: float) -> void:
 		_player_invuln -= delta
 	if _bot_invuln > 0.0:
 		_bot_invuln -= delta
+	# Player stun: control lock + unmissable visual (yellow strobe)
+	var p_stunned: bool = weapons.is_stunned("player")
+	GameState.player_stunned = p_stunned
+	if is_instance_valid(player) and player._smiley_sprite:
+		if p_stunned:
+			var strobe: float = 0.5 + 0.5 * sin(Time.get_ticks_msec() * 0.03)
+			player._smiley_sprite.modulate = Color(1.0, 1.0, 0.45).lerp(Color(1.0, 0.75, 0.3), strobe)
+			_player_was_stunned = true
+		elif _player_was_stunned:
+			player._smiley_sprite.modulate = Color.WHITE
+			_player_was_stunned = false
 	if _fight_timer > 0.0:
 		_fight_timer -= delta
 		_fight_label.modulate.a = clampf(_fight_timer / 0.8, 0.0, 1.0)

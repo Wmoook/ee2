@@ -40,6 +40,8 @@ var _reroute: float = 0.0        # Walking away to break a futile hop loop
 var _reroute_dir: int = 1
 var _committed_h: int = 0        # Input held through a sim-verified jump arc
 var _commit_active: bool = false # True while flying a verified arc (even with input 0)
+var _commit_air_seen: bool = false # Arc actually left the ground (release gate)
+var _dash_dir: int = 0           # Held input during an active dash window
 
 
 func _ready() -> void:
@@ -105,9 +107,16 @@ func _process(delta: float) -> void:
 				physics.x += off.x
 				physics.y += off.y
 				break
-	if physics.is_grounded and _commit_active and not _jump_queued:
-		_commit_active = false  # Arc finished — release the input commitment
+	# Release the input commitment only after the arc was REALLY airborne.
+	# (The jump tick sets velocity while is_grounded is still true for one
+	# frame — releasing there let goal-seeking flip the input mid-arc, stall
+	# the ball over the spikes and drop it vertically. That was THE bug.)
+	if not physics.is_grounded:
+		_commit_air_seen = true
+	if physics.is_grounded and _commit_active and _commit_air_seen and not _jump_queued:
+		_commit_active = false
 		_committed_h = 0
+		_commit_air_seen = false
 	_ai_timer -= delta
 	if _ai_timer <= 0.0:
 		_ai_timer = 0.033
@@ -238,11 +247,13 @@ func _process(delta: float) -> void:
 								var imp: float = 7.0 + 10.0 * res.power
 								physics._speedX += aim.x * imp
 								physics._speedY += aim.y * imp
+								_dash_dir = int(sign(aim.x))
 				elif pdist < 130.0 and _has_los(get_player_center.call()):
 					var quick_ghost: Dictionary = _simulate_jump(int(sign(aim.x)), 120, aim * 7.0, false)
 					if not quick_ghost.died and weapon_system.try_dash("bot"):
 						physics._speedX += aim.x * 7.0
 						physics._speedY += aim.y * 7.0
+						_dash_dir = int(sign(aim.x))
 				elif pdist > 150.0 and pdist < 340.0 and _has_los(get_player_center.call()) and randf() < delta * 0.5:
 					_charge_hold = randf_range(0.9, 2.6)  # Start winding up
 			elif (is_beam or _shoot_timer <= 0.0) and _has_los(get_player_center.call()):
@@ -511,9 +522,14 @@ func _think() -> void:
 			# (A flag, not a 0-sentinel: vertical hops commit to input 0 too.)
 			_committed_h = _in_h
 			_commit_active = true
+			_commit_air_seen = false
 	# Honor an active air commitment above everything else
 	if not physics.is_grounded and _commit_active:
 		_in_h = _committed_h
+	# Hold the ghosted direction through an active dash window (the safety
+	# wall and brake still override this if spikes come up)
+	if weapon_system and weapon_system._actors.has("bot") and weapon_system._actors["bot"].dash_time > 0.0 and _dash_dir != 0:
+		_in_h = _dash_dir
 
 
 func _hazard_col(tx: int, foot_y: int) -> bool:

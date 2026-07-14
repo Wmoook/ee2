@@ -149,6 +149,7 @@ var rotation_enabled: bool = true  # Ball roll visual toggle (HUD "Rotate" butto
 var battle_mode: bool = false  # 1v1 bot arena active — blocks world saves + editing
 var battle_guns_enabled: bool = true  # OFF = pure melee duel (dash + parry only)
 var cam_shake: float = 0.0  # Screen shake impulse (added by combat, decays in player controller)
+var player_stunned: bool = false  # Set by battle mode: parried players lose control briefly
 
 signal edit_mode_changed(enabled: bool)
 signal block_selected(block_id: int)
