@@ -454,6 +454,23 @@ func set_custom_block_warp(id: int, warp: Vector2) -> void:
 func is_hazard(id: int) -> bool:
 	return _hazard_set.has(id)
 
+func hazard_at_ball(px: float, py: float) -> bool:
+	## True if a 16x16 ball at top-left (px,py) meaningfully overlaps a hazard.
+	## Plasma spikes (5010) use a forgiving inset (>=5px lateral, 6px deep) so
+	## sub-pixel boundary grazes never kill — real contact still does.
+	for ty in range(int(floor(py / 16.0)), int(floor((py + 15.0) / 16.0)) + 1):
+		for tx in range(int(floor(px / 16.0)), int(floor((px + 15.0) / 16.0)) + 1):
+			var id: int = WorldManager.get_tile(tx, ty)
+			if not is_hazard(id):
+				continue
+			if id == 5010:
+				var x_over: float = minf(px + 16.0, tx * 16.0 + 16.0) - maxf(px, tx * 16.0)
+				if x_over >= 5.0 and py + 16.0 >= ty * 16.0 + 6.0:
+					return true
+			else:
+				return true
+	return false
+
 func is_hazard_block(id: int) -> bool:
 	return _hazard_set.has(id)
 

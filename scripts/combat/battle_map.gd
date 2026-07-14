@@ -31,9 +31,11 @@ const ENERGY: int = 5009   # Violet energy block (curves)
 const SPIKES: int = 5010   # Plasma spikes (custom hazard, kills on touch)
 const ARROW_UP: int = 2
 
-# Standing spots on the mid platforms — waypoints the bot climbs through
-# when it wants the rail pad high above (the lift entrance is up there).
-const RAIL_VIA: Array = [Vector2(680.0, 390.0), Vector2(840.0, 390.0)]
+# Tower climb ladders (standing positions, bottom -> top): the bot walks
+# these waypoint by waypoint whenever its goal is high above (scatter pads,
+# the lift entrance, a player camping a platform).
+const CLIMB_LEFT: Array = [Vector2(568.0, 456.0), Vector2(624.0, 424.0), Vector2(680.0, 390.0)]
+const CLIMB_RIGHT: Array = [Vector2(952.0, 456.0), Vector2(912.0, 424.0), Vector2(840.0, 390.0)]
 
 
 static func build() -> void:
@@ -91,10 +93,13 @@ static func build() -> void:
 		_fg(x, 25, PLATE)
 	_fg(45, 25, CORE)
 	_fg(50, 25, CORE)
-	# Mini-steps outside the mid platforms keep the climb smooth:
-	# shelf (y29) -> step (y27) -> mid (y25), two easy 32px hops
-	_fg(39, 27, CORE)
-	_fg(56, 27, CORE)
+	# Mini-steps ABOVE the shelf ends keep the climb smooth:
+	# shelf (y29) -> step (y27) -> mid (y25). Two tiles wide so the hops are
+	# forgiving, placed over the shelves so walk-offs never reach the strips.
+	_fg(38, 27, CORE)
+	_fg(39, 27, PLATE)
+	_fg(56, 27, PLATE)
+	_fg(57, 27, CORE)
 	# Perches y=23 (cover + sightlines)
 	for x in range(34, 38):
 		_fg(x, 23, PLATE)
@@ -112,10 +117,10 @@ static func build() -> void:
 	_fg(28, 29, CORE)
 	_fg(67, 29, CORE)
 
-	# ── Spike strips: under the raised mid platforms (96px headroom — full
-	# jumps clear with real margin) and >=1 tile clear of every walk-off,
-	# step and bridge-dismount landing zone ──
-	for x in [42, 43, 52, 53]:
+	# ── Spike strip: directly under the LIFT (160px of open sky above it —
+	# every hop clears trivially, and falling arcs have half a second to
+	# steer away). Reads clean too: don't stand under the elevator. ──
+	for x in [47, 48]:
 		_fg(x, 31, SPIKES)
 
 	# ── Top bridge y=9: dismount balconies around the central lift slot ──
@@ -123,11 +128,19 @@ static func build() -> void:
 		if x == 47 or x == 48:
 			continue  # Lift passes through
 		_fg(x, 9, CORE if (x == 45 or x == 50) else PLATE)
-	# UP-ARROW LIFT: from platform height (y22) through the slot to the rail.
-	# The floor below stays freely crossable.
-	for y in range(7, 23):
+	# UP-ARROW LIFT: from just above the mid platforms (y24) through the slot
+	# to the rail. Reaching down to y24 makes the shaft a SAFETY NET: any hop
+	# or fall into the slot gets caught and lifted — a failed entry can never
+	# free-fall down the shaft onto the spikes at its base. The floor below
+	# stays freely crossable (jump apex tops out well beneath the arrows).
+	for y in range(7, 25):
 		_fg(47, y, ARROW_UP)
 		_fg(48, y, ARROW_UP)
+	# Catch aprons flanking the shaft: anything falling down the side gap
+	# columns gets juggled back up instead of dropping onto the spikes below.
+	for y in range(23, 25):
+		_fg(46, y, ARROW_UP)
+		_fg(49, y, ARROW_UP)
 
 	# ── Structural background: lift shaft + support pillars ──
 	for y in range(7, 23):

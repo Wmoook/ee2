@@ -152,6 +152,11 @@ func _hurt_bot(dmg: int, dir: Vector2) -> void:
 
 
 func _kill_bot() -> void:
+	print("BOT DEATH at (%.0f, %.0f) tile (%d, %d) spd=(%.1f, %.1f) grounded=%s dash_t=%.2f commit=%d chold=%.2f" % [
+		bot.get_center().x, bot.get_center().y,
+		int(bot.get_center().x / 16.0), int(bot.get_center().y / 16.0),
+		bot.physics._speedX, bot.physics._speedY, bot.physics.is_grounded,
+		weapons._actors["bot"].dash_time, bot._committed_h, bot._charge_hold])
 	weapons.spawn_explosion(bot.get_center(), Color(1.0, 0.35, 0.25))
 	weapons.strip_weapon("bot")
 	bot.set_dead(true)
@@ -215,15 +220,7 @@ func _process(delta: float) -> void:
 	# Bot environmental deaths: hazard tiles + the black hole core.
 	# (The player controller already handles both for the player.)
 	if not bot.dead:
-		var env_dead: bool = false
-		var bt0x: int = int(floor(bot.physics.x / 16.0))
-		var bt0y: int = int(floor(bot.physics.y / 16.0))
-		var bt1x: int = int(floor((bot.physics.x + 15.0) / 16.0))
-		var bt1y: int = int(floor((bot.physics.y + 15.0) / 16.0))
-		for ty in range(bt0y, bt1y + 1):
-			for tx in range(bt0x, bt1x + 1):
-				if GameState.is_hazard(WorldManager.get_tile(tx, ty)):
-					env_dead = true
+		var env_dead: bool = GameState.hazard_at_ball(bot.physics.x, bot.physics.y)
 		var bc: Vector2 = bot.get_center()
 		for gz in WorldManager.gravity_zones.zones:
 			if bc.distance_to(gz.center) < gz.get("center_radius", 8.0) + 8.0:

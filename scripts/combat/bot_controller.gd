@@ -31,6 +31,15 @@ var _shoot_timer: float = 0.0
 var _shield_want: bool = false
 var _backoff_timer: float = 0.0  # Backing up to build a run-up over spikes
 var _charge_hold: float = 0.0    # Winding up a charged dash
+var _threat_react: float = -1.0  # Human-limit reaction delay to incoming melee
+var _shield_hold: float = 0.0    # Holding the shield through a parry window
+var _jump_verified: bool = false # This think-tick's jump already passed simulation
+var _stuck_timer: float = 0.0    # Progress watchdog
+var _stuck_anchor: Vector2 = Vector2.ZERO
+var _reroute: float = 0.0        # Walking away to break a futile hop loop
+var _reroute_dir: int = 1
+var _committed_h: int = 0        # Input held through a sim-verified jump arc
+var _commit_active: bool = false # True while flying a verified arc (even with input 0)
 
 
 func _ready() -> void:
@@ -96,26 +105,61 @@ func _process(delta: float) -> void:
 				physics.x += off.x
 				physics.y += off.y
 				break
+	if physics.is_grounded and _commit_active and not _jump_queued:
+		_commit_active = false  # Arc finished — release the input commitment
+		_committed_h = 0
 	_ai_timer -= delta
 	if _ai_timer <= 0.0:
 		_ai_timer = 0.033
 		_think()
 	_shoot_timer -= delta
-	# Physics at the same tick rate as the player
+	# HARD SAFETY WALL (per-frame, authoritative): the bot may NEVER be
+	# grounded within 26px of a spike edge while moving toward it — speed is
+	# hard-zeroed at the line. Verified jumps only pass if launched from far
+	# enough back to gain 16px of height at the current speed; anything
+	# closer is aborted. Grounded spike deaths become impossible — only a
+	# genuine mid-air outplay can put the bot in spikes.
+	if physics.is_grounded and absf(physics._speedX) > 0.05:
+		var move_dir: int = int(sign(physics._speedX))
+		var speed_pxs: float = absf(physics._speedX) * physics.EE_TICK_FRAC * physics.TPS
+		var bcx: float = physics.x + 8.0
+		var brow: int = int(floor((physics.y + 8.0) / 16.0))
+		for look in range(0, 9):
+			var btx: int = int(floor(bcx / 16.0)) + move_dir * look
+			if _hazard_col(btx, brow):
+				var edge_px: float = btx * 16.0 + (16.0 if move_dir < 0 else 0.0)
+				var gap: float = absf(edge_px - bcx) - 8.0
+				var min_launch: float = speed_pxs * 0.09 + 40.0
+				if _jump_queued and gap < min_launch:
+					_jump_queued = false  # Too close to arc over — abort the jump
+				if not _jump_queued:
+					if gap < 26.0:
+						physics._speedX = 0.0  # The wall. Absolute.
+						_in_h = -move_dir
+					elif gap < speed_pxs * 0.30 + 26.0:
+						_in_h = -move_dir  # Brake zone
+				break
+	# Physics at the same tick rate as the player.
+	# CRITICAL: _jump_queued is only cleared when a tick actually CONSUMES it.
+	# (It used to be wiped every frame — at uncapped FPS many frames run zero
+	# ticks, so about half the bot's planned jumps evaporated and it walked
+	# into the spikes it had decided to jump over.)
 	_tick_accum += delta * 1000.0
-	var jump_just: bool = _jump_queued
 	while _tick_accum >= EEPhysics.MS_PER_TICK:
 		_tick_accum -= EEPhysics.MS_PER_TICK
+		var jump_just: bool = _jump_queued
+		_jump_queued = false
 		_prev_tick_pos = _curr_tick_pos
 		# Action tiles (arrows/dots/boosts) work for the bot too
 		var ctx: int = int(floor((physics.x + 8.0) / 16.0))
 		var cty: int = int(floor((physics.y + 8.0) / 16.0))
 		physics.apply_action_tile(WorldManager.get_tile(ctx, cty), WorldManager.get_rotation(ctx, cty))
-		physics.tick(_in_h, 0, jump_just, _in_jump_held)
-		jump_just = false
+		# NEVER pass held-jump: EE auto-repeats held jumps every 150ms, which
+		# would fire unverified hops that bypass the simulation and the wall.
+		# Every bot jump goes through the verified _jump_queued path only.
+		physics.tick(_in_h, 0, jump_just, jump_just)
 		_curr_tick_pos = Vector2(physics.x, physics.y)
 		_last_tick_ms = Time.get_ticks_msec() - _tick_accum
-	_jump_queued = false
 	# Interpolated rendering (same as the player)
 	if _last_tick_ms > 0.0:
 		var alpha: float = clampf((Time.get_ticks_msec() - _last_tick_ms) / EEPhysics.MS_PER_TICK, 0.0, 1.0)
@@ -138,6 +182,33 @@ func _process(delta: float) -> void:
 	# Crimson speed trail via the weapon system's FX pool
 	if weapon_system and Vector2(physics._speedX, physics._speedY).length() > 4.0 and randf() < delta * 90.0:
 		weapon_system.spawn_trail_dot(get_center() - get_vel_pxs().normalized() * 7.0, -get_vel_pxs() * 0.12, Color(1.0, 0.3, 0.2))
+	# MAX-DIFFICULTY reflexes: react to the player's melee at the limit of
+	# human reaction time (~130-190ms) — shield the incoming dash, and punish
+	# a stunned player on the spot. Beatable, but only barely.
+	if weapon_system and not is_player_alive.is_null() and is_player_alive.call() and not weapon_system.is_stunned("bot"):
+		var pa: Dictionary = weapon_system._actors.get("player", {})
+		var pd2: float = get_center().distance_to(get_player_center.call())
+		var unarmed_now: bool = weapon_system.get_weapon("bot") == ""
+		var threat: bool = false
+		if not pa.is_empty():
+			threat = (pa.dash_time > 0.0 and pd2 < 220.0) or (pa.charging and pa.charge > 0.25 and pd2 < 280.0)
+		if threat and _threat_react < 0.0 and unarmed_now:
+			_threat_react = randf_range(0.12, 0.19)  # The reaction window you can beat
+		if _threat_react >= 0.0:
+			_threat_react -= delta
+			if _threat_react < 0.0:
+				_shield_hold = 0.55
+		if _shield_hold > 0.0:
+			_shield_hold -= delta
+			if unarmed_now:
+				_shield_want = true
+		# Parry reward: a stunned player gets dashed immediately
+		if weapon_system.is_stunned("player") and unarmed_now and pd2 < 240.0 and pd2 > 20.0:
+			var punish_aim: Vector2 = (get_player_center.call() - get_center()).normalized()
+			weapon_system.set_aim("bot", punish_aim)
+			if weapon_system.try_dash("bot"):
+				physics._speedX += punish_aim.x * 7.0
+				physics._speedY += punish_aim.y * 7.0
 	# Combat: aim + shoot / melee
 	if weapon_system and not is_player_alive.is_null() and is_player_alive.call():
 		weapon_system.set_shield("bot", _shield_want)
@@ -154,21 +225,31 @@ func _process(delta: float) -> void:
 					weapon_system.charge_dash("bot", delta)
 					_charge_hold -= delta
 					if _charge_hold <= 0.0 or pdist < 70.0:
-						var res: Dictionary = weapon_system.release_dash("bot")
-						if res.ok:
-							var imp: float = 7.0 + 10.0 * res.power
-							physics._speedX += aim.x * imp
-							physics._speedY += aim.y * imp
-				elif pdist < 130.0 and _has_los(get_player_center.call()) and weapon_system.try_dash("bot"):
-					physics._speedX += aim.x * 7.0
-					physics._speedY += aim.y * 7.0
+						# NEVER release a dash whose trajectory dies — ghost
+						# the dash impulse first (spike slides at 2.4x speed
+						# were unstoppable and unjumpable)
+						var est: float = 7.0 + 10.0 * weapon_system._actors["bot"].charge
+						var dash_ghost: Dictionary = _simulate_jump(int(sign(aim.x)), 160, aim * est, false)
+						if dash_ghost.died and pdist > 60.0:
+							_charge_hold = 0.08  # Unsafe line — hold and re-aim
+						else:
+							var res: Dictionary = weapon_system.release_dash("bot")
+							if res.ok:
+								var imp: float = 7.0 + 10.0 * res.power
+								physics._speedX += aim.x * imp
+								physics._speedY += aim.y * imp
+				elif pdist < 130.0 and _has_los(get_player_center.call()):
+					var quick_ghost: Dictionary = _simulate_jump(int(sign(aim.x)), 120, aim * 7.0, false)
+					if not quick_ghost.died and weapon_system.try_dash("bot"):
+						physics._speedX += aim.x * 7.0
+						physics._speedY += aim.y * 7.0
 				elif pdist > 150.0 and pdist < 340.0 and _has_los(get_player_center.call()) and randf() < delta * 0.5:
 					_charge_hold = randf_range(0.9, 2.6)  # Start winding up
 			elif (is_beam or _shoot_timer <= 0.0) and _has_los(get_player_center.call()):
 				if weapon_system.try_shoot("bot"):
 					apply_knockback(-aim, weapon_system.get_kick("bot") * (0.1 if is_beam else 1.0))
 					if not is_beam:
-						_shoot_timer = randf_range(0.05, 0.22)  # Hard: fast follow-ups
+						_shoot_timer = randf_range(0.04, 0.12)  # Max: relentless
 
 
 func _combat_aim() -> Vector2:
@@ -185,7 +266,7 @@ func _combat_aim() -> Vector2:
 	var dir: Vector2 = target - my_c
 	if dir.length() < 1.0:
 		return Vector2.RIGHT
-	return dir.normalized().rotated(randfn(0.0, 0.035))  # Hard: tight error
+	return dir.normalized().rotated(randfn(0.0, 0.018))  # Max: razor aim
 
 
 func _has_los(target: Vector2) -> bool:
@@ -208,10 +289,19 @@ func _think() -> void:
 	# Stunned (parried): drop all inputs until it wears off
 	if weapon_system and weapon_system.is_stunned("bot"):
 		_in_h = 0
-		_in_jump_held = false
 		_shield_want = false
 		return
+	_jump_verified = false
 	var my_c: Vector2 = get_center()
+	# Anti-futility watchdog: hopping in place with no progress means the
+	# current approach can't work — walk away briefly and retry with speed
+	_stuck_timer += 0.033
+	if _stuck_timer >= 1.4:
+		_stuck_timer = 0.0
+		if my_c.distance_to(_stuck_anchor) < 26.0 and physics.is_grounded:
+			_reroute = 0.7
+			_reroute_dir = 1 if randf() < 0.5 else -1
+		_stuck_anchor = my_c
 	var player_c: Vector2 = get_player_center.call()
 	var armed: bool = weapon_system != null and weapon_system.get_weapon("bot") != ""
 	var goal: Vector2 = player_c
@@ -232,17 +322,15 @@ func _think() -> void:
 	# The DOOM RAY outranks everything — sprint for the super pad
 	if weapon_system and weapon_system.is_super_available() and weapon_system.get_weapon("bot") != "doom":
 		goal = weapon_system.super_pos
-	# High goals (the rail pad / lift entrance): climb via a mid platform first
-	if goal.y < my_c.y - 100.0:
-		var best_via: Vector2 = Vector2.ZERO
-		var best_vd: float = 999999.0
-		for v in BattleMap.RAIL_VIA:
-			var vd: float = my_c.distance_to(v)
-			if vd < best_vd:
-				best_vd = vd
-				best_via = v
-		if best_vd > 24.0 and my_c.y > best_via.y - 8.0:
-			goal = best_via  # Not up on the platform yet — climb there first
+	# High goals (pads on platforms, the lift entrance, campers): climb the
+	# nearest tower LADDER waypoint by waypoint instead of hopping uselessly
+	# underneath the target.
+	if goal.y < my_c.y - 56.0:
+		var route: Array = BattleMap.CLIMB_LEFT if goal.x < 768.0 else BattleMap.CLIMB_RIGHT
+		for wp in route:
+			if wp.y < my_c.y - 10.0:
+				goal = wp
+				break
 	else:
 		# Engage: keep a mid-range band, strafe inside it
 		var dist: float = my_c.distance_to(player_c)
@@ -278,6 +366,10 @@ func _think() -> void:
 					goal.y = maxf(goal.y, gz.center.y + gz.radius + 48.0)
 				else:
 					goal.y = minf(goal.y, gz.center.y - gz.radius - 48.0)
+	# Reroute override: abandon the stuck approach for a beat
+	if _reroute > 0.0:
+		_reroute -= 0.033
+		goal = my_c + Vector2(_reroute_dir * 140.0, 0.0)
 	# Horizontal input with a deadzone (no deadzone while escaping the hole)
 	var dx: float = goal.x - my_c.x
 	if escaping:
@@ -319,8 +411,11 @@ func _think() -> void:
 			if found_h:
 				var near_px: float = first_h * 16.0 + (16.0 if _in_h < 0 else 0.0)
 				var far_px: float = last_h * 16.0 + (0.0 if _in_h < 0 else 16.0)
-				var dist_to: float = absf(near_px - my_c.x)
-				if dist_to < 72.0:
+				# -8: the ball's AABB touches the strip 8px before its center
+				var dist_to: float = absf(near_px - my_c.x) - 8.0
+				# Decide EARLY enough to still be able to stop at this speed
+				var decide_px: float = clampf(speed_px * 0.35 + 28.0, 64.0, 126.0)
+				if dist_to < decide_px:
 					# TRAJECTORY PRECOGNITION: ghost-simulate the actual jump
 					# with the real physics engine (ceilings, curves, arrows,
 					# spikes all included). Only jump if the ghost lands alive
@@ -329,15 +424,31 @@ func _think() -> void:
 					var progressed: bool = (sim.end_x + 8.0 - far_px) * float(_in_h) > 6.0
 					if sim.safe and progressed:
 						want_jump = true
+						_jump_verified = true
 					else:
-						_backoff_timer = 0.35
+						# Bailout ladder: a jump while PULLING BACK often lands
+						# short of the hazard even when too fast to stop
+						var bail: Dictionary = _simulate_jump(-_in_h, 220)
+						if not bail.died:
+							_in_h = -_in_h
+							want_jump = true
+							_jump_verified = true
+						else:
+							_backoff_timer = 0.35
+			# Never WALK off an edge whose landing is a hazard either
+			if physics.is_grounded and not want_jump:
+				var edge_tx: int = int(floor(my_c.x / 16.0)) + _in_h
+				var foot_row: int = int(floor((my_c.y + 8.0) / 16.0)) + 1
+				if not WorldManager.is_solid_at(edge_tx, foot_row):
+					if _landing_is_hazard(edge_tx, my_c.y) and _landing_is_hazard(edge_tx + _in_h, my_c.y):
+						_in_h = 0  # Hold the edge; goal logic re-routes
 		if goal.y < my_c.y - 40.0:
 			want_jump = true
 		if armed and not escaping and randf() < 0.05:
 			want_jump = true  # Unpredictable dodge hop
 		# Dodge incoming projectiles (hard: reacts most of the time).
 		# Unarmed, prefer the PARRY over the dodge — shield up instead.
-		if weapon_system and not escaping and randf() < 0.8:
+		if weapon_system and not escaping and randf() < 0.95:
 			var incoming: bool = false
 			for pr in weapon_system._projectiles:
 				if pr.team != 1 and pr.pos.distance_to(my_c) < 130.0 and pr.vel.dot(my_c - pr.pos) > 0.0:
@@ -348,8 +459,9 @@ func _think() -> void:
 					want_jump = true
 				else:
 					_shield_want = true
-	# Drop the shield once nothing threatening is inbound
-	if _shield_want and weapon_system:
+	# Drop the shield once nothing threatening is inbound (but keep it up
+	# through an active parry-hold window)
+	if _shield_want and weapon_system and _shield_hold <= 0.0:
 		var still_threat: bool = false
 		for pr in weapon_system._projectiles:
 			if pr.team != 1 and pr.pos.distance_to(my_c) < 170.0:
@@ -357,29 +469,51 @@ func _think() -> void:
 				break
 		if not still_threat:
 			_shield_want = false
-	# Airborne spike awareness: if falling toward hazards below (knockback,
-	# short hop), air-steer toward the nearest safe column
-	if not physics.is_grounded and physics._speedY > 0.0:
-		var below_y: int = int(floor((my_c.y + 22.0) / 16.0))
-		var col: int = int(floor(my_c.x / 16.0))
-		if _hazard_col(col, below_y) or _hazard_col(col, below_y + 1):
-			for off in [1, 2, 3]:
-				if not _hazard_col(col + off, below_y) and not _hazard_col(col + off, below_y + 1):
-					_in_h = 1
+	# Airborne landing prediction: while falling, project which column we'll
+	# land in (current drift included) and check what's down there. If the
+	# landing is a hazard, air-steer toward the nearest column whose first
+	# surface below is safe — early, while there's still time to drift.
+	if not physics.is_grounded and physics._speedY > 0.0 and not _commit_active:
+		# Edge-aware: the ball is 16px wide — BOTH edge columns must be safe
+		var drift: int = int(sign(physics._speedX))
+		if _landing_zone_hazard(my_c.x, my_c.y) or _landing_zone_hazard(my_c.x + drift * 12.0, my_c.y):
+			var steered: bool = false
+			for off in [20.0, 36.0, 52.0]:
+				if not _landing_zone_hazard(my_c.x - drift * off, my_c.y):
+					_in_h = -drift if drift != 0 else 1
+					steered = true
 					break
-				if not _hazard_col(col - off, below_y) and not _hazard_col(col - off, below_y + 1):
-					_in_h = -1
+				if not _landing_zone_hazard(my_c.x + drift * off, my_c.y):
+					_in_h = drift if drift != 0 else -1
+					steered = true
 					break
+			if not steered:
+				_in_h = -drift if drift != 0 else 1
 	# Run-up backoff: reverse away from the spikes to gather speed
 	_backoff_timer = maxf(0.0, _backoff_timer - 0.033)
 	if _backoff_timer > 0.0 and physics.is_grounded:
 		_in_h = -_in_h
 		want_jump = false
+	# UNIVERSAL SURVIVAL FILTER: no jump is taken unless its full simulated
+	# trajectory survives. Dumb deaths are not allowed — only outplays.
+	if want_jump and not _jump_verified:
+		var survival: Dictionary = _simulate_jump(_in_h, 220)
+		if survival.died:
+			want_jump = false
+			_backoff_timer = maxf(_backoff_timer, 0.3)
+		else:
+			_jump_verified = true  # Survivor — commit its input like any other
 	if want_jump:
 		_jump_queued = true
-		_in_jump_held = true
-	else:
-		_in_jump_held = goal.y < my_c.y - 60.0  # Hold to climb tall gaps
+		if _jump_verified:
+			# COMMIT to the simulated input for the whole arc — the ghost's
+			# trajectory is only valid if we fly it the way the ghost did.
+			# (A flag, not a 0-sentinel: vertical hops commit to input 0 too.)
+			_committed_h = _in_h
+			_commit_active = true
+	# Honor an active air commitment above everything else
+	if not physics.is_grounded and _commit_active:
+		_in_h = _committed_h
 
 
 func _hazard_col(tx: int, foot_y: int) -> bool:
@@ -387,19 +521,39 @@ func _hazard_col(tx: int, foot_y: int) -> bool:
 		or GameState.is_hazard(WorldManager.get_tile(tx, foot_y + 1))
 
 
-func _simulate_jump(ih: int, max_ticks: int) -> Dictionary:
+func _landing_zone_hazard(px: float, from_y: float) -> bool:
+	## Would a ball CENTERED at px land on a hazard? Checks both edge columns
+	## with an 8px safety margin so boundary grazes never count as "safe".
+	return _landing_is_hazard(int(floor((px - 16.0) / 16.0)), from_y) \
+		or _landing_is_hazard(int(floor((px + 15.0) / 16.0)), from_y)
+
+
+func _landing_is_hazard(tx: int, from_y: float) -> bool:
+	## Scan down a column: is the FIRST thing we'd meet a hazard (true) or a
+	## safe solid surface (false)?
+	var start_row: int = int(floor(from_y / 16.0)) + 1
+	for row in range(start_row, mini(start_row + 12, WorldManager.world_height)):
+		if GameState.is_hazard(WorldManager.get_tile(tx, row)):
+			return true
+		if WorldManager.is_solid_at(tx, row):
+			return false
+	return false
+
+
+func _simulate_jump(ih: int, max_ticks: int, impulse: Vector2 = Vector2.ZERO, do_jump: bool = true) -> Dictionary:
 	## Ghost-run the REAL physics engine forward from the bot's current state:
-	## jump on tick 1, hold direction ih, and watch what actually happens —
-	## head bonks, curve deflections and arrow fields all included.
+	## optionally jump on tick 1 and/or apply an impulse (dash preview), hold
+	## direction ih, and watch what actually happens — head bonks, curve
+	## deflections and arrow fields all included.
 	var ghost: EEPhysics = EEPhysics.new()
 	ghost.set_collides_fn(func(tx: int, ty: int) -> bool: return WorldManager.is_solid_at(tx, ty))
 	ghost.x = physics.x
 	ghost.y = physics.y
-	ghost._speedX = physics._speedX
-	ghost._speedY = physics._speedY
+	ghost._speedX = physics._speedX + impulse.x
+	ghost._speedY = physics._speedY + impulse.y
 	ghost.is_grounded = true
 	ghost.jumpCount = 0
-	var space: bool = true
+	var space: bool = do_jump
 	var died: bool = false
 	var landed: bool = false
 	for i in range(max_ticks):
@@ -408,10 +562,8 @@ func _simulate_jump(ih: int, max_ticks: int) -> Dictionary:
 		ghost.apply_action_tile(WorldManager.get_tile(ctx, cty), WorldManager.get_rotation(ctx, cty))
 		ghost.tick(ih, 0, space, space)
 		space = false
-		for ty2 in range(int(floor(ghost.y / 16.0)), int(floor((ghost.y + 15.0) / 16.0)) + 1):
-			for tx2 in range(int(floor(ghost.x / 16.0)), int(floor((ghost.x + 15.0) / 16.0)) + 1):
-				if GameState.is_hazard(WorldManager.get_tile(tx2, ty2)):
-					died = true
+		if GameState.hazard_at_ball(ghost.x, ghost.y):
+			died = true
 		if died:
 			break
 		if i > 30 and ghost.is_grounded:

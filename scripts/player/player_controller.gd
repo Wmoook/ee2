@@ -768,13 +768,11 @@ func _tick_update(delta: float) -> void:
 		elif _idle_timer > 2.0 and not _speech_text.is_empty():
 			_speech_label.visible = true
 
-	# Hazard check
+	# Hazard check (graze-forgiving for plasma spikes)
 	if not physics.is_god_mode:
-		var tiles: Array[Vector2i] = physics.get_overlapping_tiles()
-		for t in tiles:
-			if GameState.is_hazard(WorldManager.get_tile(t.x, t.y)):
-				_die()
-				return
+		if GameState.hazard_at_ball(physics.x, physics.y):
+			_die()
+			return
 		# Gravity zone center = death (spaghettification)
 		var player_center: Vector2 = Vector2(physics.x + 8, physics.y + 8)
 		for gz in WorldManager.gravity_zones.zones:
