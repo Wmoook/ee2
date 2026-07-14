@@ -14,6 +14,10 @@ var is_player_alive: Callable = Callable()
 var dead: bool = false
 var _sprite: Sprite2D
 var _label: Label
+var _anim_textures: Array = []  # [idle, transition, moving] — same set as the player
+var _anim_frame: int = 0
+var _anim_timer: float = 0.0
+var _anim_facing: int = 0
 var _tick_accum: float = 0.0
 var _prev_tick_pos: Vector2 = Vector2.ZERO
 var _curr_tick_pos: Vector2 = Vector2.ZERO
@@ -50,9 +54,12 @@ func _ready() -> void:
 	z_index = 4
 	physics.set_collides_fn(func(tx: int, ty: int) -> bool: return WorldManager.is_solid_at(tx, ty))
 	_sprite = Sprite2D.new()
-	var tex: Texture2D = load("res://assets/sprites/NEW_SPRITES_BALL/BALL_1_frame1.png") as Texture2D
-	if tex:
-		_sprite.texture = tex
+	for fname in ["BALL_1_frame1", "BALL_1_frame2", "BALL_1_frame3"]:
+		var t: Texture2D = load("res://assets/sprites/NEW_SPRITES_BALL/%s.png" % fname) as Texture2D
+		if t:
+			_anim_textures.append(t)
+	if _anim_textures.size() > 0:
+		_sprite.texture = _anim_textures[0]
 		_sprite.scale = Vector2(ANIM_SCALE, ANIM_SCALE)
 	_sprite.position = Vector2(8, 8)
 	_sprite.modulate = Color(1.0, 0.55, 0.55)  # Crimson tint = enemy
@@ -192,7 +199,37 @@ func _process(delta: float) -> void:
 			_sprite.rotation = lerp_angle(_sprite.rotation, atan2(n.x, -n.y), 1.0 - pow(0.75, delta * 60.0))
 		else:
 			_sprite.rotation = lerp_angle(_sprite.rotation, 0.0, 1.0 - pow(0.7, delta * 60.0))
-		_sprite.flip_h = physics._speedX < -0.3
+	# Same 3-frame ball animation as the player (idle/transition/moving)
+	if _sprite and _anim_textures.size() == 3:
+		var spd_h: float = physics._speedX
+		var new_facing: int = 0
+		if spd_h > 0.3:
+			new_facing = 1
+		elif spd_h < -0.3:
+			new_facing = -1
+		if new_facing != 0 and _anim_frame == 0:
+			_anim_frame = 1
+			_anim_timer = 0.0
+			_anim_facing = new_facing
+		elif new_facing != 0 and _anim_facing != 0 and new_facing != _anim_facing:
+			_anim_frame = 1
+			_anim_timer = 0.0
+			_anim_facing = new_facing
+		elif new_facing != 0:
+			_anim_timer += delta
+			if (_anim_frame == 1 or _anim_frame == 3) and _anim_timer > 0.05:
+				_anim_frame = 2
+		elif _anim_frame == 2 or _anim_frame == 1:
+			_anim_frame = 3
+			_anim_timer = 0.0
+		elif _anim_frame == 3:
+			_anim_timer += delta
+			if _anim_timer > 0.05:
+				_anim_frame = 0
+				_anim_facing = 0
+		var tex_idx: int = [0, 1, 2, 1][_anim_frame]
+		_sprite.texture = _anim_textures[tex_idx]
+		_sprite.flip_h = _anim_facing == -1
 	# Crimson speed trail via the weapon system's FX pool
 	if weapon_system and Vector2(physics._speedX, physics._speedY).length() > 4.0 and randf() < delta * 90.0:
 		weapon_system.spawn_trail_dot(get_center() - get_vel_pxs().normalized() * 7.0, -get_vel_pxs() * 0.12, Color(1.0, 0.3, 0.2))
