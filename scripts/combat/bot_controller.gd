@@ -118,6 +118,10 @@ func _process(delta: float) -> void:
 	if _sprite:
 		if GameState.rotation_enabled and absf(physics._speedX) + absf(physics._speedY) > 0.3:
 			_sprite.rotation = fmod(_sprite.rotation + (roll_dx / 16.0) * TAU, TAU)
+		elif not GameState.rotation_enabled and physics.on_rotated_block and physics.is_grounded:
+			# Rotate OFF: tilt with the surface instead of rolling
+			var n: Vector2 = physics._surface_normal
+			_sprite.rotation = lerp_angle(_sprite.rotation, atan2(n.x, -n.y), 1.0 - pow(0.75, delta * 60.0))
 		else:
 			_sprite.rotation = lerp_angle(_sprite.rotation, 0.0, 1.0 - pow(0.7, delta * 60.0))
 		_sprite.flip_h = physics._speedX < -0.3

@@ -554,6 +554,13 @@ func _tick_update(delta: float) -> void:
 			if spd_total > 0.3 and GameState.rotation_enabled:
 				# Gear roll: one full rotation per block of travel
 				_smiley_sprite.rotation = fmod(_smiley_sprite.rotation + (_roll_dx / ROLL_PX_PER_REV) * TAU, TAU)
+			elif not GameState.rotation_enabled and physics.on_rotated_block and physics.is_grounded:
+				# Rotate OFF: no rolling, but tilt with the surface so the face
+				# points "up" along the curve/slope normal
+				_smooth_normal = _smooth_normal.lerp(physics._surface_normal, _rc(0.25, delta))
+				if _smooth_normal.length() > 0.01:
+					var tilt: float = atan2(_smooth_normal.x, -_smooth_normal.y)
+					_smiley_sprite.rotation = lerp_angle(_smiley_sprite.rotation, tilt, _rc(0.25, delta))
 			else:
 				# No momentum: lerp back to upright so directional sprites look correct
 				_smiley_sprite.rotation = lerp_angle(_smiley_sprite.rotation, 0.0, _rc(0.3, delta))
