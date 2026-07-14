@@ -37,49 +37,21 @@ var jumpCount: int = 0
 var lastJumpMs: float = -99999.0
 var is_god_mode: bool = false
 var is_grounded: bool = false
-var is_wedged: bool = false  # Touching curve wall — frozen, jump straight up
+var is_wedged: bool = false  # Resting at a curve V-junction (report flag for visuals)
 var purple_pushed: bool = false  # True when purple line push is active (for visual smoothing)
 var debug_text: String = ""  # On-screen debug info
-var _wedge_pos: Vector2 = Vector2(-9999, -9999)  # Position where wedge occurred
-var _wedge_protect: int = 0  # Ticks of post-wedge protection
-var _wedge_safe_pos: Vector2 = Vector2(0, 0)  # Last position where NOT wedged
-var _wedge_escape_cooldown: int = 0  # Ticks after escape — don't re-wedge
-var _wedge_allow_left: bool = false
-var _wedge_allow_right: bool = false
-var _wedge_allow_up: bool = false
-var _wedge_allow_down: bool = false
-var _wedge_freeze_pos: Vector2 = Vector2(0, 0)  # Position where wedge was set
-var _wedge_freeze_dir: Vector2 = Vector2(0, 0)  # Direction player can't move past (into the V)
-var _poly_cross_cooldown: int = 0  # Ticks after crossing placement (prevent jitter)
-var _last_good_pos: Vector2 = Vector2(-99999, -99999)  # Last position NOT inside any purple line
-var _wedge_clear_ticks: int = 0  # Ticks wall has been NOT blocked (need 3 to clear)
-var _wedge_arc: float = -1.0  # Arc position when wedge was set (preserved while wedged)
 var on_rotated_block: bool = false
-var _stick_curve: int = -1  # Source polyline index for curve collision filtering
 var in_valley: bool = false
 var valley_jump: bool = false
 var _pos_history: Array = []
 var _valley_center: Vector2 = Vector2(-1, -1)  # Locked position in V
 var _surface_normal: Vector2 = Vector2(0, -1)
 var _prev_push_normal: Vector2 = Vector2.ZERO
-var _prev_poly_normal: Vector2 = Vector2.ZERO  # Polyline push from last tick
-var _stick_poly_idx: int = -1  # Polyline index player is currently on
-var _stick_poly_ticks: int = 0  # Ticks since last contact with stuck poly
-var _stick_arc_pos: float = -1.0  # Arc-length position on stick poly
-var _last_stick_poly: int = -1  # Remembers stick poly after decay
-var _poly_segs: Array = []  # Cached nearby non-stick polyline segments
-var _poly_active: bool = false
-var _poly_thresh2: float = 16.5
-var _valley_ticks: int = 0
-var _flip_count: int = 0
 var _jump_cooldown: int = 0
 var _jumped_in_arrow: bool = false
 var _arrow_clear_ticks: int = 0  # Count ticks without arrows before resetting
 var _coyote_ticks: int = 0  # Ticks since last grounded on rotated block
 var _stuck_ticks: int = 0
-var _last_push_dir: Vector2 = Vector2.ZERO
-var _last_push_rot2: int = -999
-var _push_dampen: float = 1.0
 var _was_on_rotated: bool = false
 var on_dot: bool = false
 var slow_dot: bool = false
@@ -94,6 +66,9 @@ var _delayed_action_rot: int = 0
 var _now_ms: float = 0.0
 var _last_input_h: float = 0.0  # Stored for slope input projection
 var _fb_hit: bool = false
+var _aa_fb_cache: Array = []  # Axis-aligned free block centers (per-tick cache)
+var _pre_step_x: float = 0.0  # Position at start of movement this tick
+var _pre_step_y: float = 0.0
 
 var _collides_fn: Callable = Callable()
 
@@ -128,10 +103,6 @@ func _get_speed_mult() -> float:
 	return 1.0
 
 func tick(input_h: int, input_v: int, space_just: bool, space_held: bool) -> void:
-	# Wedge: only JUMP escapes (section 7 handles this).
-	# Directional input while wedged is suppressed — the player is frozen.
-	# (Old behavior let any input escape, causing rapid wedge/unwedge oscillation
-	# when holding a key into the V.)
 	_now_ms += MS_PER_TICK
 	# Track speed in gravity direction to prevent jump during launch
 	var _pre_tick_speedY: float = _speedY
@@ -149,13 +120,8 @@ func tick(input_h: int, input_v: int, space_just: bool, space_held: bool) -> voi
 			3: _pre_tick_grav_speed = _speedX
 	if _jump_cooldown > 0:
 		_jump_cooldown -= 1
-	if _wedge_escape_cooldown > 0:
-		_wedge_escape_cooldown -= 1
 	# Reset grounded each tick - will be recomputed by _check_grounded later
 	is_grounded = false
-	# Save safe position when not wedged
-	if not is_wedged:
-		_wedge_safe_pos = Vector2(x, y)
 
 	if is_god_mode:
 		on_dot = true
@@ -250,119 +216,16 @@ func tick(input_h: int, input_v: int, space_just: bool, space_held: bool) -> voi
 	if valley_jump:
 		_speedX = 0
 
-	# 7. Step position
-	# If wedged, suppress all speed — only jump can escape
-	if _wedge_protect > 0:
-		_wedge_protect -= 1
-	if is_wedged:
-		if space_just:
-			# Jump = full reset, as if never been on a curve
-			is_wedged = false
-			_stick_curve = -1
-			_wedge_protect = 0
-			is_grounded = true
-			_surface_normal = Vector2(0, -1)
-			jumpCount = 0
-		else:
-			_speedX = 0
-			_speedY = 0
-			is_grounded = true
-			# Clamp to wedge point — can't drift away
-			x = _wedge_safe_pos.x
-			y = _wedge_safe_pos.y
-	var _pre_step_x: float = x
-	var _pre_step_y: float = y
-	var _pre_collision_speed: float = Vector2(_speedX, _speedY).length()
-	# 7.05 CCD: prevent centerline crossing + V-junction overshoot
-	if not is_god_mode and WorldManager.polylines.size() > 0:
-		var _ccd_spd: float = absf(_speedX) + absf(_speedY)
-		if _ccd_spd > 4.0:
-			# Phase 1: prevent centerline crossing (anti-tunnel)
-			# Skip when already riding the crossed curve (within 18px = normal riding distance).
-			# Only clip when approaching from far away (actual tunneling).
-			var _cross: Dictionary = WorldManager.check_polyline_crossing(x, y, x + _speedX, y + _speedY)
-			if _cross.crossed:
-				var _cross_dist: float = WorldManager.dist_to_polyline_idx(x + 8.0, y + 8.0, _cross.poly_idx)
-				if _cross_dist > 18.0:
-					var _safe_t: float = maxf(_cross.t - 0.1, 0.0)
-					_speedX *= _safe_t
-					_speedY *= _safe_t
-		# Phase 2: prevent overshooting V-junction pinch points (ray-sphere test)
-		# Only checks pre-computed wedge pair pinch points — no stutter on normal riding.
-		if _ccd_spd > 2.0 and WorldManager.wedge_pairs.size() > 0:
-			var _pre_cx: float = x + 8.0
-			var _pre_cy: float = y + 8.0
-			var _spd_vec: Vector2 = Vector2(_speedX, _speedY)
-			var _spd_len: float = _spd_vec.length()
-			if _spd_len > 0.1:
-				var _spd_dir: Vector2 = _spd_vec / _spd_len
-				var _min_scale: float = 1.0
-				for _wp in WorldManager.wedge_pairs:
-					var _pinch: Vector2 = _wp.pinch_point
-					var _to_pinch: Vector2 = _pinch - Vector2(_pre_cx, _pre_cy)
-					var _pre_dist: float = _to_pinch.length()
-					if _pre_dist < 16.35:
-						continue  # Inside pinch zone — post-movement check handles this
-					var _approach: float = _to_pinch.dot(_spd_dir)
-					if _approach <= 0:
-						continue  # Moving away from pinch
-					# Perpendicular distance squared from ray to pinch
-					var _perp_sq: float = _pre_dist * _pre_dist - _approach * _approach
-					var _r_sq: float = 16.35 * 16.35
-					if _perp_sq >= _r_sq:
-						continue  # Ray misses the pinch sphere
-					# Distance along ray to sphere entry point
-					var _entry: float = _approach - sqrt(_r_sq - _perp_sq)
-					if _entry < 0:
-						_entry = 0
-					if _entry < _spd_len:
-						var _scale: float = _entry / _spd_len
-						if _scale < _min_scale:
-							_min_scale = _scale
-				if _min_scale < 1.0:
-					_speedX *= _min_scale
-					_speedY *= _min_scale
-	var _pre_step_sX: float = _speedX  # Save for curve tangent projection after tile hits
-	var _pre_step_sY: float = _speedY
-	_step_position()
+	# 7. Step position - substepped EE tile stepping + swept curve contacts.
+	# CurveSolver splits the movement into small substeps near curves so the
+	# player can never cross a curve centerline in one step (no tunneling at
+	# any speed) and clips velocity against contact normals, so wedge points
+	# come to rest naturally. Away from curves this is a single plain EE step.
+	_pre_step_x = x
+	_pre_step_y = y
+	_refresh_aa_fb_cache()
+	CurveSolver.tick_move(self)
 
-	# 7.07 Post-movement V-junction tunneling detection.
-	# Only fires when the movement path actually crossed through a pinch point
-	# (sign change on bisector plane while close to pinch). Does NOT interfere
-	# with normal riding or oscillation — only catches genuine tunneling.
-	if not is_god_mode and WorldManager.wedge_pairs.size() > 0:
-		var _pm_pre: Vector2 = Vector2(_pre_step_x + 8.0, _pre_step_y + 8.0)
-		var _pm_post: Vector2 = Vector2(x + 8.0, y + 8.0)
-		var _pm_move: Vector2 = _pm_post - _pm_pre
-		if _pm_move.length() > 2.0:
-			for _wp in WorldManager.wedge_pairs:
-				var _pinch: Vector2 = _wp.pinch_point
-				var _bn: Vector2 = _wp.bisector_normal
-				# Point-to-segment distance: did movement pass close to pinch?
-				var _pm_len_sq: float = _pm_move.dot(_pm_move)
-				var _pm_t: float = clampf((_pinch - _pm_pre).dot(_pm_move) / maxf(_pm_len_sq, 0.001), 0.0, 1.0)
-				var _pm_closest: Vector2 = _pm_pre + _pm_move * _pm_t
-				if _pm_closest.distance_to(_pinch) < 24.0:
-					# Movement passed near pinch — check for plane crossing
-					var _pm_pre_s: float = (_pm_pre - _pinch).dot(_bn)
-					var _pm_post_s: float = (_pm_post - _pinch).dot(_bn)
-					if _pm_pre_s > 0 and _pm_post_s < 0.0:
-						# Crossed from open side deep into V interior — tunneling!
-						# Snap to where signed_dist = 1.0 (safe margin on open side)
-						var _pm_ds: float = _pm_pre_s - _pm_post_s
-						if _pm_ds > 0.01:
-							var _pm_safe_t: float = clampf((_pm_pre_s - 1.0) / _pm_ds, 0.0, 1.0)
-							var _pm_safe: Vector2 = _pm_pre + _pm_move * _pm_safe_t
-							x = _pm_safe.x - 8.0
-							y = _pm_safe.y - 8.0
-						else:
-							x = _pre_step_x
-							y = _pre_step_y
-						# Zero speed into V, preserve along-V speed
-						var _pm_into: float = Vector2(_speedX, _speedY).dot(-_bn)
-						if _pm_into > 0:
-							_speedX += _bn.x * _pm_into
-							_speedY += _bn.y * _pm_into
 
 	# 7.5 Line collision
 	if not is_god_mode:
@@ -383,12 +246,12 @@ func tick(input_h: int, input_v: int, space_just: bool, space_held: bool) -> voi
 					_speedY = 0
 
 	# 7.6 Rotated block surface sliding (simple best-push)
-	var _polyline_normal: Vector2 = _surface_normal
 	on_rotated_block = false
 	in_valley = false
+	is_wedged = false
 	var on_tile: bool = _check_grounded() and _pre_tick_grav_speed >= 0
 	_fb_hit = false
-	if not is_god_mode and not is_wedged and WorldManager.free_blocks.size() > 0:
+	if not is_god_mode and WorldManager.free_blocks.size() > 0:
 		var best_push: Vector2 = Vector2.ZERO
 		var best_depth: float = 0.0
 		var hit: bool = false
@@ -564,269 +427,22 @@ func tick(input_h: int, input_v: int, space_just: bool, space_held: bool) -> voi
 					_jump_cooldown = 0
 					_coyote_ticks = 4
 
-	var _fb_hit_from_blocks: bool = _fb_hit  # Save before curve section also sets _fb_hit
-	# 7.65 Curve collision — iterative push-out matching free block SAT behavior
-	# Runs AFTER free blocks so state persists into valley detection below.
-	# Uses centerline distance + interpolated normals, NOT render edges (no two-edge trap).
-	# KEY DIFFERENCE from free blocks: curves SUM all pushes per pass (not deepest-only).
-	# At V-junctions, both arms push simultaneously — summing gives the correct upward
-	# resultant instead of oscillating between arms.
-	var _cv_on_tile: bool = _check_grounded()  # On grid tiles = no curve valley (check BEFORE push-out)
-	if not is_god_mode and not is_wedged and WorldManager.polylines.size() > 0:
-		var _curve_hit: bool = false
-		var _curve_best_push: Vector2 = Vector2.ZERO
-		var _curve_best_depth: float = 0.0
-		var _curve_rots: Dictionary = {}  # Rotation bins for valley detection
-		var _curve_had_cancellation: bool = false  # True when pushes actually opposed (real V)
-		var _curve_polys: Dictionary = {}  # Distinct polyline indices pushing
-		var _curve_deepest_arm_normal: Vector2 = Vector2.ZERO  # Deepest individual arm normal (for tangent projection at V-junctions)
-		var _curve_deepest_arm_depth: float = 0.0
-		for _cpass in range(8):
-			var _cpushes: Array = WorldManager.get_curve_push_data(x + 8.0, y + 8.0)
-			var _cpass_push: Vector2 = Vector2.ZERO
-			var _cpass_depth: float = 0.0
-			var _cpass_deepest_push: Vector2 = Vector2.ZERO
-			for _cp in _cpushes:
-				# Rotation binning: 40-degree bins mod 180 (wider than free blocks' 20°
-				# to prevent false positives from iterative push normal rotation on
-				# smooth single curves, while still detecting genuine V-junctions)
-				var _cangle: float = rad_to_deg(atan2(_cp.normal.y, _cp.normal.x))
-				var _crk: int = (int(round(_cangle / 40.0)) * 40) % 180
-				if _crk < 0: _crk += 180
-				_curve_rots[_crk] = true
-				_curve_polys[_cp.poly_idx] = true
-				# SUM all pushes
-				_cpass_push += _cp.push
-				if _cp.depth > _cpass_depth:
-					_cpass_depth = _cp.depth
-					_cpass_deepest_push = _cp.push
-				# Track deepest individual arm across ALL passes (for V-junction tangent)
-				if _cp.depth > _curve_deepest_arm_depth:
-					_curve_deepest_arm_depth = _cp.depth
-					_curve_deepest_arm_normal = _cp.normal
-				_curve_hit = true
-			# Detect push cancellation: if sum < 50% of max depth, pushes oppose.
-			# ADAPTIVE BISECTOR: compute escape direction from actual arm normals
-			# at the player's current position (not a flat pre-computed plane).
-			var _cpass_mag: float = _cpass_push.length()
-			if _cpushes.size() >= 2 and _cpass_mag < _cpass_depth * 0.5 and _cpass_depth > 0.5:
-				_curve_had_cancellation = true  # Pushes actually opposed — real V
-				# Direction: normalized sum of push normals = local bisector
-				var _bisector: Vector2 = Vector2.ZERO
-				for _cp2 in _cpushes:
-					_bisector += _cp2.normal
-				var _bisector_len: float = _bisector.length()
-				if _bisector_len >= 0.1:
-					_bisector = _bisector / _bisector_len
-				else:
-					# Full cancellation: normals perfectly opposing.
-					# Fallback: push from midpoint of closest centerline points toward player.
-					var _mid: Vector2 = Vector2.ZERO
-					for _cp2 in _cpushes:
-						_mid += _cp2.closest_pt
-					_mid /= _cpushes.size()
-					var _to_pl: Vector2 = Vector2(x + 8.0, y + 8.0) - _mid
-					if _to_pl.length() >= 0.5:
-						_bisector = _to_pl.normalized()
-					else:
-						# Ultimate fallback: push from nearest pinch toward player
-						var _best_wp_dist: float = 99999.0
-						var _best_wp_pinch: Vector2 = Vector2.ZERO
-						for _wp3 in WorldManager.wedge_pairs:
-							var _d3: float = Vector2(x + 8.0, y + 8.0).distance_to(_wp3.pinch_point)
-							if _d3 < _best_wp_dist:
-								_best_wp_dist = _d3
-								_best_wp_pinch = _wp3.pinch_point
-						if _best_wp_dist < 100.0:
-							var _tp2: Vector2 = Vector2(x + 8.0, y + 8.0) - _best_wp_pinch
-							if _tp2.length() >= 0.5:
-								_bisector = _tp2.normalized()
-							else:
-								var _gfb: Vector2 = Vector2(mox, moy)
-								_bisector = -_gfb.normalized() if _gfb.length() > 0.01 else Vector2(0, -1)
-						else:
-							var _gfb: Vector2 = Vector2(mox, moy)
-							_bisector = -_gfb.normalized() if _gfb.length() > 0.01 else Vector2(0, -1)
-				# Magnitude: push along bisector enough to clear ALL arms simultaneously.
-				# For each arm: needed = depth / cos(angle between bisector and arm normal).
-				var _needed_mag: float = 0.0
-				for _cp2 in _cpushes:
-					var _cos_a: float = _bisector.dot(_cp2.normal)
-					if _cos_a > 0.1:
-						_needed_mag = maxf(_needed_mag, _cp2.depth / _cos_a)
-					else:
-						# Bisector nearly perpendicular to arm normal (very acute V)
-						_needed_mag = maxf(_needed_mag, _cp2.depth * 3.0)
-				_needed_mag = minf(_needed_mag, _cpass_depth * 4.0)
-				_cpass_push = _bisector * _needed_mag
-			else:
-				# Normal case (no cancellation): clamp sum to 2x deepest depth
-				_cpass_mag = _cpass_push.length()
-				if _cpass_mag > _cpass_depth * 2.0 and _cpass_mag > 0.01:
-					_cpass_push = _cpass_push * (_cpass_depth * 2.0 / _cpass_mag)
-			if _cpass_depth > 0.01:
-				if valley_jump:
-					_cpass_push.x = 0
-				x += _cpass_push.x
-				y += _cpass_push.y
-				if _cpass_depth > _curve_best_depth:
-					_curve_best_depth = _cpass_depth
-					_curve_best_push = _cpass_push
-				# Early exit for ceiling V (push not against gravity)
-				if _curve_rots.size() >= 2:
-					var _cgcheck: Vector2 = Vector2(mox, moy)
-					if _cgcheck.length() < 0.01: _cgcheck = Vector2(0, 1)
-					if -_cpass_push.normalized().dot(_cgcheck.normalized()) <= 0:
-						break
-			else:
-				break
-		if _curve_hit and _curve_best_depth > 0.01:
-			_fb_hit = true
-			# Grid tile safety: undo push if it landed inside a tile
-			if _collides_px(x, y):
-				x -= _curve_best_push.x
-				y -= _curve_best_push.y
-				if not _collides_px(x + _curve_best_push.x, y):
-					x += _curve_best_push.x
-				elif not _collides_px(x, y + _curve_best_push.y):
-					y += _curve_best_push.y
-			# For tangent projection at V-junctions: use the deepest individual arm's
-			# normal, not the bisector. The bisector is correct for POSITION (pushing
-			# out of the V), but the arm normal is correct for SPEED (preserving
-			# momentum along the arm surface, enabling oscillation like free blocks).
-			var _cn: Vector2
-			if _curve_polys.size() >= 2 and _curve_deepest_arm_normal.length() > 0.01:
-				_cn = _curve_deepest_arm_normal
-			else:
-				_cn = _curve_best_push.normalized() if _curve_best_push.length() > 0.01 else Vector2(0, -1)
-			var _cgrav_dir: Vector2 = Vector2(mox, moy)
-			if _cgrav_dir.length() < 0.01:
-				_cgrav_dir = Vector2(0, 1)
-			else:
-				_cgrav_dir = _cgrav_dir.normalized()
-			var _cagainst_grav: float = -_cn.dot(_cgrav_dir)
-			# Tangent speed projection (mirrors free block section 7.6 exactly)
-			# _step_position() may have zeroed speed on one axis due to a grid tile hit.
-			# If the curve push-out moved us to a valid position (not in a tile), use
-			# pre-step speed for tangent projection — the tile hit was transient, the
-			# curve is the actual surface, and momentum should be preserved along it.
-			var _cspd_for_proj: Vector2 = Vector2(_speedX, _speedY)
-			if not _collides_px(x, y) and not _fb_hit_from_blocks:
-				var _pre_step_spd_vec: Vector2 = Vector2(_pre_step_sX, _pre_step_sY)
-				if _pre_step_spd_vec.length() > _cspd_for_proj.length() + 0.5:
-					_cspd_for_proj = _pre_step_spd_vec
-			if not valley_jump:
-				if _cagainst_grav < 0.35:
-					# Wall/steep: zero speed component going into surface
-					var _cinto: float = _cspd_for_proj.dot(_cn)
-					if _cinto < 0:
-						_speedX = _cspd_for_proj.x - _cn.x * _cinto
-						_speedY = _cspd_for_proj.y - _cn.y * _cinto
-					else:
-						_speedX = _cspd_for_proj.x
-						_speedY = _cspd_for_proj.y
-				else:
-					# Floor/slope: tangent projection with junction speed preservation
-					var _ctangent: Vector2 = Vector2(-_cn.y, _cn.x)
-					if _ctangent.x < 0:
-						_ctangent = -_ctangent
-					var _cspd: Vector2 = _cspd_for_proj
-					var _cspd_mag: float = _cspd.length()
-					var _cprev_n_dot: float = _prev_poly_normal.dot(_cn) if _prev_poly_normal.length() > 0.1 else 0.0
-					var _ctangent_speed: float = _cspd.dot(_ctangent)
-					var _cgrav_half: Vector2 = Vector2(mox, moy) * _get_grav_mult() / MULT * 0.5
-					_ctangent_speed += _cgrav_half.dot(_ctangent)
-					var _cnew_spd: Vector2 = _ctangent * _ctangent_speed
-					var _cfalling_v: bool = _curve_rots.size() >= 2 and absf(_pre_tick_speedY) > absf(_pre_tick_speedX) * 1.5
-					var _chas_horiz: bool = absf(_pre_tick_speedX) > absf(_pre_tick_speedY) * 0.5
-					var _cat_junction: bool = _cprev_n_dot < 0.95
-					if _cspd_mag > 1.0 and _cnew_spd.length() < _cspd_mag * 0.2 and not _cfalling_v and _cat_junction and (_was_on_rotated or _chas_horiz):
-						var _cdir: float = sign(_pre_tick_speedX)
-						if _cdir == 0: _cdir = 1.0
-						_speedX = _ctangent.x * _cspd_mag * _cdir
-						_speedY = _ctangent.y * _cspd_mag * _cdir
-					else:
-						_speedX = _cnew_spd.x
-						_speedY = _cnew_spd.y
-			# Grounding from curves
-			if _cagainst_grav >= 0.05:
-				on_rotated_block = true
-				_surface_normal = _cn
-			var _con_tile: bool = _check_grounded() and _pre_tick_grav_speed >= 0
-			if _cagainst_grav > 0.35 and not _con_tile:  # ~70° from horizontal max
-				is_grounded = true
-				if _cagainst_grav > 0.45:  # Non-steep: instant re-jump + coyote time
-					_jump_cooldown = 0
-					_coyote_ticks = 4
-		# Valley detection for curves: 2+ different 40-degree rotation bins = V-junction.
-		# Only for floor and horizontal V's — NOT ceiling V's (where gravity pulls player out).
-		if _curve_hit and _curve_rots.size() >= 2 and not _cv_on_tile:
-			var _cgd: Vector2 = Vector2(mox, moy)
-			if _cgd.length() < 0.01: _cgd = Vector2(0, 1)
-			var _cbp_against: float = -_curve_best_push.normalized().dot(_cgd.normalized())
-			if _cbp_against > -0.3:  # Floor V (>0), horizontal V (~0) = valley. Ceiling V (<-0.3) = fall out.
-				in_valley = true
-				is_grounded = true
-				_fb_hit = true
-		# Valley speed zeroing and forced valley_jump after sustained in_valley.
-		# When in_valley persists for 5+ ticks, trigger valley_jump which suppresses
-		# input (line ~176). Without input adding speed, the player settles and wedges.
-		if _curve_hit and in_valley:
-			_valley_ticks += 1
-			if absf(_speedX) < 0.5 and absf(_speedY) < 0.5:
-				_speedX = 0
-			if _valley_ticks >= 15 and not valley_jump:
-				valley_jump = true
-				_valley_center = Vector2(x, y)
-				_pos_history = [x, x, x, x]
-		elif _curve_hit:
-			_valley_ticks = 0
-		# Track curve push normal for next-tick junction detection
-		if _curve_hit and _curve_best_push.length() > 0.01:
-			_prev_poly_normal = _curve_best_push.normalized()
-		elif not _fb_hit:
-			_prev_poly_normal = Vector2.ZERO
+	# 7.65 Curve collision - final constraint pass + contact flags.
+	# Line/free-block collisions above may have moved the player; re-enforce
+	# the curve capsule constraint, clip velocity, and derive grounding /
+	# valley / wedge state from the actual contact set (see curve_solver.gd).
+	CurveSolver.finalize(self)
 
-	# (Section 7.66 removed: flat bisector plane constraint replaced by adaptive
-	# bisector in section 7.65. The flat plane couldn't follow curved arms —
-	# players slid past it by holding a key along one arm. The adaptive bisector
-	# computes escape direction from actual arm normals at each position.)
 
-	# When wedged, undo any push-out drift and re-lock to the wedge position.
-	# Both free block and curve push-outs can move the player while wedged
-	# (overlap detection still fires at zero speed), causing visual jitter.
-	if is_wedged:
-		x = _wedge_safe_pos.x
-		y = _wedge_safe_pos.y
-		_speedX = 0
-		_speedY = 0
-
-	# Wedge at V junction: in_valley (2+ curve rotations) with low speed = settled.
-	# Skip wedging if gravity would pull player out (ceiling V / X-crossing):
-	# test by temporarily adding gravity and checking if push-out still holds.
-	if not is_wedged and not valley_jump and _wedge_escape_cooldown == 0 and in_valley:
-		var _total_spd: float = absf(_speedX) + absf(_speedY)
-		if _total_spd < 1.5:
-			# Would gravity pull us out? Check if a position slightly toward gravity
-			# is still within curve collision range (both arms still push).
-			var _grav_test: Vector2 = Vector2(mox, moy).normalized() if Vector2(mox, moy).length() > 0.01 else Vector2(0, 1)
-			var _test_pushes: Array = WorldManager.get_curve_push_data(x + 8.0 + _grav_test.x * 4.0, y + 8.0 + _grav_test.y * 4.0)
-			var _test_rots: Dictionary = {}
-			for _tp in _test_pushes:
-				var _ta: float = rad_to_deg(atan2(_tp.normal.y, _tp.normal.x))
-				var _trk: int = (int(round(_ta / 40.0)) * 40) % 180
-				if _trk < 0: _trk += 180
-				_test_rots[_trk] = true
-			if _test_rots.size() >= 2:
-				# Both arms still push 4px toward gravity = real V, wedge it
-				is_wedged = true
-				valley_jump = false
-				_valley_center = Vector2(-1, -1)
-				_speedX = 0
-				_speedY = 0
-				is_grounded = true
-				_wedge_safe_pos = Vector2(x, y)
-			# else: gravity would pull us out of the V — don't wedge, let player fall
+	# Treat solid grid tile under the player as an axis-aligned free-block floor:
+	# makes border + curve transitions behave the same as free-block + curve transitions.
+	# Only applies when no free-block/curve push already set on_rotated_block this tick.
+	if not on_rotated_block and _check_grounded():
+		on_rotated_block = true
+		_fb_hit = true
+		var _gg: Vector2 = Vector2(mox, moy)
+		if _gg.length() < 0.01: _gg = Vector2(0, 1)
+		_surface_normal = -_gg.normalized()
 
 	# Fast V-shape detection: push normal X flips + low speed = settling into valley
 	# Only for FLOOR V's (normal points against gravity), not ceiling V's
@@ -904,12 +520,12 @@ func tick(input_h: int, input_v: int, space_just: bool, space_held: bool) -> voi
 	else:
 		_stuck_ticks = 0
 
-	# Coyote time: count down when not grounded on rotated block
-	if on_rotated_block and is_grounded:
+	# Coyote time: applies to ANY grounded state (grid tiles + free blocks alike)
+	# so border-floor feel matches free-block-floor feel.
+	if is_grounded:
 		_coyote_ticks = 4
 	elif _coyote_ticks > 0:
 		_coyote_ticks -= 1
-		# Allow grounded state for a few ticks after leaving rotated block surface
 		if _jump_cooldown == 0:
 			is_grounded = true
 
@@ -937,16 +553,10 @@ func tick(input_h: int, input_v: int, space_just: bool, space_held: bool) -> voi
 
 	_was_on_rotated = on_rotated_block
 
-	# 9. Jump — if wedged, allow straight up jump
-	if is_wedged and space_just:
-		is_grounded = true
-		_surface_normal = Vector2(0, -1)
-		jumpCount = 0
+	# 9. Jump
 	_handle_jump(space_just, space_held)
 
-	# 10. (Curve collision is now in section 7.65 — iterative push-out + tangent projection)
-
-	debug_text = "pos=(%.1f,%.1f) spd=(%.2f,%.2f) grnd=%s val=%s vj=%s" % [x, y, _speedX, _speedY, is_grounded, in_valley, valley_jump]
+	debug_text = "pos=(%.1f,%.1f) spd=(%.2f,%.2f) grnd=%s val=%s wdg=%s vj=%s" % [x, y, _speedX, _speedY, is_grounded, in_valley, is_wedged, valley_jump]
 
 func _arrow_dir_to_vec(dir: int) -> Vector2:
 	match dir:
@@ -1078,212 +688,17 @@ func _handle_jump(space_just: bool, space_held: bool) -> void:
 			did_jump = true
 
 	if did_jump:
-		_stick_curve = -1
 		on_rotated_block = false
 		if mod < 0:
 			lastJumpMs = -_now_ms
 		else:
 			lastJumpMs = _now_ms
 
-func _dist_to_seg(cx: float, cy: float, sa: Vector2, sb: Vector2) -> float:
-	var ab: Vector2 = sb - sa
-	var ap: Vector2 = Vector2(cx, cy) - sa
-	var ab_dot: float = ab.dot(ab)
-	var t: float = clampf(ap.dot(ab) / maxf(ab_dot, 0.001), 0.0, 1.0)
-	var on_pt: Vector2 = sa + ab * t
-	return Vector2(cx, cy).distance_to(on_pt)
-
-# ── Swept AABB curve collision functions ──────────────────────────────────────
-
-func _swept_aabb_vs_line_seg(center: Vector2, half_size: Vector2, delta: Vector2, seg_a: Vector2, seg_b: Vector2, outward_normal: Vector2) -> Dictionary:
-	## Swept AABB vs line segment with correct support point and sign conventions.
-	var no_hit: Dictionary = {"hit": false, "t": 1.0, "normal": Vector2.ZERO, "start_pen": false, "pen": 0.0}
-	var seg: Vector2 = seg_b - seg_a
-	var seg_len: float = seg.length()
-	if seg_len <= 0.00001:
-		return no_hit
-	var tangent: Vector2 = seg / seg_len
-	var n: Vector2 = outward_normal.normalized()
-	# Support point: AABB corner farthest opposite the face normal (touches first)
-	var support_offset: Vector2 = Vector2.ZERO
-	if n.x > 0.0:
-		support_offset.x = -half_size.x
-	elif n.x < 0.0:
-		support_offset.x = half_size.x
-	if n.y > 0.0:
-		support_offset.y = -half_size.y
-	elif n.y < 0.0:
-		support_offset.y = half_size.y
-	var support0: Vector2 = center + support_offset
-	# Signed face distance: >0 separated, =0 touching, <0 penetrating
-	var dist: float = n.dot(support0 - seg_a)
-	# Motion relative to face: <0 moving into face, >0 moving away
-	var approach: float = n.dot(delta)
-	var touch_eps: float = 0.01
-	var pen_eps: float = 2.0  # Only depenetrate when >2px past (not surface riding drift)
-	# Deep penetration: push back out
-	if dist < -pen_eps:
-		return {"hit": true, "t": 0.0, "normal": n, "start_pen": true, "pen": -dist}
-	# Small penetration (surface riding drift): ignore
-	if dist < -touch_eps and dist >= -pen_eps:
-		return no_hit
-	var t_hit: float = 0.0
-	if dist <= touch_eps:
-		if approach >= -touch_eps:
-			return no_hit
-		t_hit = 0.0
-	else:
-		if approach >= -touch_eps:
-			return no_hit
-		t_hit = dist / -approach
-		if t_hit < 0.0 or t_hit > 1.0:
-			return no_hit
-	# Finite-segment check: project box center onto tangent at hit time
-	var center_at_hit: Vector2 = center + delta * t_hit
-	var center_u: float = tangent.dot(center_at_hit - seg_a)
-	var box_tangent_radius: float = absf(tangent.x) * half_size.x + absf(tangent.y) * half_size.y
-	if center_u + box_tangent_radius < -touch_eps:
-		return no_hit
-	if center_u - box_tangent_radius > seg_len + touch_eps:
-		return no_hit
-	return {"hit": true, "t": maxf(t_hit, 0.0), "normal": n, "start_pen": false, "pen": 0.0}
-
-func _swept_aabb_vs_quad(center: Vector2, half_size: Vector2, delta: Vector2, quad_verts: Array, edge_normals: Array, external: Array) -> Dictionary:
-	## Swept AABB vs convex quad using Separating Axis Theorem (SAT).
-	## Tests AABB axes (right, up) + external quad edge normals.
-	## Returns {hit: bool, t: float, normal: Vector2}
-	var result: Dictionary = {"hit": false, "t": 1.0, "normal": Vector2.ZERO}
-	# Collect separation axes: AABB axes + external quad edge normals
-	var axes: Array = [Vector2(1, 0), Vector2(0, 1)]
-	for ei in range(4):
-		if external[ei]:
-			var n: Vector2 = edge_normals[ei]
-			# Skip degenerate normals
-			if n.length_squared() < 0.0001:
-				continue
-			# Don't duplicate axes too close to existing ones
-			var dup: bool = false
-			for existing in axes:
-				if absf(n.dot(existing)) > 0.999:
-					dup = true
-					break
-			if not dup:
-				axes.append(n)
-	# Swept SAT: find the latest entry and earliest exit across all axes
-	var t_enter: float = -99999.0
-	var t_exit: float = 99999.0
-	var best_axis: Vector2 = Vector2.ZERO
-	for axis in axes:
-		# Project AABB onto axis
-		var aabb_half_proj: float = absf(axis.x) * half_size.x + absf(axis.y) * half_size.y
-		var aabb_center_proj: float = center.dot(axis)
-		# Project quad onto axis
-		var q_min: float = 99999.0
-		var q_max: float = -99999.0
-		for vi in range(4):
-			var p: float = quad_verts[vi].dot(axis)
-			if p < q_min:
-				q_min = p
-			if p > q_max:
-				q_max = p
-		# AABB interval: [aabb_center_proj - aabb_half_proj, aabb_center_proj + aabb_half_proj]
-		# Quad interval: [q_min, q_max]
-		var a_min: float = aabb_center_proj - aabb_half_proj
-		var a_max: float = aabb_center_proj + aabb_half_proj
-		# Sweep: project delta onto axis
-		var vel_proj: float = delta.dot(axis)
-		if absf(vel_proj) < 0.00001:
-			# Static on this axis: check overlap
-			if a_max < q_min or a_min > q_max:
-				return result  # No overlap, no hit possible
-			# Overlapping on this axis, doesn't constrain t
-		else:
-			# Moving: find entry and exit times
-			var inv_vel: float = 1.0 / vel_proj
-			var t0: float = (q_min - a_max) * inv_vel
-			var t1: float = (q_max - a_min) * inv_vel
-			var axis_sign: float = 1.0
-			if t0 > t1:
-				var tmp: float = t0
-				t0 = t1
-				t1 = tmp
-				axis_sign = -1.0
-			if t0 > t_enter:
-				t_enter = t0
-				best_axis = axis * (-axis_sign if vel_proj > 0 else axis_sign)
-			if t1 < t_exit:
-				t_exit = t1
-	# Check if there is a valid intersection
-	if t_enter > t_exit or t_enter >= 1.0 or t_exit <= 0.0:
-		return result
-	if t_enter < 0.0:
-		return result  # Already overlapping — don't treat as hit, let clip resolve
-	# Ensure the hit normal points away from the movement direction
-	if best_axis.dot(delta) > 0:
-		best_axis = -best_axis
-	result.hit = true
-	result.t = t_enter
-	result.normal = best_axis.normalized() if best_axis.length() > 0.001 else Vector2(0, -1)
-	return result
-
-func _find_curve_hits(pos: Vector2, delta: Vector2) -> Array:
-	## Query spatial hash for render edge segments, sweep test each, return sorted hits.
-	var hits: Array = []
-	var half_size: Vector2 = Vector2(8.0, 8.0)
-	var center: Vector2 = pos + half_size  # Player center
-	var cs: int = WorldManager._curve_collider_cell
-	var hash_data: Dictionary = WorldManager._curve_collider_hash
-	if hash_data.is_empty():
-		return hits
-	# Compute swept AABB bounds for spatial hash query
-	var sweep_min: Vector2 = Vector2(minf(center.x, center.x + delta.x) - half_size.x - 2, minf(center.y, center.y + delta.y) - half_size.y - 2)
-	var sweep_max: Vector2 = Vector2(maxf(center.x, center.x + delta.x) + half_size.x + 2, maxf(center.y, center.y + delta.y) + half_size.y + 2)
-	var gx0: int = int(floor(sweep_min.x / cs))
-	var gy0: int = int(floor(sweep_min.y / cs))
-	var gx1: int = int(floor(sweep_max.x / cs))
-	var gy1: int = int(floor(sweep_max.y / cs))
-	var checked: Dictionary = {}
-	for gx in range(gx0, gx1 + 1):
-		for gy in range(gy0, gy1 + 1):
-			var key: int = gx * 100000 + gy
-			if not hash_data.has(key):
-				continue
-			for seg in hash_data[key]:
-				var seg_id: int = int(seg.a.x * 10000 + seg.a.y * 100 + seg.b.x * 10 + seg.b.y)
-				if checked.has(seg_id):
-					continue
-				checked[seg_id] = true
-				# Quick distance check: skip segments whose midpoint is far from swept path
-				var seg_mid: Vector2 = (seg.a + seg.b) * 0.5
-				var sweep_center: Vector2 = center + delta * 0.5
-				if seg_mid.distance_to(sweep_center) > 60.0:
-					continue
-				var r: Dictionary = _swept_aabb_vs_line_seg(center, half_size, delta, seg.a, seg.b, seg.normal)
-				if r.hit:
-					hits.append({"t": r.t, "normal": r.normal, "seg": seg})
-	hits.sort_custom(func(a: Dictionary, b: Dictionary) -> bool: return a.t < b.t)
-	return hits
-
-func _clip_velocity_vec(vel: Vector2, contact_normals: Array) -> Vector2:
-	## Remove velocity components going into contact normals. Two passes for stability.
-	var clipped: Vector2 = vel
-	for _pass in range(2):
-		for n in contact_normals:
-			var into: float = clipped.dot(n)
-			if into < 0:
-				clipped -= n * into
-	return clipped
-
-func _has_similar_normal(normals: Array, n: Vector2) -> bool:
-	## Check if any existing normal is very similar to n (dot > 0.95)
-	for existing in normals:
-		if existing.dot(n) > 0.95:
-			return true
-	return false
-
-func _step_position() -> void:
-	var currentSX: float = _speedX
-	var currentSY: float = _speedY
+func _step_position(frac: float = 1.0) -> void:
+	## Moves by _speedX/_speedY scaled by frac (CurveSolver substeps the tick
+	## near curves). frac=1.0 is the plain full EE step.
+	var currentSX: float = _speedX * frac
+	var currentSY: float = _speedY * frac
 	var rx: float = fmod(x, 1.0)
 	if rx < 0: rx += 1.0
 	var ry: float = fmod(y, 1.0)
@@ -1291,18 +706,9 @@ func _step_position() -> void:
 	var donex: bool = false
 	var doney: bool = false
 	var ox: float; var oy: float; var osx: float; var osy: float
-	# Collect axis-aligned free block centers for anti-tunnel X checks.
-	# Only blocks with 0/90/180/270 rotation (rectangle-aligned).
-	var _aa_fb: Array = []
-	if not is_god_mode:
-		for fb in WorldManager.free_blocks:
-			if not GameState.is_solid(fb.id): continue
-			if fb.get("curve_visual", false): continue
-			var rot_mod: int = int(round(fb.rotation)) % 360
-			if rot_mod < 0: rot_mod += 360
-			if rot_mod != 0 and rot_mod != 90 and rot_mod != 180 and rot_mod != 270:
-				continue
-			_aa_fb.append(Vector2(fb.pos.x + 8.0, fb.pos.y + 8.0))
+	# Axis-aligned free block centers for anti-tunnel wall checks — cached per
+	# tick by _refresh_aa_fb_cache() since substepping calls this repeatedly.
+	var _aa_fb: Array = _aa_fb_cache
 
 
 	var guard: int = 0
@@ -1338,7 +744,7 @@ func _step_position() -> void:
 			if _xhit:
 				x = ox; _speedX = 0; currentSX = osx; donex = true
 
-		# Step Y — only grid tiles, free block Y collision handled by SAT
+		# Step Y — grid tiles + axis-aligned free blocks (prevents Y-axis tunneling)
 		if currentSY != 0 and not doney:
 			if currentSY > 0:
 				if currentSY + ry >= 1:
@@ -1352,46 +758,44 @@ func _step_position() -> void:
 					y += currentSY; currentSY = 0
 			ry = fmod(y, 1.0)
 			if ry < 0: ry += 1.0
-			if _collides_px(x, y):
+			var _yhit: bool = _collides_px(x, y)
+			if not _yhit:
+				# Mirror of X wall check: axis-aligned free blocks as walls.
+				var _syx: float = x + 8.0
+				var _syy: float = y + 8.0
+				for _byc in _aa_fb:
+					if absf(_syx - _byc.x) < 15.0 and absf(_syy - _byc.y) < 16.0:
+						_yhit = true
+						break
+			if _yhit:
 				y = oy; _speedY = 0; currentSY = osy; doney = true
 
 
 
-func _collides_curve_blocks(px: float, py: float) -> bool:
+func _refresh_aa_fb_cache() -> void:
+	## Collect axis-aligned (0/90/180/270) solid free block centers once per tick.
+	_aa_fb_cache.clear()
 	if is_god_mode:
-		return false
-	var cx: float = px + 8.0
-	var cy: float = py + 8.0
+		return
 	for fb in WorldManager.free_blocks:
-		if not fb.get("curve_collision", false):
+		if not GameState.is_solid(fb.id): continue
+		if fb.get("curve_visual", false): continue
+		var rot_mod: int = int(round(fb.rotation)) % 360
+		if rot_mod < 0: rot_mod += 360
+		if rot_mod != 0 and rot_mod != 90 and rot_mod != 180 and rot_mod != 270:
 			continue
-		if not GameState.is_solid(fb.id):
-			continue
-		var bcx: float = fb.pos.x + 8.0
-		var bcy: float = fb.pos.y + 8.0
-		var dx2: float = cx - bcx
-		var dy2: float = cy - bcy
-		# Quick AABB check first
-		if absf(dx2) > 20.0 or absf(dy2) > 20.0:
-			continue
-		var rot: float = deg_to_rad(fb.rotation)
-		var cos_r: float = cos(-rot)
-		var sin_r: float = sin(-rot)
-		var lx: float = dx2 * cos_r - dy2 * sin_r
-		var ly: float = dx2 * sin_r + dy2 * cos_r
-		if absf(lx) < 16.0 and absf(ly) < 16.0:
-			return true
-	return false
+		_aa_fb_cache.append(Vector2(fb.pos.x + 8.0, fb.pos.y + 8.0))
 
 func _collides_px(px: float, py: float) -> bool:
 	if is_god_mode:
 		return false
 	if not _collides_fn.is_valid():
 		return false
-	var l: int = int(floor(px)) / 16
-	var t: int = int(floor(py)) / 16
-	var r: int = int(floor(px + 15)) / 16
-	var b: int = int(floor(py + 15)) / 16
+	# AABB spans [px, px+16) — use 15.999 to avoid missing rightmost cell when px has a fraction
+	var l: int = int(floor(px / 16.0))
+	var t: int = int(floor(py / 16.0))
+	var r: int = int(floor((px + 15.999) / 16.0))
+	var b: int = int(floor((py + 15.999) / 16.0))
 	for cy in range(t, b + 1):
 		for cx in range(l, r + 1):
 			if _collides_fn.call(cx, cy):
@@ -1549,11 +953,27 @@ func _check_grounded() -> bool:
 		var _dd: int = GameState.get_arrow_gravity(_delayed_action_id)
 		if _dd >= 0:
 			gdir = _dd
+	var _gx: float = x
+	var _gy: float = y
 	match gdir:
-		0: return _collides_px(x, y + 1)       # Down: solid 1px below
-		1: return _collides_px(x - 1, y)       # Left: solid 1px to the left
-		2: return _collides_px(x, y - 1)       # Up: solid 1px above
-		3: return _collides_px(x + 1, y)       # Right: solid 1px to the right
+		0: _gy = y + 1       # Down: 1px below
+		1: _gx = x - 1       # Left: 1px to the left
+		2: _gy = y - 1       # Up: 1px above
+		3: _gx = x + 1       # Right: 1px to the right
+	if _collides_px(_gx, _gy):
+		return true
+	# Also check axis-aligned free blocks
+	var _gcx: float = _gx + 8.0
+	var _gcy: float = _gy + 8.0
+	for fb in WorldManager.free_blocks:
+		if not GameState.is_solid(fb.id): continue
+		if fb.get("curve_visual", false): continue
+		var rot_mod: int = int(round(fb.rotation)) % 360
+		if rot_mod < 0: rot_mod += 360
+		if rot_mod != 0 and rot_mod != 90 and rot_mod != 180 and rot_mod != 270:
+			continue
+		if absf(_gcx - fb.pos.x - 8.0) < 16.0 and absf(_gcy - fb.pos.y - 8.0) < 16.0:
+			return true
 	return false
 
 func get_overlapping_tiles() -> Array[Vector2i]:
