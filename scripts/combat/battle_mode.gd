@@ -42,7 +42,10 @@ func _ready() -> void:
 
 
 func _wire_up() -> void:
-	BattleMap.add_weapon_pads(weapons)
+	if GameState.battle_guns_enabled:
+		BattleMap.add_weapon_pads(weapons)
+	# Guns OFF: no pads and no super cycle (super_pos stays ZERO) — the duel
+	# is pure dash punches and parry shields.
 	bot.weapon_system = weapons
 	bot.get_player_center = func() -> Vector2: return Vector2(player.physics.x + 8.0, player.physics.y + 8.0)
 	bot.get_player_vel = func() -> Vector2: return Vector2(player.physics._speedX, player.physics._speedY) * EEPhysics.EE_TICK_FRAC * EEPhysics.TPS
@@ -52,11 +55,13 @@ func _wire_up() -> void:
 		func() -> Vector2: return Vector2(player.physics.x + 8.0, player.physics.y + 8.0),
 		func() -> Vector2: return Vector2(player.physics._speedX, player.physics._speedY) * EEPhysics.EE_TICK_FRAC * EEPhysics.TPS,
 		func() -> bool: return is_instance_valid(player) and not player._is_dead and _player_invuln <= 0.0,
-		_hurt_player)
+		_hurt_player,
+		func() -> int: return player_hp, MAX_HP)
 	weapons.register_actor("bot", 1,
 		bot.get_center, bot.get_vel_pxs,
 		func() -> bool: return not bot.dead and _bot_invuln <= 0.0,
-		_hurt_bot)
+		_hurt_bot,
+		func() -> int: return bot_hp, MAX_HP)
 	if player.has_signal("died"):
 		player.died.connect(_on_player_died)
 
@@ -231,9 +236,21 @@ func _process(delta: float) -> void:
 		var pc2: Vector2 = Vector2(player.physics.x + 8.0, player.physics.y + 8.0)
 		var aim: Vector2 = weapons.get_global_mouse_position() - pc2
 		weapons.set_aim("player", aim)
+		var unarmed: bool = weapons.get_weapon("player") == ""
+		# RMB: parry shield (unarmed kit)
+		weapons.set_shield("player", unarmed and Input.is_mouse_button_pressed(MOUSE_BUTTON_RIGHT) and not GameState.is_edit_mode)
 		if Input.is_mouse_button_pressed(MOUSE_BUTTON_LEFT) and not GameState.is_edit_mode:
-			if weapons.try_shoot("player"):
+			if unarmed:
+				# LMB: dash punch toward the cursor
+				if weapons.try_dash("player"):
+					var ddir: Vector2 = aim.normalized()
+					player.physics._speedX += ddir.x * 7.0
+					player.physics._speedY += ddir.y * 7.0
+			elif weapons.try_shoot("player"):
 				var kick: float = weapons.get_kick("player")
+				var wn: String = weapons.get_weapon("player")
+				if wn != "" and WeaponSystem.WEAPONS[wn].get("beam", false):
+					kick *= delta * 6.0  # Beams fire every frame — gentle steady pushback
 				var kdir: Vector2 = aim.normalized()
 				player.physics._speedX -= kdir.x * kick
 				player.physics._speedY -= kdir.y * kick
@@ -248,12 +265,19 @@ func _layout_hud() -> void:
 		var hearts_bot: String = "%d" % bot_lives
 		_score_label.text = "YOU  %s ♥ %s  BOT" % [hearts_you, hearts_bot]
 		var wname: String = weapons.get_weapon("player")
+		var wtext: String
 		if wname != "":
-			_weapon_label.text = WeaponSystem.WEAPONS[wname].label + "  |  HP %d/%d" % [player_hp, MAX_HP]
+			wtext = WeaponSystem.WEAPONS[wname].label
+			if weapons._actors["player"].weapon_left > 0.0:
+				wtext += " %.1fs" % weapons._actors["player"].weapon_left
 			_weapon_label.add_theme_color_override("font_color", weapons.get_weapon_color("player"))
 		else:
-			_weapon_label.text = "UNARMED — grab a weapon pad!  |  HP %d/%d" % [player_hp, MAX_HP]
+			wtext = "FISTS — LMB dash punch, RMB parry shield" if not GameState.battle_guns_enabled else "UNARMED — LMB dash punch, RMB parry shield"
 			_weapon_label.add_theme_color_override("font_color", Color(0.7, 0.7, 0.8))
+		if GameState.battle_guns_enabled:
+			_weapon_label.text = "%s  |  HP %d/%d  |  %s" % [wtext, player_hp, MAX_HP, weapons.get_super_status()]
+		else:
+			_weapon_label.text = "%s  |  HP %d/%d" % [wtext, player_hp, MAX_HP]
 		top.position = Vector2(vps.x / 2.0 - top.size.x / 2.0, 8)
 	if _fight_label.visible:
 		_fight_label.position = Vector2(vps.x / 2.0 - _fight_label.size.x / 2.0, vps.y * 0.32)

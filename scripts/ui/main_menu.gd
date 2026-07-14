@@ -31,6 +31,16 @@ func _ready() -> void:
 	battle_btn.pressed.connect(_on_battle)
 	$VBox.add_child(battle_btn)
 	$VBox.move_child(battle_btn, quit_btn.get_index())
+	# Guns toggle: OFF = pure hand-to-hand (dash punch + parry shield)
+	var guns_btn: Button = Button.new()
+	guns_btn.text = "Guns: ON"
+	guns_btn.tooltip_text = "Toggle weapons in 1v1 Bot — OFF is a pure dash & parry duel"
+	guns_btn.pressed.connect(func():
+		GameState.battle_guns_enabled = not GameState.battle_guns_enabled
+		guns_btn.text = "Guns: ON" if GameState.battle_guns_enabled else "Guns: OFF (fists!)"
+	)
+	$VBox.add_child(guns_btn)
+	$VBox.move_child(guns_btn, quit_btn.get_index())
 
 func _on_battle() -> void:
 	_apply_settings()

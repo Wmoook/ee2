@@ -28,6 +28,7 @@ var _jump_queued: bool = false
 var _strafe_dir: int = 1
 var _strafe_timer: float = 0.0
 var _shoot_timer: float = 0.0
+var _shield_want: bool = false
 
 
 func _ready() -> void:
@@ -128,15 +129,25 @@ func _process(delta: float) -> void:
 	# Crimson speed trail via the weapon system's FX pool
 	if weapon_system and Vector2(physics._speedX, physics._speedY).length() > 4.0 and randf() < delta * 90.0:
 		weapon_system.spawn_trail_dot(get_center() - get_vel_pxs().normalized() * 7.0, -get_vel_pxs() * 0.12, Color(1.0, 0.3, 0.2))
-	# Combat: aim + shoot
+	# Combat: aim + shoot / melee
 	if weapon_system and not is_player_alive.is_null() and is_player_alive.call():
+		weapon_system.set_shield("bot", _shield_want)
 		var aim: Vector2 = _combat_aim()
 		if aim != Vector2.ZERO:
 			weapon_system.set_aim("bot", aim)
-			if _shoot_timer <= 0.0 and weapon_system.get_weapon("bot") != "" and _has_los(get_player_center.call()):
+			var wname: String = weapon_system.get_weapon("bot")
+			var is_beam: bool = wname != "" and WeaponSystem.WEAPONS[wname].get("beam", false)
+			if wname == "":
+				# Unarmed: dash-punch when in range (aims at the player)
+				var pdist: float = get_center().distance_to(get_player_center.call())
+				if pdist < 130.0 and _has_los(get_player_center.call()) and weapon_system.try_dash("bot"):
+					physics._speedX += aim.x * 7.0
+					physics._speedY += aim.y * 7.0
+			elif (is_beam or _shoot_timer <= 0.0) and _has_los(get_player_center.call()):
 				if weapon_system.try_shoot("bot"):
-					apply_knockback(-aim, weapon_system.get_kick("bot"))
-					_shoot_timer = randf_range(0.05, 0.22)  # Hard: fast follow-ups
+					apply_knockback(-aim, weapon_system.get_kick("bot") * (0.1 if is_beam else 1.0))
+					if not is_beam:
+						_shoot_timer = randf_range(0.05, 0.22)  # Hard: fast follow-ups
 
 
 func _combat_aim() -> Vector2:
@@ -173,6 +184,12 @@ func _think() -> void:
 	## ~30Hz decisions: pick a goal position, derive movement inputs.
 	if get_player_center.is_null():
 		return
+	# Stunned (parried): drop all inputs until it wears off
+	if weapon_system and weapon_system.is_stunned("bot"):
+		_in_h = 0
+		_in_jump_held = false
+		_shield_want = false
+		return
 	var my_c: Vector2 = get_center()
 	var player_c: Vector2 = get_player_center.call()
 	var armed: bool = weapon_system != null and weapon_system.get_weapon("bot") != ""
@@ -191,6 +208,20 @@ func _think() -> void:
 				found = true
 		if not found:
 			goal = player_c  # Nothing up — chase anyway
+	# The DOOM RAY outranks everything — sprint for the super pad
+	if weapon_system and weapon_system.is_super_available() and weapon_system.get_weapon("bot") != "doom":
+		goal = weapon_system.super_pos
+	# High goals (the rail pad / lift entrance): climb via a mid platform first
+	if goal.y < my_c.y - 100.0:
+		var best_via: Vector2 = Vector2.ZERO
+		var best_vd: float = 999999.0
+		for v in BattleMap.RAIL_VIA:
+			var vd: float = my_c.distance_to(v)
+			if vd < best_vd:
+				best_vd = vd
+				best_via = v
+		if best_vd > 24.0 and my_c.y > best_via.y - 8.0:
+			goal = best_via  # Not up on the platform yet — climb there first
 	else:
 		# Engage: keep a mid-range band, strafe inside it
 		var dist: float = my_c.distance_to(player_c)
@@ -244,16 +275,42 @@ func _think() -> void:
 			var head_y: int = int(floor(my_c.y / 16.0))
 			if WorldManager.is_solid_at(ahead_x, head_y) or WorldManager.is_solid_at(ahead_x, head_y - 1):
 				want_jump = true
+			# Hop hazards (plasma spikes): probe two distances ahead at foot
+			# level so fast approaches still clear them
+			var speed_px: float = absf(physics._speedX) * physics.EE_TICK_FRAC * physics.TPS
+			var far_x: int = int(floor((my_c.x + _in_h * (34.0 + speed_px * 0.12)) / 16.0))
+			var foot_y: int = int(floor((my_c.y + 6.0) / 16.0))
+			for probe_x in [ahead_x, far_x]:
+				if GameState.is_hazard(WorldManager.get_tile(probe_x, foot_y)) \
+						or GameState.is_hazard(WorldManager.get_tile(probe_x, foot_y + 1)):
+					want_jump = true
+					break
 		if goal.y < my_c.y - 40.0:
 			want_jump = true
 		if armed and not escaping and randf() < 0.05:
 			want_jump = true  # Unpredictable dodge hop
-		# Dodge incoming projectiles (hard: reacts most of the time)
+		# Dodge incoming projectiles (hard: reacts most of the time).
+		# Unarmed, prefer the PARRY over the dodge — shield up instead.
 		if weapon_system and not escaping and randf() < 0.8:
+			var incoming: bool = false
 			for pr in weapon_system._projectiles:
-				if pr.team != 1 and pr.pos.distance_to(my_c) < 110.0 and pr.vel.dot(my_c - pr.pos) > 0.0:
-					want_jump = true
+				if pr.team != 1 and pr.pos.distance_to(my_c) < 130.0 and pr.vel.dot(my_c - pr.pos) > 0.0:
+					incoming = true
 					break
+			if incoming:
+				if armed:
+					want_jump = true
+				else:
+					_shield_want = true
+	# Drop the shield once nothing threatening is inbound
+	if _shield_want and weapon_system:
+		var still_threat: bool = false
+		for pr in weapon_system._projectiles:
+			if pr.team != 1 and pr.pos.distance_to(my_c) < 170.0:
+				still_threat = true
+				break
+		if not still_threat:
+			_shield_want = false
 	if want_jump:
 		_jump_queued = true
 		_in_jump_held = true
