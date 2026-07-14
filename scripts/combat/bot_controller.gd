@@ -30,6 +30,7 @@ var _strafe_timer: float = 0.0
 var _shoot_timer: float = 0.0
 var _shield_want: bool = false
 var _backoff_timer: float = 0.0  # Backing up to build a run-up over spikes
+var _charge_hold: float = 0.0    # Winding up a charged dash
 
 
 func _ready() -> void:
@@ -88,6 +89,13 @@ func apply_knockback(dir: Vector2, power: float) -> void:
 func _process(delta: float) -> void:
 	if dead:
 		return
+	# Rescue: if an external push ever leaves us inside a solid tile, pop out
+	if physics._collides_px(physics.x, physics.y):
+		for off in [Vector2(0, -8), Vector2(0, -16), Vector2(8, 0), Vector2(-8, 0), Vector2(0, 8), Vector2(8, -16), Vector2(-8, -16), Vector2(0, -24)]:
+			if not physics._collides_px(physics.x + off.x, physics.y + off.y):
+				physics.x += off.x
+				physics.y += off.y
+				break
 	_ai_timer -= delta
 	if _ai_timer <= 0.0:
 		_ai_timer = 0.033
@@ -139,11 +147,23 @@ func _process(delta: float) -> void:
 			var wname: String = weapon_system.get_weapon("bot")
 			var is_beam: bool = wname != "" and WeaponSystem.WEAPONS[wname].get("beam", false)
 			if wname == "":
-				# Unarmed: dash-punch when in range (aims at the player)
+				# Unarmed melee: quick dash close up, or wind up a CHARGED
+				# heavy dash from mid range and release it at the player
 				var pdist: float = get_center().distance_to(get_player_center.call())
-				if pdist < 130.0 and _has_los(get_player_center.call()) and weapon_system.try_dash("bot"):
+				if _charge_hold > 0.0:
+					weapon_system.charge_dash("bot", delta)
+					_charge_hold -= delta
+					if _charge_hold <= 0.0 or pdist < 70.0:
+						var res: Dictionary = weapon_system.release_dash("bot")
+						if res.ok:
+							var imp: float = 7.0 + 10.0 * res.power
+							physics._speedX += aim.x * imp
+							physics._speedY += aim.y * imp
+				elif pdist < 130.0 and _has_los(get_player_center.call()) and weapon_system.try_dash("bot"):
 					physics._speedX += aim.x * 7.0
 					physics._speedY += aim.y * 7.0
+				elif pdist > 150.0 and pdist < 340.0 and _has_los(get_player_center.call()) and randf() < delta * 0.5:
+					_charge_hold = randf_range(0.9, 2.6)  # Start winding up
 			elif (is_beam or _shoot_timer <= 0.0) and _has_los(get_player_center.call()):
 				if weapon_system.try_shoot("bot"):
 					apply_knockback(-aim, weapon_system.get_kick("bot") * (0.1 if is_beam else 1.0))
@@ -300,13 +320,17 @@ func _think() -> void:
 				var near_px: float = first_h * 16.0 + (16.0 if _in_h < 0 else 0.0)
 				var far_px: float = last_h * 16.0 + (0.0 if _in_h < 0 else 16.0)
 				var dist_to: float = absf(near_px - my_c.x)
-				var needed: float = absf(far_px - my_c.x) + 22.0
-				var travel: float = maxf(speed_px, 60.0) * 0.62  # Air distance of a full jump
-				if dist_to < 64.0:
-					if travel >= needed:
+				if dist_to < 72.0:
+					# TRAJECTORY PRECOGNITION: ghost-simulate the actual jump
+					# with the real physics engine (ceilings, curves, arrows,
+					# spikes all included). Only jump if the ghost lands alive
+					# PAST the hazard; otherwise back off for a run-up.
+					var sim: Dictionary = _simulate_jump(_in_h, 220)
+					var progressed: bool = (sim.end_x + 8.0 - far_px) * float(_in_h) > 6.0
+					if sim.safe and progressed:
 						want_jump = true
 					else:
-						_backoff_timer = 0.35  # Too slow to clear — take a run-up
+						_backoff_timer = 0.35
 		if goal.y < my_c.y - 40.0:
 			want_jump = true
 		if armed and not escaping and randf() < 0.05:
@@ -361,3 +385,36 @@ func _think() -> void:
 func _hazard_col(tx: int, foot_y: int) -> bool:
 	return GameState.is_hazard(WorldManager.get_tile(tx, foot_y)) \
 		or GameState.is_hazard(WorldManager.get_tile(tx, foot_y + 1))
+
+
+func _simulate_jump(ih: int, max_ticks: int) -> Dictionary:
+	## Ghost-run the REAL physics engine forward from the bot's current state:
+	## jump on tick 1, hold direction ih, and watch what actually happens —
+	## head bonks, curve deflections and arrow fields all included.
+	var ghost: EEPhysics = EEPhysics.new()
+	ghost.set_collides_fn(func(tx: int, ty: int) -> bool: return WorldManager.is_solid_at(tx, ty))
+	ghost.x = physics.x
+	ghost.y = physics.y
+	ghost._speedX = physics._speedX
+	ghost._speedY = physics._speedY
+	ghost.is_grounded = true
+	ghost.jumpCount = 0
+	var space: bool = true
+	var died: bool = false
+	var landed: bool = false
+	for i in range(max_ticks):
+		var ctx: int = int(floor((ghost.x + 8.0) / 16.0))
+		var cty: int = int(floor((ghost.y + 8.0) / 16.0))
+		ghost.apply_action_tile(WorldManager.get_tile(ctx, cty), WorldManager.get_rotation(ctx, cty))
+		ghost.tick(ih, 0, space, space)
+		space = false
+		for ty2 in range(int(floor(ghost.y / 16.0)), int(floor((ghost.y + 15.0) / 16.0)) + 1):
+			for tx2 in range(int(floor(ghost.x / 16.0)), int(floor((ghost.x + 15.0) / 16.0)) + 1):
+				if GameState.is_hazard(WorldManager.get_tile(tx2, ty2)):
+					died = true
+		if died:
+			break
+		if i > 30 and ghost.is_grounded:
+			landed = true
+			break
+	return {"safe": landed and not died, "died": died, "end_x": ghost.x}

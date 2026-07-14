@@ -5,7 +5,7 @@ extends Node
 ## wins. Created by game_scene when GameState.battle_mode is set.
 
 const MAX_LIVES: int = 10
-const MAX_HP: int = 3
+const MAX_HP: int = 5
 const INVULN_TIME: float = 1.2
 
 var player: Node = null
@@ -22,6 +22,7 @@ var _bot_respawn_in: float = -1.0
 var _over: bool = false
 var _fight_timer: float = 1.6
 
+var _lmb_was_down: bool = false
 var _hud: CanvasLayer
 var _score_label: Label
 var _weapon_label: Label
@@ -56,12 +57,20 @@ func _wire_up() -> void:
 		func() -> Vector2: return Vector2(player.physics._speedX, player.physics._speedY) * EEPhysics.EE_TICK_FRAC * EEPhysics.TPS,
 		func() -> bool: return is_instance_valid(player) and not player._is_dead and _player_invuln <= 0.0,
 		_hurt_player,
-		func() -> int: return player_hp, MAX_HP)
+		func() -> int: return player_hp, MAX_HP,
+		func() -> bool: return player.physics.is_grounded,
+		func(v: Vector2) -> void:
+			player.physics._speedX += v.x
+			player.physics._speedY += v.y)
 	weapons.register_actor("bot", 1,
 		bot.get_center, bot.get_vel_pxs,
 		func() -> bool: return not bot.dead and _bot_invuln <= 0.0,
 		_hurt_bot,
-		func() -> int: return bot_hp, MAX_HP)
+		func() -> int: return bot_hp, MAX_HP,
+		func() -> bool: return bot.physics.is_grounded,
+		func(v: Vector2) -> void:
+			bot.physics._speedX += v.x
+			bot.physics._speedY += v.y)
 	if player.has_signal("died"):
 		player.died.connect(_on_player_died)
 
@@ -129,8 +138,7 @@ func _hurt_player(dmg: int, dir: Vector2) -> void:
 	player.physics._speedY += dir.y * 2.2
 	GameState.cam_shake += 4.0
 	if player_hp <= 0:
-		weapons.spawn_explosion(Vector2(player.physics.x + 8, player.physics.y + 8), Color(0.4, 0.8, 1.0))
-		player._die()  # died signal handles the life
+		player._die()  # died signal handles the life (and the explosion)
 
 
 func _hurt_bot(dmg: int, dir: Vector2) -> void:
@@ -158,6 +166,8 @@ func _kill_bot() -> void:
 func _on_player_died() -> void:
 	if _over:
 		return
+	# Death animation for EVERY death cause — spikes included
+	weapons.spawn_explosion(Vector2(player.physics.x + 8.0, player.physics.y + 8.0), Color(0.4, 0.8, 1.0))
 	weapons.strip_weapon("player")
 	player_lives -= 1
 	player_hp = MAX_HP
@@ -230,30 +240,54 @@ func _process(delta: float) -> void:
 		if d < 16.0 and d > 0.01:
 			var n: Vector2 = dvec / d
 			var overlap: float = 16.0 - d
-			player.physics.x -= n.x * overlap * 0.5
-			player.physics.y -= n.y * overlap * 0.5
-			bot.physics.x += n.x * overlap * 0.5
-			bot.physics.y += n.y * overlap * 0.5
+			# Separate — but NEVER push a ball inside solid tiles (that was the
+			# stuck-in-a-block bug); a blocked side just keeps its position
+			var p_sep: Vector2 = -n * overlap * 0.5
+			var b_sep: Vector2 = n * overlap * 0.5
+			if not player.physics._collides_px(player.physics.x + p_sep.x, player.physics.y + p_sep.y):
+				player.physics.x += p_sep.x
+				player.physics.y += p_sep.y
+			if not bot.physics._collides_px(bot.physics.x + b_sep.x, bot.physics.y + b_sep.y):
+				bot.physics.x += b_sep.x
+				bot.physics.y += b_sep.y
 			var pv: Vector2 = Vector2(player.physics._speedX, player.physics._speedY)
 			var bv: Vector2 = Vector2(bot.physics._speedX, bot.physics._speedY)
 			var p_n: float = pv.dot(n)
 			var b_n: float = bv.dot(n)
 			var approach: float = p_n - b_n
 			if approach > 0.0:
-				var pop: float = 1.05
-				pv += n * (b_n * pop - p_n)
-				bv += n * (p_n * pop - b_n)
+				# A raised shield REDIRECTS the ram: the rammer bounces off,
+				# the shield holder doesn't budge
+				var p_sh: bool = weapons.is_shielded("player")
+				var b_sh: bool = weapons.is_shielded("bot")
+				var p_new: float
+				var b_new: float
+				if b_sh and not p_sh:
+					p_new = -p_n * 1.15
+					b_new = b_n
+				elif p_sh and not b_sh:
+					p_new = p_n
+					b_new = -b_n * 1.15
+				elif p_sh and b_sh:
+					p_new = -p_n * 1.1
+					b_new = -b_n * 1.1
+				else:
+					p_new = b_n * 1.05
+					b_new = p_n * 1.05
+				pv += n * (p_new - p_n)
+				bv += n * (b_new - b_n)
 				player.physics._speedX = pv.x
 				player.physics._speedY = pv.y
 				bot.physics._speedX = bv.x
 				bot.physics._speedY = bv.y
 				if approach > 1.2:
 					var mid: Vector2 = (pc + bc2) * 0.5
-					weapons.play_sfx("bonk", mid, 0.08, clampf(1.5 - approach * 0.07, 0.7, 1.5))
-					weapons.spawn_hit(mid, Color(0.9, 0.95, 1.0), n)
+					var shield_bounce: bool = p_sh or b_sh
+					weapons.play_sfx("bonk", mid, 0.08, clampf((1.8 if shield_bounce else 1.5) - approach * 0.07, 0.7, 1.8))
+					weapons.spawn_hit(mid, Color(0.6, 0.95, 1.0) if shield_bounce else Color(0.9, 0.95, 1.0), n)
 					GameState.cam_shake += clampf(approach * 0.35, 0.5, 4.0)
-					if approach > 4.5:
-						weapons.spawn_ring(mid, Color(0.9, 0.95, 1.0), 3.0, 18.0, 0.16)
+					if approach > 4.5 or shield_bounce:
+						weapons.spawn_ring(mid, Color(0.7, 0.95, 1.0), 3.0, 18.0, 0.16)
 	# Bot respawn (far spawn from the player)
 	if _bot_respawn_in > 0.0:
 		_bot_respawn_in -= delta
@@ -273,21 +307,28 @@ func _process(delta: float) -> void:
 		var unarmed: bool = weapons.get_weapon("player") == ""
 		# RMB: parry shield (unarmed kit)
 		weapons.set_shield("player", unarmed and Input.is_mouse_button_pressed(MOUSE_BUTTON_RIGHT) and not GameState.is_edit_mode)
-		if Input.is_mouse_button_pressed(MOUSE_BUTTON_LEFT) and not GameState.is_edit_mode:
-			if unarmed:
-				# LMB: dash punch toward the cursor
-				if weapons.try_dash("player"):
+		var lmb: bool = Input.is_mouse_button_pressed(MOUSE_BUTTON_LEFT) and not GameState.is_edit_mode
+		if unarmed:
+			# LMB: hold to CHARGE (3s = full power), release to dash.
+			# A quick click is a normal dash; a full charge hits for 2.
+			if lmb:
+				weapons.charge_dash("player", delta)
+			elif _lmb_was_down:
+				var res: Dictionary = weapons.release_dash("player")
+				if res.ok:
 					var ddir: Vector2 = aim.normalized()
-					player.physics._speedX += ddir.x * 7.0
-					player.physics._speedY += ddir.y * 7.0
-			elif weapons.try_shoot("player"):
-				var kick: float = weapons.get_kick("player")
-				var wn: String = weapons.get_weapon("player")
-				if wn != "" and WeaponSystem.WEAPONS[wn].get("beam", false):
-					kick *= delta * 6.0  # Beams fire every frame — gentle steady pushback
-				var kdir: Vector2 = aim.normalized()
-				player.physics._speedX -= kdir.x * kick
-				player.physics._speedY -= kdir.y * kick
+					var imp: float = 7.0 + 10.0 * res.power
+					player.physics._speedX += ddir.x * imp
+					player.physics._speedY += ddir.y * imp
+		elif lmb and weapons.try_shoot("player"):
+			var kick: float = weapons.get_kick("player")
+			var wn: String = weapons.get_weapon("player")
+			if wn != "" and WeaponSystem.WEAPONS[wn].get("beam", false):
+				kick *= delta * 6.0  # Beams fire every frame — gentle steady pushback
+			var kdir: Vector2 = aim.normalized()
+			player.physics._speedX -= kdir.x * kick
+			player.physics._speedY -= kdir.y * kick
+		_lmb_was_down = lmb
 	_layout_hud()
 
 

@@ -90,18 +90,22 @@ func _ready() -> void:
 
 # ── Actors ────────────────────────────────────────────────────────────────────
 
-func register_actor(id: String, team: int, get_center: Callable, get_vel: Callable, is_alive: Callable, hurt: Callable, get_hp: Callable = Callable(), max_hp: int = 3) -> void:
+func register_actor(id: String, team: int, get_center: Callable, get_vel: Callable, is_alive: Callable, hurt: Callable, get_hp: Callable = Callable(), max_hp: int = 3, get_grounded: Callable = Callable(), push: Callable = Callable()) -> void:
 	## get_center() -> Vector2 (px), get_vel() -> Vector2 (px/s),
 	## is_alive() -> bool, hurt(dmg: int, dir: Vector2) -> void,
-	## get_hp() -> int (for the floating HP bar)
+	## get_hp() -> int (floating HP bar), get_grounded() -> bool (landing
+	## stuns), push(v: Vector2) -> void (parry launches)
 	_actors[id] = {
 		"team": team, "get_center": get_center, "get_vel": get_vel,
 		"is_alive": is_alive, "hurt": hurt, "get_hp": get_hp, "max_hp": max_hp,
+		"get_grounded": get_grounded, "push": push,
 		"weapon": "", "cooldown": 0.0, "aim": Vector2.RIGHT,
 		"weapon_left": -1.0, "beam_on": false, "beam_end": Vector2.ZERO, "beam_tick": 0.0,
-		"dash_cd": 0.0, "dash_time": 0.0,
+		"dash_cd": 0.0, "dash_time": 0.0, "dash_dmg": 1,
+		"charge": 0.0, "charging": false, "charge_fed": false,
 		"shield_req": false, "shield_on": false, "shield_energy": SHIELD_MAX,
-		"shield_broken": false, "shield_lock": 0.0, "stun_left": 0.0,
+		"shield_broken": false, "shield_lock": 0.0,
+		"stun_left": 0.0, "stun_pending": false,
 	}
 
 
@@ -149,7 +153,7 @@ func try_shoot(id: String) -> bool:
 	var a: Dictionary = _actors[id]
 	if a.weapon == "" or a.cooldown > 0.0 or not a.is_alive.call():
 		return false
-	if a.stun_left > 0.0:
+	if a.stun_left > 0.0 or a.stun_pending:
 		return false  # Parried — no shooting while stunned
 	var w: Dictionary = WEAPONS[a.weapon]
 	if w.get("beam", false):
@@ -193,30 +197,74 @@ func get_kick(id: String) -> float:
 # ── Unarmed melee: dash punch + parry shield ─────────────────────────────────
 
 func try_dash(id: String) -> bool:
-	## Unarmed lunge toward the aim direction. The CALLER applies the movement
-	## impulse on success; contact damage is handled here during DASH_WINDOW.
+	## Instant quick dash (zero charge). Caller applies the movement impulse.
+	if _actors.has(id):
+		_actors[id].charge = 0.0
+	return release_dash(id).ok
+
+
+func charge_dash(id: String, delta: float) -> void:
+	## Hold to wind up a heavy dash: 3s = full power. Call every held frame.
 	if not _actors.has(id):
-		return false
+		return
 	var a: Dictionary = _actors[id]
-	if a.weapon != "" or a.dash_cd > 0.0 or a.stun_left > 0.0 or not a.is_alive.call():
-		return false
-	a.dash_cd = DASH_CD
-	a.dash_time = DASH_WINDOW
+	if a.weapon != "" or a.dash_cd > 0.0 or a.stun_left > 0.0 or a.stun_pending or not a.is_alive.call():
+		return
+	a.charge_fed = true
+	a.charging = true
+	var was: float = a.charge
+	a.charge = minf(1.0, a.charge + delta / 3.0)
+	# Charge-up: energy converges into the ball, denser as it builds
+	if randf() < delta * (14.0 + 60.0 * a.charge):
+		var c: Vector2 = a.get_center.call()
+		var ang: float = randf() * TAU
+		var p: Vector2 = c + Vector2.from_angle(ang) * randf_range(14.0, 28.0)
+		_fx.append({
+			"pos": p, "vel": (c - p) * 4.0, "life": 0.2, "max_life": 0.2,
+			"color": Color(0.6, 0.9, 1.0).lerp(Color(1.0, 0.92, 0.6), a.charge),
+			"size": 1.5 + a.charge * 1.8,
+		})
+	if was < 1.0 and a.charge >= 1.0:
+		play_sfx("pickup", a.get_center.call(), 0.02, 1.9)  # MAX POWER ding
+		spawn_ring(a.get_center.call(), Color(1.0, 0.92, 0.6), 4.0, 20.0, 0.22)
+
+
+func release_dash(id: String) -> Dictionary:
+	## Launch the (possibly charged) dash. Returns {ok, power 0..1}; the
+	## caller applies impulse scaled by power. Full power hits for 2.
+	var out: Dictionary = {"ok": false, "power": 0.0}
+	if not _actors.has(id):
+		return out
+	var a: Dictionary = _actors[id]
+	var power: float = a.charge
+	a.charging = false
+	a.charge = 0.0
+	if a.weapon != "" or a.dash_cd > 0.0 or a.stun_left > 0.0 or a.stun_pending or not a.is_alive.call():
+		return out
+	a.dash_cd = DASH_CD + 0.5 * power
+	a.dash_time = DASH_WINDOW + 0.15 * power
+	a.dash_dmg = 2 if power > 0.65 else 1
 	# Attacking drops the shield — no turtling while punching
 	a.shield_on = false
 	a.shield_lock = 0.45
 	var c: Vector2 = a.get_center.call()
-	for _i in range(10):
+	var streaks: int = 10 + int(power * 18.0)
+	for _i in range(streaks):
 		var side: Vector2 = Vector2(-a.aim.y, a.aim.x) * randf_range(-4.0, 4.0)
 		_fx.append({
 			"pos": c - a.aim * randf_range(2.0, 10.0) + side,
-			"vel": -a.aim * randf_range(60.0, 180.0),
-			"life": randf_range(0.08, 0.2), "max_life": 0.2,
-			"color": Color(0.6, 0.9, 1.0), "size": randf_range(1.2, 2.6),
+			"vel": -a.aim * randf_range(60.0, 180.0 + power * 220.0),
+			"life": randf_range(0.08, 0.2 + power * 0.1), "max_life": 0.3,
+			"color": Color(0.6, 0.9, 1.0).lerp(Color(1.0, 0.92, 0.6), power),
+			"size": randf_range(1.2, 2.6 + power * 1.5),
 		})
-	play_sfx("shoot_scatter", c, 0.05, 1.7)
-	GameState.cam_shake += 1.4
-	return true
+	if power > 0.65:
+		spawn_ring(c, Color(1.0, 0.92, 0.6), 5.0, 26.0, 0.22)
+	play_sfx("shoot_scatter", c, 0.05, 1.7 - 0.55 * power)
+	GameState.cam_shake += 1.4 + 3.2 * power
+	out.ok = true
+	out.power = power
+	return out
 
 
 func set_shield(id: String, want: bool) -> void:
@@ -229,15 +277,20 @@ func is_shielded(id: String) -> bool:
 
 
 func is_stunned(id: String) -> bool:
-	return _actors.has(id) and _actors[id].stun_left > 0.0
+	return _actors.has(id) and (_actors[id].stun_left > 0.0 or _actors[id].stun_pending)
 
 
-func _stun_team(team: int, at: Vector2) -> void:
+func _stun_team(team: int, at: Vector2, on_landing: bool = false) -> void:
 	## Parry payoff: stun every enemy-team actor (1v1: the attacker).
+	## on_landing: the stun starts when they next touch the ground (melee
+	## parries launch the striker first — they crash, THEN sit stunned).
 	for id in _actors:
 		var a: Dictionary = _actors[id]
 		if a.team == team:
-			a.stun_left = STUN_TIME
+			if on_landing:
+				a.stun_pending = true
+			else:
+				a.stun_left = STUN_TIME
 			a.beam_on = false
 	for _i in range(16):
 		var ang: float = randf() * TAU
@@ -337,13 +390,24 @@ func _process(delta: float) -> void:
 			a.stun_left = maxf(0.0, a.stun_left - delta)
 		if a.shield_lock > 0.0:
 			a.shield_lock = maxf(0.0, a.shield_lock - delta)
+		# Charge decays instantly if not held this frame
+		if a.charging and not a.charge_fed:
+			a.charging = false
+			a.charge = 0.0
+		a.charge_fed = false
+		# Delayed parry stun: kicks in when the launched striker hits the floor
+		if a.stun_pending and not a.get_grounded.is_null() and a.get_grounded.call():
+			a.stun_pending = false
+			a.stun_left = STUN_TIME
+			spawn_ring(a.get_center.call(), Color(1.0, 0.9, 0.3), 3.0, 15.0, 0.2)
+			play_sfx("hit", a.get_center.call(), 0.05, 0.75)
 		# Shield: only while unarmed, drains on use, regens when down.
 		# BREAKS at empty and needs a FULL recharge (2s) before it can come
 		# back up. Attacking (dash) drops it and locks it briefly.
 		var was_shielded: bool = a.shield_on
 		if a.shield_broken and a.shield_energy >= SHIELD_MAX:
 			a.shield_broken = false
-		a.shield_on = a.shield_req and not a.shield_broken and a.shield_lock <= 0.0 and a.weapon == "" and a.stun_left <= 0.0 and a.shield_energy > 0.0 and a.is_alive.call()
+		a.shield_on = a.shield_req and not a.shield_broken and a.shield_lock <= 0.0 and a.weapon == "" and a.stun_left <= 0.0 and not a.stun_pending and a.shield_energy > 0.0 and a.is_alive.call()
 		if a.shield_on and not was_shielded:
 			play_sfx("pickup", a.get_center.call(), 0.03, 0.7)  # Shield hum-up
 			spawn_ring(a.get_center.call(), Color(0.5, 0.9, 1.0), 4.0, 15.0, 0.15)
@@ -384,13 +448,17 @@ func _process(delta: float) -> void:
 			if ac.distance_to(vc) < 16.0:
 				a.dash_time = 0.0
 				if v.shield_on:
-					_stun_team(a.team, (ac + vc) * 0.5)  # PARRIED!
+					# PARRIED mid-strike: launched away hard, stunned on landing
+					var away: Vector2 = (ac - vc).normalized()
+					if not a.push.is_null():
+						a.push.call(Vector2(away.x * 6.0, minf(away.y * 6.0, 0.0) - 4.0))
+					_stun_team(a.team, (ac + vc) * 0.5, true)
 				else:
-					v.hurt.call(DASH_DMG, (vc - ac).normalized())
+					v.hurt.call(a.dash_dmg, (vc - ac).normalized())
 					spawn_hit((ac + vc) * 0.5, Color(0.7, 0.95, 1.0), (vc - ac).normalized())
-					spawn_ring((ac + vc) * 0.5, Color(0.7, 0.95, 1.0), 4.0, 20.0, 0.2)
+					spawn_ring((ac + vc) * 0.5, Color(0.7, 0.95, 1.0), 4.0, 20.0 + a.dash_dmg * 6.0, 0.2)
 					play_sfx("hit", vc)
-					GameState.cam_shake += 3.0
+					GameState.cam_shake += 3.0 + a.dash_dmg * 1.5
 				break
 		if a.weapon != "" and a.weapon_left > 0.0:
 			a.weapon_left -= delta
@@ -674,6 +742,13 @@ func _draw() -> void:
 				var sa: float = _time * 6.0 + k * TAU / 3.0
 				var sp2: Vector2 = c + Vector2(cos(sa) * 11.0, -14.0 + sin(sa * 2.0) * 2.0)
 				draw_circle(sp2, 1.6, Color(1.0, 0.9, 0.3))
+		if a.charging and a.charge > 0.04:
+			# Wind-up: an arc that fills with the charge, gold at full power
+			var ccol: Color = Color(0.6, 0.9, 1.0).lerp(Color(1.0, 0.92, 0.55), a.charge)
+			var wob: float = 1.0 + 0.15 * sin(_time * (8.0 + 14.0 * a.charge))
+			draw_arc(c, 12.0 * wob, -PI / 2.0, -PI / 2.0 + TAU * a.charge, 22, Color(ccol.r, ccol.g, ccol.b, 0.75), 2.4)
+			if a.charge >= 1.0:
+				draw_arc(c, 16.0 * wob, 0, TAU, 24, Color(1.0, 0.92, 0.55, 0.35 + 0.25 * sin(_time * 12.0)), 1.6)
 	# Floating HP bars (small, above each living actor)
 	for id in _actors:
 		var a: Dictionary = _actors[id]

@@ -33,7 +33,7 @@ const ARROW_UP: int = 2
 
 # Standing spots on the mid platforms — waypoints the bot climbs through
 # when it wants the rail pad high above (the lift entrance is up there).
-const RAIL_VIA: Array = [Vector2(680.0, 402.0), Vector2(840.0, 402.0)]
+const RAIL_VIA: Array = [Vector2(680.0, 390.0), Vector2(840.0, 390.0)]
 
 
 static func build() -> void:
@@ -81,13 +81,20 @@ static func build() -> void:
 		_fg(x, 29, PLATE)
 	_fg(38, 29, CORE)
 	_fg(57, 29, CORE)
-	# Mid platforms y=26 (scatter pads live here; lift entry from inner tips)
+	# Mid platforms y=25 (scatter pads live here; lift entry from inner tips).
+	# One tile HIGHER than a plain 3-tile hop so the floor beneath has 96px
+	# of headroom — a full jump over the spike strips clears the underside by
+	# 17px instead of 1px (no more head-bonk-onto-spikes deaths).
 	for x in range(40, 46):
-		_fg(x, 26, PLATE)
+		_fg(x, 25, PLATE)
 	for x in range(50, 56):
-		_fg(x, 26, PLATE)
-	_fg(45, 26, CORE)
-	_fg(50, 26, CORE)
+		_fg(x, 25, PLATE)
+	_fg(45, 25, CORE)
+	_fg(50, 25, CORE)
+	# Mini-steps outside the mid platforms keep the climb smooth:
+	# shelf (y29) -> step (y27) -> mid (y25), two easy 32px hops
+	_fg(39, 27, CORE)
+	_fg(56, 27, CORE)
 	# Perches y=23 (cover + sightlines)
 	for x in range(34, 38):
 		_fg(x, 23, PLATE)
@@ -105,9 +112,10 @@ static func build() -> void:
 	_fg(28, 29, CORE)
 	_fg(67, 29, CORE)
 
-	# ── Spike strips: ONLY under the mid platforms (80px headroom, and all
-	# walk-off / dismount landing zones stay >=1 tile clear) ──
-	for x in [41, 42, 53, 54]:
+	# ── Spike strips: under the raised mid platforms (96px headroom — full
+	# jumps clear with real margin) and >=1 tile clear of every walk-off,
+	# step and bridge-dismount landing zone ──
+	for x in [42, 43, 52, 53]:
 		_fg(x, 31, SPIKES)
 
 	# ── Top bridge y=9: dismount balconies around the central lift slot ──
@@ -126,7 +134,7 @@ static func build() -> void:
 		for x in range(46, 50):
 			WorldManager.set_bg_tile(x, y, PLATE + 100)
 	for col in [40, 45, 50, 55]:        # Under mid platform tips
-		for y in range(27, 32):
+		for y in range(26, 32):
 			WorldManager.set_bg_tile(col, y, PLATE + 100)
 	for col in [33, 38, 57, 62]:        # Under shelf tips
 		for y in range(30, 32):
@@ -163,8 +171,8 @@ static func build() -> void:
 static func add_weapon_pads(ws: WeaponSystem) -> void:
 	ws.add_pad(Vector2(352, 494), "blaster")     # Left floor, by the spawn
 	ws.add_pad(Vector2(1184, 494), "blaster")    # Right floor, by the spawn
-	ws.add_pad(Vector2(680, 398), "scatter")     # Left mid platform (contested)
-	ws.add_pad(Vector2(840, 398), "scatter")     # Right mid platform (contested)
+	ws.add_pad(Vector2(680, 382), "scatter")     # Left mid platform (contested)
+	ws.add_pad(Vector2(840, 382), "scatter")     # Right mid platform (contested)
 	ws.add_pad(Vector2(768, 126), "rail")        # Top of the lift
 	ws.super_pos = Vector2(768.0, 494.0)         # DOOM RAY materializes center floor
 
