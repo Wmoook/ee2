@@ -60,6 +60,12 @@ func _ready() -> void:
 
 	_build_chat()
 
+	# Register clickable HUD controls so the block editor's mouse-over check
+	# tests their REAL rects (prevents painting blocks through the UI).
+	for c in [palette_panel, _palette_toggle_btn, _cam_pad, _zoom_container, _chat_input]:
+		if c:
+			c.add_to_group("editor_ui_block")
+
 	GameState.edit_mode_changed.connect(_on_edit)
 	GameState.block_selected.connect(_on_block)
 	_update_visibility()

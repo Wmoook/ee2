@@ -54,7 +54,10 @@ var _grav_zone_dragging: bool = false
 var _grav_zone_phase: int = 0  # 0=not placing, 1=sizing center (shift), 2=sizing radius
 var _grav_zone_center: Vector2 = Vector2.ZERO
 var _grav_zone_center_r: float = 8.0
-var _grav_zone_btn: Button
+var _dock: EditorToolsDock  # Right-side dock (save/clear/gravity zone/help/group filter)
+var _spin_dock: PanelContainer  # Styled panel wrapping the selection/align controls
+var _help_panel: PanelContainer  # Shortcut overlay (toggled from the dock)
+const DOCK_TOP: float = 326.0  # Right column starts below the block palette (8 + ~310)
 
 var _spin_btn: Button
 var _spin_slider: HSlider
@@ -165,10 +168,16 @@ func _ready() -> void:
 	_ui_layer = CanvasLayer.new()
 	_ui_layer.layer = 11
 	add_child(_ui_layer)
-	# Spin panel on right side
+	# Selection/align controls in a styled dock panel on the right side
+	_spin_dock = PanelContainer.new()
+	_spin_dock.visible = false
+	_spin_dock.custom_minimum_size = Vector2(230, 0)
+	_spin_dock.add_theme_stylebox_override("panel", EditorToolsDock.make_panel_style())
+	_spin_dock.add_to_group("editor_ui_block")
+	_ui_layer.add_child(_spin_dock)
 	_spin_panel = VBoxContainer.new()
-	_spin_panel.visible = false
-	_ui_layer.add_child(_spin_panel)
+	_spin_panel.add_theme_constant_override("separation", 6)
+	_spin_dock.add_child(_spin_panel)
 
 	_spin_label = Label.new()
 	_spin_label.text = "Speed: 45 deg/s"
@@ -185,19 +194,13 @@ func _ready() -> void:
 	_spin_slider.value_changed.connect(_on_spin_speed_changed)
 	_spin_panel.add_child(_spin_slider)
 
-	_spin_btn = Button.new()
-	_spin_btn.text = "Spin Object"
-	_spin_btn.custom_minimum_size = Vector2(140, 28)
-	_spin_btn.add_theme_font_size_override("font_size", 11)
+	_spin_btn = EditorToolsDock.make_button("Spin Object", Color(0.3, 0.4, 0.6))
 	_spin_btn.pressed.connect(_on_spin_pressed)
 	_spin_panel.add_child(_spin_btn)
 
-	_align_btn = Button.new()
-	_align_btn.text = "Align Grid (ON)"
+	_align_btn = EditorToolsDock.make_button("Align Grid (ON)", Color(0.25, 0.5, 0.35))
 	_align_btn.toggle_mode = true
 	_align_btn.button_pressed = true
-	_align_btn.custom_minimum_size = Vector2(140, 28)
-	_align_btn.add_theme_font_size_override("font_size", 11)
 	_align_btn.pressed.connect(_on_align_pressed)
 	_spin_panel.add_child(_align_btn)
 
@@ -235,10 +238,7 @@ func _ready() -> void:
 	_group_id_spin.custom_minimum_size = Vector2(55, 24)
 	_group_id_spin.add_theme_font_size_override("font_size", 10)
 	group_row.add_child(_group_id_spin)
-	_group_btn = Button.new()
-	_group_btn.text = "Add to Group"
-	_group_btn.custom_minimum_size = Vector2(85, 24)
-	_group_btn.add_theme_font_size_override("font_size", 10)
+	_group_btn = EditorToolsDock.make_button("Add to Group", Color(0.35, 0.35, 0.55))
 	_group_btn.pressed.connect(_on_group_pressed)
 	group_row.add_child(_group_btn)
 
@@ -247,91 +247,50 @@ func _ready() -> void:
 	_group_panel.visible = false
 	_spin_panel.add_child(_group_panel)
 
-	# Reset grid button removed - use Ctrl+R instead
-
-	# Clear world button
-	var _clear_btn: Button = Button.new()
-	_clear_btn.name = "ClearWorldBtn"
-	_clear_btn.text = "Clear World"
-	_clear_btn.size = Vector2(90, 25)
-	_clear_btn.add_theme_font_size_override("font_size", 10)
-	_clear_btn.pressed.connect(func():
+	# Editor dock: world actions, tools and group filter in one clean panel
+	# (replaces the old loose buttons that overlapped the spin panel and chat)
+	_dock = EditorToolsDock.new()
+	_dock.visible = false
+	_dock.custom_minimum_size = Vector2(230, 0)
+	_dock.add_to_group("editor_ui_block")
+	_ui_layer.add_child(_dock)
+	_dock.save_pressed.connect(func():
+		var err = WorldManager.save_to_file("user://world_save.json")
+		push_warning("SAVE result=%d" % err)
+	)
+	_dock.clear_pressed.connect(func():
 		_save_undo()
 		WorldManager.net_clear_world()
 		_free_originals.clear()
 		_deselect()
 		queue_redraw())
-	_ui_layer.add_child(_clear_btn)
-
-	# Save world button
-	var _save_btn: Button = Button.new()
-	_save_btn.name = "SaveWorldBtn"
-	_save_btn.text = "Save World"
-	_save_btn.size = Vector2(90, 25)
-	_save_btn.add_theme_font_size_override("font_size", 10)
-	_save_btn.pressed.connect(func():
-		var err = WorldManager.save_to_file("user://world_save.json")
-		push_warning("SAVE result=%d" % err)
-	)
-	_ui_layer.add_child(_save_btn)
-
-	# Help button
-	var _help_btn: Button = Button.new()
-	_help_btn.name = "HelpBtn"
-	_help_btn.text = "?"
-	_help_btn.size = Vector2(25, 25)
-	_help_btn.add_theme_font_size_override("font_size", 12)
-	_help_btn.pressed.connect(func():
-		var hlp: Label = _ui_layer.get_node_or_null("HelpLabel")
-		if hlp:
-			hlp.visible = not hlp.visible
-	)
-	_ui_layer.add_child(_help_btn)
-
-	# Gravity Zone button
-	_grav_zone_btn = Button.new()
-	_grav_zone_btn.name = "GravZoneBtn"
-	_grav_zone_btn.text = "Gravity Zone"
-	_grav_zone_btn.size = Vector2(100, 25)
-	_grav_zone_btn.add_theme_font_size_override("font_size", 10)
-	_grav_zone_btn.pressed.connect(func():
-		_grav_zone_mode = not _grav_zone_mode
+	_dock.grav_zone_toggled.connect(func(on: bool):
+		_grav_zone_mode = on
 		_curve_mode = false
 		_line_mode = false
 		_deselect()
 		queue_redraw()
 	)
-	_ui_layer.add_child(_grav_zone_btn)
+	_dock.help_pressed.connect(func():
+		if _help_panel:
+			_help_panel.visible = not _help_panel.visible
+	)
+	_dock.group_filter_changed.connect(func(gid: int):
+		WorldManager.active_group_filter = gid
+		queue_redraw()
+	)
 
-	# Help label (hidden by default)
+	# Shortcut overlay (hidden until toggled from the dock's ? button)
+	_help_panel = PanelContainer.new()
+	_help_panel.visible = false
+	_help_panel.add_theme_stylebox_override("panel", EditorToolsDock.make_panel_style())
+	_help_panel.add_to_group("editor_ui_block")
 	var _help_label: Label = Label.new()
-	_help_label.name = "HelpLabel"
-	_help_label.visible = false
 	_help_label.text = "SHORTCUTS:\n\nE - Toggle Edit Mode\nShift+Click - Select block\nShift+Drag - Box select\nClick+Drag - Move selected\nCtrl+Drag - Free move\nCtrl+Click+Drag - Line tool\nArrow Keys - Nudge (16px)\nShift+Arrows - Fine nudge (1.6px)\nDelete/Backspace - Delete selected\nEscape - Deselect\nCtrl+Z - Undo\nCtrl+R - Reset grid to 0°\nCtrl+Scroll - Zoom\nR - Rotate 90°\nB - Toggle hitboxes\nG - God mode\nN - Toggle name\nScroll - Cycle blocks\n1-9 - Quick select"
 	_help_label.add_theme_font_size_override("font_size", 11)
-	_help_label.add_theme_color_override("font_color", Color.WHITE)
-	_help_label.add_theme_color_override("font_shadow_color", Color(0, 0, 0, 0.9))
-	_help_label.add_theme_constant_override("shadow_offset_x", 1)
-	_help_label.add_theme_constant_override("shadow_offset_y", 1)
-	_ui_layer.add_child(_help_label)
-
-	# Group filter dropdown (bottom-right)
-	var _gf_container: HBoxContainer = HBoxContainer.new()
-	_gf_container.name = "GroupFilter"
-	_ui_layer.add_child(_gf_container)
-	var gf_label: Label = Label.new()
-	gf_label.text = "Show Group:"
-	gf_label.add_theme_font_size_override("font_size", 11)
-	gf_label.add_theme_color_override("font_color", Color.WHITE)
-	_gf_container.add_child(gf_label)
-	var gf_option: OptionButton = OptionButton.new()
-	gf_option.name = "GroupFilterOption"
-	gf_option.add_item("All", 0)
-	gf_option.custom_minimum_size = Vector2(100, 24)
-	gf_option.add_theme_font_size_override("font_size", 11)
-	gf_option.item_selected.connect(_on_group_filter_changed)
-	_gf_container.add_child(gf_option)
-	# Position will be set in _process
+	_help_label.add_theme_color_override("font_color", Color(0.9, 0.9, 0.95))
+	_help_panel.add_child(_help_label)
+	_ui_layer.add_child(_help_panel)
 
 func _has_ui_focus() -> bool:
 	var focused: Control = get_viewport().gui_get_focus_owner()
@@ -1050,33 +1009,15 @@ func _input(event: InputEvent) -> void:
 				_erase_at(_get_tile())
 
 func _is_mouse_over_ui() -> bool:
-	var vp_size: Vector2 = get_viewport().get_visible_rect().size
+	## Test the mouse against the REAL rects of every registered UI control
+	## (group "editor_ui_block", populated by this editor and game_hud).
+	## The old version hardcoded estimated rectangles, which drifted from the
+	## actual layout — clicks on some controls painted blocks through the UI.
 	var mouse: Vector2 = get_viewport().get_mouse_position()
-	var panel_w: float = 16 * 36 + 32
-	var panel_h: float = 300.0
-	if mouse.x > vp_size.x - panel_w - 16 and mouse.y < panel_h + 16:
-		return true
-	# Camera pad on left
-	if mouse.x < 140 and mouse.y > vp_size.y / 2 - 70 and mouse.y < vp_size.y / 2 + 70:
-		return true
-	# Spin panel on right (extended for group panel)
-	if _spin_panel and _spin_panel.visible:
-		var panel_rect: Rect2 = Rect2(_spin_panel.global_position, _spin_panel.size)
-		if panel_rect.has_point(mouse):
+	for n in get_tree().get_nodes_in_group("editor_ui_block"):
+		var c: Control = n as Control
+		if c and c.is_visible_in_tree() and c.get_global_rect().has_point(mouse):
 			return true
-	# Group filter bottom-right
-	var gf: Control = _ui_layer.get_node_or_null("GroupFilter")
-	if gf and gf.visible:
-		var gf_rect: Rect2 = Rect2(gf.global_position, gf.size)
-		if gf_rect.has_point(mouse):
-			return true
-	# Clear/Save buttons
-	for btn_name in ["ClearWorldBtn", "SaveWorldBtn", "HelpBtn", "GravZoneBtn"]:
-		var btn: Button = _ui_layer.get_node_or_null(btn_name) as Button
-		if btn and btn.visible:
-			var br: Rect2 = Rect2(btn.global_position, btn.size)
-			if br.has_point(mouse):
-				return true
 	return false
 
 func _on_group_pressed() -> void:
@@ -1125,26 +1066,8 @@ func _show_group_props(gid: int) -> void:
 	_group_btn.text = "Group: %d" % gid
 
 func _update_group_filter() -> void:
-	var gf: OptionButton = _ui_layer.get_node_or_null("GroupFilter/GroupFilterOption")
-	if not gf: return
-	var prev: int = WorldManager.active_group_filter
-	gf.clear()
-	gf.add_item("All", 0)
-	for g in WorldManager.block_groups:
-		gf.add_item(g.name, g.id)
-	# Restore selection
-	for i in range(gf.item_count):
-		if gf.get_item_id(i) == prev:
-			gf.selected = i
-			return
-	gf.selected = 0
-	WorldManager.active_group_filter = 0
-
-func _on_group_filter_changed(idx: int) -> void:
-	var gf: OptionButton = _ui_layer.get_node_or_null("GroupFilter/GroupFilterOption")
-	if gf:
-		WorldManager.active_group_filter = gf.get_item_id(idx)
-	queue_redraw()
+	if _dock:
+		_dock.rebuild_group_items()
 
 func _is_block_in_active_group(fb: Dictionary) -> bool:
 	if WorldManager.active_group_filter == 0: return true
@@ -1334,55 +1257,25 @@ func _process(_delta: float) -> void:
 				_deselect()
 			queue_redraw()
 		_c_was_pressed = c_now
-	# Spin panel positioning
-	if _spin_panel:
-		var vp_size: Vector2 = get_viewport().get_visible_rect().size
-		_spin_panel.visible = (_has_selection or _align_mode) and GameState.is_edit_mode
-		var panel_y: float = maxf(8, minf(vp_size.y / 2 - _spin_panel.size.y / 2, vp_size.y - _spin_panel.size.y - 40))
-		_spin_panel.position = Vector2(vp_size.x - _spin_panel.size.x - 8, panel_y)
-	# Reset button always visible in edit mode
-	# Clear world + Save world buttons under editor palette
-	var clear_btn: Button = _ui_layer.get_node_or_null("ClearWorldBtn") as Button
-	var save_btn: Button = _ui_layer.get_node_or_null("SaveWorldBtn") as Button
-	if clear_btn:
-		var vps3: Vector2 = get_viewport().get_visible_rect().size
-		clear_btn.visible = GameState.is_edit_mode
-		clear_btn.size = Vector2(90, 25)
-		clear_btn.position = Vector2(vps3.x - 200, 320)
-	if save_btn:
-		var vps4: Vector2 = get_viewport().get_visible_rect().size
-		save_btn.visible = GameState.is_edit_mode
-		save_btn.size = Vector2(90, 25)
-		save_btn.position = Vector2(vps4.x - 100, 320)
-	# Help button + label
-	var help_btn: Button = _ui_layer.get_node_or_null("HelpBtn") as Button
-	var help_label: Label = _ui_layer.get_node_or_null("HelpLabel") as Label
-	if help_btn:
-		var vps5: Vector2 = get_viewport().get_visible_rect().size
-		help_btn.visible = GameState.is_edit_mode
-		help_btn.size = Vector2(25, 25)
-		help_btn.position = Vector2(vps5.x - 230, 320)
-	if help_label:
-		help_label.position = Vector2(20, 80)
-	# Gravity Zone button position
-	if _grav_zone_btn:
-		_grav_zone_btn.visible = GameState.is_edit_mode
-		var vps_gz: Vector2 = get_viewport().get_visible_rect().size
-		_grav_zone_btn.position = Vector2(vps_gz.x - 330, 320)
-		if _grav_zone_mode:
-			_grav_zone_btn.modulate = Color(0.8, 0.3, 1.0)
-		else:
-			_grav_zone_btn.modulate = Color.WHITE
-		# Poll shift state for gravity zone phase transition
-		if _grav_zone_dragging and _grav_zone_phase == 1 and not Input.is_key_pressed(KEY_SHIFT):
-			_grav_zone_phase = 2
-			queue_redraw()
-	# Group filter position (bottom-right)
-	var gf_node: Control = _ui_layer.get_node_or_null("GroupFilter")
-	if gf_node:
-		var vps: Vector2 = get_viewport().get_visible_rect().size
-		gf_node.visible = GameState.is_edit_mode
-		gf_node.position = Vector2(vps.x - 220, vps.y - 35)
+	# Right-side editor column: palette (game_hud, top) -> dock -> selection
+	# panel, stacked with fixed gaps so nothing can overlap at any window size.
+	var _vps: Vector2 = get_viewport().get_visible_rect().size
+	var _col_y: float = DOCK_TOP
+	if _dock:
+		_dock.visible = GameState.is_edit_mode
+		_dock.position = Vector2(_vps.x - _dock.size.x - 8, _col_y)
+		_dock.set_grav_zone_active(_grav_zone_mode)
+		if _dock.visible:
+			_col_y += _dock.size.y + 8
+	if _spin_dock:
+		_spin_dock.visible = (_has_selection or _align_mode) and GameState.is_edit_mode
+		_spin_dock.position = Vector2(_vps.x - _spin_dock.size.x - 8, _col_y)
+	if _help_panel:
+		_help_panel.position = Vector2(12, 84)
+	# Poll shift state for gravity zone phase transition
+	if _grav_zone_dragging and _grav_zone_phase == 1 and not Input.is_key_pressed(KEY_SHIFT):
+		_grav_zone_phase = 2
+		queue_redraw()
 	# Group button visibility
 	if _group_btn:
 		_group_btn.visible = _align_has_sel
