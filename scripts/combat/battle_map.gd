@@ -12,8 +12,9 @@ extends RefCounted
 ##   * every curve END POINT is buried inside solid tiles (wall or floor), so
 ##     the exposed surface is only the smooth arc — no tail creases to wedge in
 ##   * the corner pockets behind the quarter-pipes are fully sealed dead space
-##   * the top bridge (rail gun) is the skill prize: reach it with a
-##     quarter-pipe speed launch or a black-hole slingshot
+##   * the top bridge (rail gun) is reached by the central UP-ARROW LIFT:
+##     hop in from an upper platform or the mound crest and ride the arrows
+##     through the bridge slot to the rail pad
 
 const W: int = 64
 const H: int = 36
@@ -55,7 +56,8 @@ static func build() -> void:
 		_fg(x, 33, FILL)
 		_fg(x, 34, FILL)
 
-	# ── Plasma spike trench under the black hole ──
+	# ── Plasma spike bed inside the sealed pocket under the mound (visible
+	# through the dome — pure set dressing, unreachable) ──
 	for x in range(29, 35):
 		_fg(x, 31, SPIKES)
 
@@ -74,7 +76,7 @@ static func build() -> void:
 		_fg(x, 26, PLATE)
 	_fg(21, 26, CORE)
 	_fg(42, 26, CORE)
-	# Hole flanks: y=23 (just outside the pull radius)
+	# Upper platforms: y=23, flanking the central lift
 	for x in range(22, 28):
 		_fg(x, 23, PLATE)
 	for x in range(36, 42):
@@ -86,9 +88,17 @@ static func build() -> void:
 		_fg(x, 19, PLATE)
 	for x in range(56, 60):
 		_fg(x, 19, PLATE)
-	# Top bridge: y=9 — the rail gun prize
+	# Top bridge: y=9 — the rail gun prize, with a central lift slot
 	for x in range(28, 36):
+		if x == 31 or x == 32:
+			continue  # Lift passes through here
 		_fg(x, 9, CORE if (x == 28 or x == 35) else PLATE)
+	# UP-ARROW LIFT: two columns from the mound crest, through the bridge
+	# slot, up to the rail pad. Hop in from an upper platform (y=23) or ride
+	# up from the mound top.
+	for y in range(7, 27):
+		_fg(31, y, 2)
+		_fg(32, y, 2)
 
 	# ── Background depth pattern (custom plate BG) ──
 	for y in range(6, 31):
@@ -110,9 +120,6 @@ static func build() -> void:
 		Vector2(380, 526), Vector2(448, 460), Vector2(512, 444), Vector2(576, 460), Vector2(644, 526),
 	]), "both", ENERGY)
 
-	# ── THE BLACK HOLE ──
-	WorldManager.gravity_zones.add_zone(Vector2(512, 250), 128.0, 2.4, 10.0)
-
 	# ── Spawns: open floor past the pipe tails, next to the blaster pads ──
 	WorldManager.spawn_points.append(Vector2(14, 30))
 	WorldManager.spawn_points.append(Vector2(49, 30))
@@ -126,9 +133,9 @@ static func build() -> void:
 static func add_weapon_pads(ws: WeaponSystem) -> void:
 	ws.add_pad(Vector2(248, 494), "blaster")     # Left floor, by the spawn
 	ws.add_pad(Vector2(776, 494), "blaster")     # Right floor, by the spawn
-	ws.add_pad(Vector2(392, 350), "scatter")     # Left hole-flank platform
-	ws.add_pad(Vector2(632, 350), "scatter")     # Right hole-flank platform
-	ws.add_pad(Vector2(512, 126), "rail")        # Top bridge, above the hole
+	ws.add_pad(Vector2(392, 350), "scatter")     # Left upper platform
+	ws.add_pad(Vector2(632, 350), "scatter")     # Right upper platform
+	ws.add_pad(Vector2(512, 126), "rail")        # Top of the arrow lift
 
 
 static func _fg(x: int, y: int, id: int) -> void:
