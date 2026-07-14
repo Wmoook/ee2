@@ -95,9 +95,10 @@ static func build() -> void:
 	# ── THE BLACK HOLE ──
 	WorldManager.gravity_zones.add_zone(Vector2(512, 250), 128.0, 2.4, 10.0)
 
-	# ── Spawns: opposite corners of the floor ──
-	WorldManager.spawn_points.append(Vector2(4, 30))
-	WorldManager.spawn_points.append(Vector2(59, 30))
+	# ── Spawns: open floor just past the quarter-pipe tails (the corner
+	# pockets behind the pipes are sealed dead space — never spawn there) ──
+	WorldManager.spawn_points.append(Vector2(14, 30))
+	WorldManager.spawn_points.append(Vector2(49, 30))
 
 	WorldManager.tile_changed.emit(0, 0, 0)
 	WorldManager.free_blocks_changed.emit()
