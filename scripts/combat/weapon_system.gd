@@ -445,7 +445,10 @@ func _process(delta: float) -> void:
 			if v.team == a.team or not v.is_alive.call():
 				continue
 			var vc: Vector2 = v.get_center.call()
-			if ac.distance_to(vc) < 16.0:
+			# 20px, NOT 16: the body-collision separation holds balls at
+			# exactly 16px apart, which kept dash punches permanently out of
+			# range — every landed dash was a 0-damage shove.
+			if ac.distance_to(vc) < 20.0:
 				a.dash_time = 0.0
 				if v.shield_on:
 					# PARRIED mid-strike: launched away hard, stunned on landing
