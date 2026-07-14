@@ -35,7 +35,9 @@ static func tick_move(p) -> void:
 	if p.is_god_mode or not _near_curves_swept(p):
 		p._step_position()
 		return
-	var steps: int = clampi(int(ceil(maxf(absf(p._speedX), absf(p._speedY)) / SUBSTEP)), 1, MAX_SUBSTEPS)
+	# Movement this tick is speed * EE_TICK_FRAC px per axis.
+	var move_max: float = maxf(absf(p._speedX), absf(p._speedY)) * p.EE_TICK_FRAC
+	var steps: int = clampi(int(ceil(move_max / SUBSTEP)), 1, MAX_SUBSTEPS)
 	var frac: float = 1.0 / float(steps)
 	for _i in range(steps):
 		var prev_x: float = p.x
@@ -257,7 +259,7 @@ static func _apply_contact_flags(p, contacts: Array) -> void:
 			p.is_grounded = true
 			if ag > 0.45:
 				p._jump_cooldown = 0
-				p._coyote_ticks = 4
+				p._coyote_ticks = p.COYOTE_TICKS
 	if best_floor_ag >= 0.05:
 		p._surface_normal = best_floor_n
 	# V-junction (wedge point): 2+ touching contacts opposing along the walk
@@ -270,7 +272,7 @@ static func _apply_contact_flags(p, contacts: Array) -> void:
 			p.on_rotated_block = true
 			p._surface_normal = bis
 			p._jump_cooldown = 0
-			p._coyote_ticks = 4
+			p._coyote_ticks = p.COYOTE_TICKS
 			if absf(p._speedX) + absf(p._speedY) < 0.8:
 				p.is_wedged = true
 
@@ -282,8 +284,8 @@ static func _near_curves_swept(p) -> bool:
 		return false
 	var x0: float = p.x + 8.0
 	var y0: float = p.y + 8.0
-	var x1: float = x0 + p._speedX
-	var y1: float = y0 + p._speedY
+	var x1: float = x0 + p._speedX * p.EE_TICK_FRAC
+	var y1: float = y0 + p._speedY * p.EE_TICK_FRAC
 	var mnx: float = minf(x0, x1)
 	var mxx: float = maxf(x0, x1)
 	var mny: float = minf(y0, y1)

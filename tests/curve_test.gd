@@ -11,6 +11,7 @@ var _checks: int = 0
 
 func _ready() -> void:
 	WorldManager.init_empty_world(80, 60)
+	_test_ee_equivalence()
 	_test_flat_tiles()
 	_test_terminal_drop()
 	_test_diagonal_slam()
@@ -20,6 +21,53 @@ func _ready() -> void:
 	_test_pinch_slam()
 	print("==== RESULT: %d checks, %d FAILED ====" % [_checks, _fails])
 	get_tree().quit(1 if _fails > 0 else 0)
+
+
+func _t(ee_ticks: int) -> int:
+	## Convert a tick count tuned for the original 100Hz engine to the current
+	## tick rate (same wall-clock duration).
+	return int(ceil(ee_ticks * EEPhysics.TPS / 100.0))
+
+
+func _test_ee_equivalence() -> void:
+	print("[240Hz reproduces the 100Hz EE reference]")
+	_clear()
+	var d: float = pow(0.9981, 10.0) * 1.00016093
+	var a: float = 2.0 / 7.752
+	# Free fall: velocity must match the 100Hz engine EXACTLY at EE boundaries
+	var p: EEPhysics = _mk_phys(400.0, 100.0)
+	var ee_ticks: int = 60
+	var y0: float = p.y
+	for i in range(int(round(ee_ticks * EEPhysics.TPS / 100.0))):
+		p.tick(0, 0, false, false)
+	var v_ref: float = 0.0
+	var dy_ref: float = 0.0
+	for i in range(ee_ticks):
+		v_ref = (v_ref + a) * d
+		dy_ref += v_ref
+	_check(absf(p._speedY - v_ref) < 0.002, "fall speed matches 100Hz exactly (%.4f vs %.4f)" % [p._speedY, v_ref])
+	_check(absf((p.y - y0) - dy_ref) < 4.0, "fall distance within 4px of 100Hz (%.1f vs %.1f)" % [p.y - y0, dy_ref])
+	# Jump apex must match the 100Hz reference (block clearances preserved)
+	var p2: EEPhysics = _mk_phys(400.0, 936.0)
+	for i in range(_t(50)):
+		p2.tick(0, 0, false, false)
+	var rest_y: float = p2.y
+	_check(p2.is_grounded, "settled on floor for jump test")
+	p2.tick(0, 0, true, true)
+	var min_y: float = rest_y
+	for i in range(_t(120)):
+		p2.tick(0, 0, false, false)
+		min_y = minf(min_y, p2.y)
+	var apex_new: float = rest_y - min_y
+	var v_j: float = -(2.0 * 26.0 * 0.995) / 7.752
+	var apex_ref: float = 0.0
+	var vv: float = v_j
+	for i in range(5000):
+		vv = (vv + a) * d
+		if vv >= 0.0:
+			break
+		apex_ref -= vv
+	_check(absf(apex_new - apex_ref) < 0.5, "jump apex matches 100Hz (%.2f vs %.2f px)" % [apex_new, apex_ref])
 
 
 func _check(cond: bool, label: String) -> void:
@@ -84,12 +132,12 @@ func _test_flat_tiles() -> void:
 	_clear()
 	# Bottom border row is at tile y=59 -> pixels 944..960. Player rests at y=928.
 	var p: EEPhysics = _mk_phys(400.0, 800.0)
-	for i in range(300):
+	for i in range(_t(300)):
 		p.tick(0, 0, false, false)
 	_check(p.is_grounded, "grounded on border floor")
 	_check(absf(p.y - 928.0) < 0.01, "rests exactly on tile top (y=%.3f)" % p.y)
 	var peak: float = 0.0
-	for i in range(300):
+	for i in range(_t(300)):
 		p.tick(1, 0, false, false)
 		peak = maxf(peak, p._speedX)
 	_check(peak > 6.0 and peak < 7.0, "peak walk speed ~6.7 (got %.2f)" % peak)
@@ -103,7 +151,7 @@ func _test_terminal_drop() -> void:
 	var p: EEPhysics = _mk_phys(400.0, 100.0)
 	p._speedY = 16.0
 	var crossed: bool = false
-	for i in range(300):
+	for i in range(_t(300)):
 		p.tick(0, 0, false, false)
 		if p.y + 8.0 > 400.0:
 			crossed = true
@@ -121,7 +169,7 @@ func _test_diagonal_slam() -> void:
 	p._speedX = 16.0
 	p._speedY = 16.0
 	var breached: bool = false
-	for i in range(150):
+	for i in range(_t(150)):
 		p.tick(1, 0, false, false)
 		var cx: float = p.x + 8.0
 		var cy: float = p.y + 8.0
@@ -137,7 +185,7 @@ func _test_v_wedge_and_jump() -> void:
 	WorldManager.add_polyline(_densify([Vector2(250, 300), Vector2(350, 400), Vector2(450, 300)]), "both", 9)
 	var p: EEPhysics = _mk_phys(356.0, 200.0)
 	var below_pinch: bool = false
-	for i in range(500):
+	for i in range(_t(500)):
 		p.tick(0, 0, false, false)
 		if p.y + 8.0 > 400.0:
 			below_pinch = true
@@ -156,7 +204,7 @@ func _test_v_wedge_and_jump() -> void:
 	# Stability: no oscillation over 100 further ticks
 	var min_x: float = 99999.0
 	var max_x: float = -99999.0
-	for i in range(100):
+	for i in range(_t(100)):
 		p.tick(0, 0, false, false)
 		min_x = minf(min_x, p.x)
 		max_x = maxf(max_x, p.x)
@@ -164,7 +212,7 @@ func _test_v_wedge_and_jump() -> void:
 	# Jump out
 	var rest_cy: float = p.y + 8.0
 	p.tick(0, 0, true, true)
-	for i in range(30):
+	for i in range(_t(30)):
 		p.tick(0, 0, false, false)
 	_check(rest_cy - (p.y + 8.0) > 15.0, "jump escapes the wedge (rose %.1fpx)" % (rest_cy - (p.y + 8.0)))
 
@@ -179,7 +227,7 @@ func _test_u_tube() -> void:
 	var p: EEPhysics = _mk_phys(400.0, 150.0)
 	p._speedY = 8.0
 	var escaped_side: bool = false
-	for i in range(600):
+	for i in range(_t(600)):
 		p.tick(0, 0, false, false)
 		var cx: float = p.x + 8.0
 		var cy: float = p.y + 8.0
@@ -203,7 +251,7 @@ func _test_ride_speed() -> void:
 	var breached: bool = false
 	var reached_end: bool = false
 	var speed_at_end: float = 0.0
-	for i in range(400):
+	for i in range(_t(400)):
 		p.tick(1, 0, false, false)
 		var cx: float = p.x + 8.0
 		var cy: float = p.y + 8.0
@@ -225,7 +273,7 @@ func _test_pinch_slam() -> void:
 	var p: EEPhysics = _mk_phys(350.0, 250.0)
 	p._speedY = 16.0
 	var breached: bool = false
-	for i in range(200):
+	for i in range(_t(200)):
 		p.tick(0, 0, false, false)
 		if p.y + 8.0 > 395.0:
 			breached = true

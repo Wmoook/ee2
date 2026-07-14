@@ -1,18 +1,39 @@
 class_name EEPhysics
 extends RefCounted
 ## EXACT port of EEIO PlayerPhysics. Position in PIXELS, speed in internal units.
+##
+## Tick rate: 240Hz simulation of the ORIGINAL 100Hz EE physics.
+## Speeds stay in EE's per-100Hz-tick units (SPEED_CLAMP 16, jump 26, boosts,
+## MULT — every feel constant untouched). Each 240Hz tick advances EE_TICK_FRAC
+## of one EE tick:
+##   * drag compounds exactly:      d_240 = d_100 ^ EE_TICK_FRAC
+##   * acceleration uses the exact affine-root factor _accel_scale (see _init),
+##     so the velocity sequence matches the 100Hz engine EXACTLY at every EE
+##     tick boundary (N-th root of the affine map v -> (v + a) * d)
+##   * position advances x += speed * EE_TICK_FRAC (same px/second)
+##   * the jump impulse is compensated (_jump_apex_comp, solved in _init) so
+##     the discrete jump apex matches the 100Hz engine to <0.01px — block
+##     clearances in existing levels are preserved.
 
-const MS_PER_TICK: float = 10.0
+const TPS: float = 240.0                    # Physics ticks per second (EE reference = 100)
+const MS_PER_TICK: float = 1000.0 / TPS
+const EE_TICK_FRAC: float = 100.0 / TPS     # Fraction of one original EE tick per tick
 const MULT: float = 7.752
 const SPEED_CLAMP: float = 16.0
 const TICK_SCALE: float = 1.0
+const JUMP_CD_TICKS: int = 12               # 50ms jump cooldown (was 5 ticks @100Hz)
+const COYOTE_TICKS: int = 10                # ~42ms coyote time (was 4 ticks @100Hz)
+const ACTION_DELAY_TICKS: int = 5           # ~21ms action-tile grace (was 2 ticks @100Hz)
 
 var _gravity: float = 2.0
 var _jump_height: float = 26.0
 
-var _base_drag: float = pow(0.9981, 10.0) * 1.00016093
-var _no_mod_drag: float = pow(0.9900, 10.0) * 1.00016093
-var _no_mod_drag_sqrt: float = sqrt(pow(0.9900, 10.0) * 1.00016093)  # For diagonal: apply to both axes = same total
+# Per-tick drags: EE's per-100Hz-tick drag compounded down to the 240Hz tick.
+var _base_drag: float = pow(pow(0.9981, 10.0) * 1.00016093, EE_TICK_FRAC)
+var _no_mod_drag: float = pow(pow(0.9900, 10.0) * 1.00016093, EE_TICK_FRAC)
+# Exact acceleration scale and jump apex compensation — derived in _init.
+var _accel_scale: float = 1.0
+var _jump_apex_comp: float = 1.0
 
 # Position in PIXELS
 var x: float = 16.0
@@ -56,9 +77,10 @@ var _was_on_rotated: bool = false
 var on_dot: bool = false
 var slow_dot: bool = false
 var _active_arrow_dir: int = -1  # -1 = no arrow, 0-3 = nearest cardinal
-# EE delayed action queue: [current, delayed] - gives 2-tick grace period
-var _action_queue: Array = [0, 0]
-var _action_queue_rot: Array = [0, 0]  # Rotation degrees parallel to _action_queue
+# EE delayed action queue (sized ACTION_DELAY_TICKS in _init) — same ~20ms
+# grace period the original 2-tick queue gave at 100Hz.
+var _action_queue: Array = []
+var _action_queue_rot: Array = []  # Rotation degrees parallel to _action_queue
 var _current_action_id: int = 0
 var _delayed_action_id: int = 0
 var _current_action_rot: int = 0
@@ -71,6 +93,47 @@ var _pre_step_x: float = 0.0  # Position at start of movement this tick
 var _pre_step_y: float = 0.0
 
 var _collides_fn: Callable = Callable()
+
+func _init() -> void:
+	# Exact affine-root acceleration scale: running v = (v + a*_accel_scale) * _base_drag
+	# each 240Hz tick reproduces the 100Hz sequence v = (v + a) * d_ee exactly
+	# at every EE tick boundary (N-th root of the affine velocity map).
+	var d_ee: float = pow(0.9981, 10.0) * 1.00016093
+	var d_new: float = pow(d_ee, EE_TICK_FRAC)
+	_accel_scale = d_ee * (d_new - 1.0) / (d_new * (d_ee - 1.0))
+	# Jump apex compensation: finer position sampling at 240Hz would land the
+	# apex ~2px higher than the 100Hz rectangle sum. Solve for the impulse
+	# scale that makes the discrete apexes match, so block clearances in
+	# existing levels stay identical.
+	var a_ee: float = _gravity / MULT
+	var v0: float = -(_gravity * _jump_height * 0.995) / MULT
+	var apex_ref: float = 0.0
+	var vr: float = v0
+	for _i in range(5000):
+		vr = (vr + a_ee) * d_ee
+		if vr >= 0.0:
+			break
+		apex_ref -= vr
+	var lo: float = 0.9
+	var hi: float = 1.05
+	for _it in range(48):
+		var k: float = (lo + hi) * 0.5
+		var vk: float = v0 * k
+		var apex_k: float = 0.0
+		for _j in range(12000):
+			vk = (vk + a_ee * _accel_scale) * _base_drag
+			if vk >= 0.0:
+				break
+			apex_k -= vk * EE_TICK_FRAC
+		if apex_k > apex_ref:
+			hi = k
+		else:
+			lo = k
+	_jump_apex_comp = (lo + hi) * 0.5
+	_action_queue.resize(ACTION_DELAY_TICKS)
+	_action_queue.fill(0)
+	_action_queue_rot.resize(ACTION_DELAY_TICKS)
+	_action_queue_rot.fill(0)
 
 func set_position_tiles(tx: float, ty: float) -> void:
 	x = tx * 16.0
@@ -168,8 +231,8 @@ func tick(input_h: int, input_v: int, space_just: bool, space_held: bool) -> voi
 	var moyAcc: float = moy * gm
 
 	# 4. Modifiers (display -> internal, scaled for tick rate)
-	var _modX: float = (moxAcc + mx) * TICK_SCALE / MULT
-	var _modY: float = (moyAcc + my) * TICK_SCALE / MULT
+	var _modX: float = (moxAcc + mx) * TICK_SCALE * _accel_scale / MULT
+	var _modY: float = (moyAcc + my) * TICK_SCALE * _accel_scale / MULT
 
 	var _diag_arrow: bool = _active_arrow_dir >= 0 and absf(mox) > 0.01 and absf(moy) > 0.01
 
@@ -237,7 +300,7 @@ func tick(input_h: int, input_v: int, space_just: bool, space_held: bool) -> voi
 			_surface_normal = Vector2(0, -1)  # Lines are roughly horizontal
 			var slide: float = WorldManager.get_line_slide_force(x, y, 16.0, 16.0)
 			if slide != 0.0:
-				_speedX += slide
+				_speedX += slide * _accel_scale
 		else:
 			var line_y: float = WorldManager.check_line_collision(x, y, 16.0, 16.0)
 			if line_y >= 0 and line_y < y:
@@ -394,7 +457,7 @@ func tick(input_h: int, input_v: int, space_just: bool, space_held: bool) -> voi
 					var spd_mag: float = spd.length()
 					var prev_n_dot: float = _prev_push_normal.dot(n) if _prev_push_normal.length() > 0.1 else 0.0
 					var tangent_speed: float = spd.dot(tangent)
-					var grav: Vector2 = Vector2(mox, moy) * _get_grav_mult() / MULT * 0.5
+					var grav: Vector2 = Vector2(mox, moy) * _get_grav_mult() * _accel_scale / MULT * 0.5
 					tangent_speed += grav.dot(tangent)
 					var new_spd: Vector2 = tangent * tangent_speed
 					var _falling_into_v: bool = _overlap_rots.size() >= 2 and absf(_pre_tick_speedY) > absf(_pre_tick_speedX) * 1.5
@@ -425,7 +488,7 @@ func tick(input_h: int, input_v: int, space_just: bool, space_held: bool) -> voi
 				is_grounded = true
 				if against_grav > 0.45:  # Non-steep: instant re-jump + coyote time
 					_jump_cooldown = 0
-					_coyote_ticks = 4
+					_coyote_ticks = COYOTE_TICKS
 
 	# 7.65 Curve collision - final constraint pass + contact flags.
 	# Line/free-block collisions above may have moved the player; re-enforce
@@ -513,7 +576,7 @@ func tick(input_h: int, input_v: int, space_just: bool, space_held: bool) -> voi
 	# Clear valley_jump when no block overlap near valley floor
 	if not _fb_hit and y >= _valley_center.y - 2.0 and _jump_cooldown == 0:
 		_stuck_ticks += 1
-		if _stuck_ticks > 10:
+		if _stuck_ticks > 24:
 			_pos_history.clear()
 			valley_jump = false
 			_valley_center = Vector2(-1, -1)
@@ -523,7 +586,7 @@ func tick(input_h: int, input_v: int, space_just: bool, space_held: bool) -> voi
 	# Coyote time: applies to ANY grounded state (grid tiles + free blocks alike)
 	# so border-floor feel matches free-block-floor feel.
 	if is_grounded:
-		_coyote_ticks = 4
+		_coyote_ticks = COYOTE_TICKS
 	elif _coyote_ticks > 0:
 		_coyote_ticks -= 1
 		if _jump_cooldown == 0:
@@ -642,9 +705,9 @@ func _handle_jump(space_just: bool, space_held: bool) -> void:
 			jumpCount = 0
 		if jumpCount < maxJumps:
 			if maxJumps < 1000: jumpCount += 1
-			var jump_mag: float = _gravity * _jump_height * _get_jump_mult() * 0.995 * TICK_SCALE / MULT
+			var jump_mag: float = _gravity * _jump_height * _get_jump_mult() * 0.995 * TICK_SCALE * _jump_apex_comp / MULT
 			_speedY = -jump_mag
-			_jump_cooldown = 5
+			_jump_cooldown = JUMP_CD_TICKS
 			# Don't clear center - resume lock on landing
 			did_jump = true
 	elif _active_arrow_dir >= 0:
@@ -654,13 +717,13 @@ func _handle_jump(space_just: bool, space_held: bool) -> void:
 		if jumpCount < maxJumps and grav_len > 0.01:
 			if maxJumps < 1000: jumpCount += 1
 			var grav_dir: Vector2 = grav_vec / grav_len
-			var jump_mag: float = _gravity * _jump_height * _get_jump_mult() * 0.995 * TICK_SCALE / MULT
+			var jump_mag: float = _gravity * _jump_height * _get_jump_mult() * 0.995 * TICK_SCALE * _jump_apex_comp / MULT
 			var tangent_dir: Vector2 = Vector2(-grav_dir.y, grav_dir.x)
 			var cur_spd: Vector2 = Vector2(_speedX, _speedY)
 			var tangent_spd: float = cur_spd.dot(tangent_dir)
 			_speedX = tangent_dir.x * tangent_spd + (-grav_dir.x * jump_mag)
 			_speedY = tangent_dir.y * tangent_spd + (-grav_dir.y * jump_mag)
-			_jump_cooldown = 5
+			_jump_cooldown = JUMP_CD_TICKS
 			_jumped_in_arrow = true
 			did_jump = true
 	else:
@@ -668,15 +731,15 @@ func _handle_jump(space_just: bool, space_held: bool) -> void:
 		# X axis jump (horizontal gravity - shouldn't fire in normal mode)
 		if jumpCount < maxJumps and morx != 0:
 			if maxJumps < 1000: jumpCount += 1
-			var v: float = -morx * _jump_height * _get_jump_mult() * 0.995
+			var v: float = -morx * _jump_height * _get_jump_mult() * 0.995 * _jump_apex_comp
 			_speedX = v * TICK_SCALE / MULT
-			_jump_cooldown = 5
+			_jump_cooldown = JUMP_CD_TICKS
 			did_jump = true
 
 		# Y axis jump - preserve horizontal speed
 		if jumpCount < maxJumps and mory != 0:
 			if maxJumps < 1000: jumpCount += 1
-			var jump_speed: float = absf(mory) * _jump_height * _get_jump_mult() * 0.995 * TICK_SCALE / MULT
+			var jump_speed: float = absf(mory) * _jump_height * _get_jump_mult() * 0.995 * TICK_SCALE * _jump_apex_comp / MULT
 			_speedY = -sign(mory) * jump_speed
 			# Slope boost — capped so steep/vertical surfaces don't launch sideways
 			var slope_boost: float = clampf(_surface_normal.x, -0.5, 0.5) * jump_speed
@@ -684,7 +747,7 @@ func _handle_jump(space_just: bool, space_held: bool) -> void:
 				if _speedX == 0 or sign(slope_boost) == sign(_speedX):
 					_speedX += slope_boost
 			_surface_normal = Vector2(0, -1)
-			_jump_cooldown = 5
+			_jump_cooldown = JUMP_CD_TICKS
 			did_jump = true
 
 	if did_jump:
@@ -695,10 +758,11 @@ func _handle_jump(space_just: bool, space_held: bool) -> void:
 			lastJumpMs = _now_ms
 
 func _step_position(frac: float = 1.0) -> void:
-	## Moves by _speedX/_speedY scaled by frac (CurveSolver substeps the tick
-	## near curves). frac=1.0 is the plain full EE step.
-	var currentSX: float = _speedX * frac
-	var currentSY: float = _speedY * frac
+	## Moves by _speedX/_speedY (EE per-100Hz-tick units) scaled by
+	## EE_TICK_FRAC (px per 240Hz tick) and frac (CurveSolver substeps the
+	## tick near curves). frac=1.0 is the plain full tick step.
+	var currentSX: float = _speedX * EE_TICK_FRAC * frac
+	var currentSY: float = _speedY * EE_TICK_FRAC * frac
 	var rx: float = fmod(x, 1.0)
 	if rx < 0: rx += 1.0
 	var ry: float = fmod(y, 1.0)
@@ -1003,17 +1067,19 @@ func apply_action_tile(block_id: int, rotation_deg: int = 0) -> void:
 	var is_dot_id: bool = (idc == 4 or idc == 414)
 
 	if is_dot_id:
-		_delayed_action_id = _action_queue[1]
-		_delayed_action_rot = _action_queue_rot[1]
-		_action_queue = [idc, idc]
-		_action_queue_rot = [rotation_deg, rotation_deg]
+		_delayed_action_id = _action_queue[ACTION_DELAY_TICKS - 1]
+		_delayed_action_rot = _action_queue_rot[ACTION_DELAY_TICKS - 1]
+		_action_queue.fill(idc)
+		_action_queue_rot.fill(rotation_deg)
 		_current_action_id = idc
 		_current_action_rot = rotation_deg
 	else:
 		_delayed_action_id = _action_queue[0]
 		_delayed_action_rot = _action_queue_rot[0]
-		_action_queue = [_action_queue[1], idc]
-		_action_queue_rot = [_action_queue_rot[1], rotation_deg]
+		_action_queue.pop_front()
+		_action_queue.push_back(idc)
+		_action_queue_rot.pop_front()
+		_action_queue_rot.push_back(rotation_deg)
 		_current_action_id = idc
 		_current_action_rot = rotation_deg
 

@@ -56,10 +56,18 @@ var _name_fade: float = 0.0   # 0=hidden, 1=fully visible
 var _visual_pos: Vector2 = Vector2.ZERO
 var _phys_pos: Vector2 = Vector2.ZERO
 var _prev_pos: Vector2 = Vector2.ZERO
+# Frame interpolation: interpolate rendered position between physics ticks
+# so visual motion is smooth at uncapped FPS (not stuttery at 100Hz physics).
+var _prev_tick_pos: Vector2 = Vector2.ZERO
+var _curr_tick_pos: Vector2 = Vector2.ZERO
+var _last_tick_time_ms: float = 0.0
 var _smooth_look: Vector2 = Vector2.ZERO  # Smoothed look-ahead offset
 # Multiplayer sync
 var _remote_sync: RemotePlayerSync = null
 var _sync_tick_counter: int = 0
+# EE camera catch-up: 1/16 per original 100Hz tick, compounded to 240Hz ticks
+# so the camera lag FEEL is identical at the higher tick rate.
+var _cam_lerp: float = 1.0 - pow(1.0 - 0.0625, EEPhysics.EE_TICK_FRAC)
 var _smooth_normal: Vector2 = Vector2(0, -1)  # Smoothed surface normal for smiley
 var _speech_label: Label = null
 var _speech_text: String = ""
@@ -87,9 +95,8 @@ func _ready() -> void:
 	_smiley_sprite.z_index = 4  # Above fire trail (z=3) and foreground blocks (z=2)
 	if _use_anim_sprite:
 		_smiley_sprite.texture = _anim_textures[0]
-		# Scale 40x40 full-res down to 26x26 display (GPU nearest-neighbor = sharp)
-		var _warp_px: float = 0.35 * 2.0 / 40.0
-		_smiley_sprite.scale = Vector2(ANIM_SCALE + _warp_px, ANIM_SCALE + _warp_px)  # X+Y warp +0.35px for ball
+		# Scale 40x40 full-res down to exact 16x16 (no warp — prevents sprite overlapping blocks)
+		_smiley_sprite.scale = Vector2(ANIM_SCALE, ANIM_SCALE)
 	add_child(_smiley_sprite)
 	if not _use_anim_sprite:
 		_set_smiley(smiley_id)
@@ -173,6 +180,10 @@ func _setup_camera() -> void:
 	_phys_pos = Vector2(physics.get_pixel_x(), physics.get_pixel_y())
 	_visual_pos = _phys_pos
 	position = _phys_pos
+	# Initialize interpolation anchors so render doesn't lerp from (0,0) on first frame
+	_prev_tick_pos = _phys_pos
+	_curr_tick_pos = _phys_pos
+	_last_tick_time_ms = Time.get_ticks_msec()
 
 	get_parent().add_child(_camera)
 	_camera.global_position = Vector2(physics.get_pixel_x() + 8, physics.get_pixel_y() + 8)
@@ -192,7 +203,11 @@ func _set_smiley(id: int) -> void:
 	atlas_tex.region = Rect2(local_col * SMILEY_SIZE, 0, SMILEY_SIZE, SMILEY_SIZE)
 	_smiley_sprite.texture = atlas_tex
 
-func _physics_process(delta: float) -> void:
+func _tick_update(delta: float) -> void:
+	## Runs the 240Hz physics accumulator. Called from _process (render rate)
+	## so on high-refresh monitors ticks are paced one-per-frame with fresh
+	## input — combined with the CBF event ticks this is Geometry-Dash-style
+	## click-between-frames responsiveness.
 	if _is_dead:
 		_death_timer += delta
 		# Spaghettification effect for gravity zone death
@@ -204,7 +219,7 @@ func _physics_process(delta: float) -> void:
 			_smiley_sprite.rotation = stretch_angle + PI * 0.5
 			# Stretch along the direction INTO the hole, get thin perpendicular
 			# Y = toward hole (stretch), X = perpendicular (thin)
-			var base_s: float = ANIM_SCALE + 0.35 * 2.0 / 40.0
+			var base_s: float = ANIM_SCALE
 			var stretch_y: float = lerpf(1.0, 2.5, t * t)  # Elongate toward hole
 			var thin_x: float = lerpf(1.0, 0.1, t * t)  # Get very thin
 			var shrink: float = lerpf(1.0, 0.0, t * t * t)  # Shrink to nothing at end
@@ -253,7 +268,7 @@ func _physics_process(delta: float) -> void:
 				_gz_death = false
 				_smiley_sprite.visible = true
 				_smiley_sprite.modulate = Color.WHITE
-				_smiley_sprite.scale = Vector2(ANIM_SCALE + 0.35 * 2.0 / 40.0, ANIM_SCALE + 0.35 * 2.0 / 40.0)
+				_smiley_sprite.scale = Vector2(ANIM_SCALE, ANIM_SCALE)
 				_smiley_sprite.rotation = 0.0
 				_name_label.visible = true
 				_fire_particles.clear()
@@ -264,7 +279,7 @@ func _physics_process(delta: float) -> void:
 					var to_center: Vector2 = _gz_death_center - (_visual_pos + Vector2(8, 8))
 					var stretch_angle: float = to_center.angle()
 					_smiley_sprite.rotation = stretch_angle + PI * 0.5
-					var base_s: float = ANIM_SCALE + 0.35 * 2.0 / 40.0
+					var base_s: float = ANIM_SCALE
 					var stretch_y: float = lerpf(1.0, 2.5, t * t)
 					var thin_x: float = lerpf(1.0, 0.1, t * t)
 					var shrink: float = lerpf(1.0, 0.0, t * t * t)
@@ -347,6 +362,8 @@ func _physics_process(delta: float) -> void:
 	var used_just: bool = false
 	while _tick_accumulator >= EEPhysics.MS_PER_TICK:
 		_tick_accumulator -= EEPhysics.MS_PER_TICK
+		# Snapshot previous tick position for interpolation
+		_prev_tick_pos = _curr_tick_pos
 		# Detect action tile before physics (updates delayed queue)
 		if not physics.is_god_mode:
 			var ctx: int = int(floor((physics.x + 8) / 16.0))
@@ -367,6 +384,9 @@ func _physics_process(delta: float) -> void:
 		physics.tick(ix, iy, _space_just and not used_just, _space_held)
 		if _space_just:
 			used_just = true
+		# Record new tick position for interpolation
+		_curr_tick_pos = Vector2(physics.get_pixel_x(), physics.get_pixel_y())
+		_last_tick_time_ms = Time.get_ticks_msec() - _tick_accumulator
 		# Camera is a child so it moves with player. To create lag,
 		# counter the player's movement in the offset, then slowly recover.
 		# Exact EE camera: independent, offset += (target - offset) * 1/16
@@ -374,15 +394,15 @@ func _physics_process(delta: float) -> void:
 			var player_center: Vector2 = Vector2(physics.get_pixel_x() + 8, physics.get_pixel_y() + 8)
 			var target: Vector2 = player_center + GameState.camera_offset
 			var cam: Vector2 = _camera.global_position
-			cam.x = cam.x + (target.x - cam.x) * 0.0625
-			cam.y = cam.y + (target.y - cam.y) * 0.0625
+			cam.x = cam.x + (target.x - cam.x) * _cam_lerp
+			cam.y = cam.y + (target.y - cam.y) * _cam_lerp
 			_camera.global_position = cam
 	_space_just = false
 	_cbf_consumed_jump = false  # Reset for next frame
 
-	# Broadcast position to other players (every 3 ticks = ~33Hz for low lag)
+	# Broadcast position to other players (every 7 ticks @240Hz = ~34Hz for low lag)
 	_sync_tick_counter += 1
-	if _sync_tick_counter >= 3 and NetworkManager._peer != null:
+	if _sync_tick_counter >= 7 and NetworkManager._peer != null:
 		_sync_tick_counter = 0
 		var af: int = _anim_frame
 		var fh: bool = _smiley_sprite.flip_h if _smiley_sprite else false
@@ -436,29 +456,8 @@ func _physics_process(delta: float) -> void:
 			WorldManager._pending_net_gz.clear()
 
 	_phys_pos = Vector2(physics.get_pixel_x(), physics.get_pixel_y())
-	# Visual position: pixel-snap on grid tiles, sub-pixel on curves/slopes
-	# Grid tile check: prevents polyline collision from causing sub-pixel visual
-	# when the player is actually standing on a solid grid tile
-	var _snap_to_grid: bool = false
-	if physics.is_grounded:
-		var _gcx: int = int(floor((physics.x + 8) / 16.0))
-		var _gcy: int = int(floor((physics.y + 16) / 16.0))
-		if WorldManager.is_solid_at(_gcx, _gcy):
-			_snap_to_grid = true
-	if _snap_to_grid:
-		_visual_pos = Vector2(floor(_phys_pos.x), floor(_phys_pos.y))
-		# (Y nudge removed — warp handles alignment now)
-	elif physics.purple_pushed:
-		_visual_pos = Vector2(floor(_phys_pos.x), floor(_phys_pos.y))  # Snap to kill oscillation flicker
-	elif physics.on_rotated_block:
-		_visual_pos = _phys_pos  # Sub-pixel = smooth diagonal on curves/slopes
-	else:
-		var on_line: float = WorldManager.check_line_collision(physics.x, physics.y + 1, 16.0, 16.0)
-		if on_line >= 0:
-			_visual_pos = _phys_pos
-		else:
-			_visual_pos = Vector2(floor(_phys_pos.x), floor(_phys_pos.y))
-	position = _visual_pos
+	_visual_pos = _phys_pos
+	# Position is set in _process via interpolation for smooth rendering at uncapped FPS
 
 	# Animated smiley: update frame based on movement direction
 	# States: 0=idle, 1=transition (starting), 2=moving, 3=transition (stopping)
@@ -754,6 +753,16 @@ func _physics_process(delta: float) -> void:
 		_die()
 
 func _process(delta: float) -> void:
+	# Game update runs at render rate: the 240Hz tick accumulator sees fresh
+	# input every rendered frame (on a 240Hz display that is one tick per
+	# frame — no batching, minimal input latency).
+	_tick_update(delta)
+	# Frame interpolation: smooth position between physics ticks at uncapped render FPS.
+	if is_local and not _is_dead and _last_tick_time_ms > 0.0:
+		var now_ms: float = Time.get_ticks_msec()
+		var elapsed_ms: float = now_ms - _last_tick_time_ms
+		var alpha: float = clampf(elapsed_ms / EEPhysics.MS_PER_TICK, 0.0, 1.0)
+		position = _prev_tick_pos.lerp(_curr_tick_pos, alpha)
 	if _show_debug and _debug_label and physics:
 		_debug_label.text = physics.debug_text
 	# Force clear particles 1.5s after death
@@ -1014,8 +1023,8 @@ func _run_cbf_tick() -> void:
 	if _camera:
 		var pc: Vector2 = _phys_pos + Vector2(8, 8) + GameState.camera_offset
 		var cam: Vector2 = _camera.global_position
-		cam.x = cam.x + (pc.x - cam.x) * 0.0625
-		cam.y = cam.y + (pc.y - cam.y) * 0.0625
+		cam.x = cam.x + (pc.x - cam.x) * _cam_lerp
+		cam.y = cam.y + (pc.y - cam.y) * _cam_lerp
 		_camera.global_position = cam
 
 	# Consume accumulator
@@ -1090,7 +1099,7 @@ func _respawn() -> void:
 	_gz_death = false
 	_smiley_sprite.visible = true
 	_smiley_sprite.modulate = Color.WHITE
-	_smiley_sprite.scale = Vector2(ANIM_SCALE + 0.35 * 2.0 / 40.0, ANIM_SCALE + 0.35 * 2.0 / 40.0)
+	_smiley_sprite.scale = Vector2(ANIM_SCALE, ANIM_SCALE)
 	_smiley_sprite.rotation = 0.0
 	_name_label.visible = true
 	var sp: Vector2 = WorldManager.get_spawn_point()
