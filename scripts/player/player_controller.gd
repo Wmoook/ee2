@@ -73,7 +73,11 @@ var _cam_lerp: float = 1.0 - pow(1.0 - 0.0625, EEPhysics.EE_TICK_FRAC)
 # every per-call rate must be scaled by delta to keep the exact same look at
 # any FPS. _rc() converts a per-60Hz-frame lerp factor to this frame's delta.
 const VISUAL_TUNE_HZ: float = 60.0
-const ROLL_RATE: float = VISUAL_TUNE_HZ / 8.0  # Smiley roll: was _speedX/8 per 60Hz frame
+# Gear roll: one full rotation per this many px of horizontal travel.
+# 16.0 = one full spin per block moved (gear-on-the-grid feel).
+# A physically rolling 16px ball would be PI*16 ~= 50.3 px/rev if preferred.
+const ROLL_PX_PER_REV: float = 16.0
+var _last_roll_x: float = 0.0  # Physics X last frame (gear roll displacement source)
 
 func _rc(f: float, delta: float) -> float:
 	return 1.0 - pow(1.0 - f, delta * VISUAL_TUNE_HZ)
@@ -527,6 +531,13 @@ func _tick_update(delta: float) -> void:
 			_smiley_sprite.flip_h = false
 
 	# Smiley rotation
+	# Gear roll source: ACTUAL horizontal displacement since last frame — the
+	# smiley is locked to the ground like a gear (one rotation per
+	# ROLL_PX_PER_REV px moved, zero drift vs real movement).
+	var _roll_dx: float = physics.x - _last_roll_x
+	_last_roll_x = physics.x
+	if absf(_roll_dx) > 32.0:
+		_roll_dx = 0.0  # Teleport/respawn — no spin burst
 	if _use_anim_sprite and _smiley_sprite:
 		if physics.is_wedged:
 			# Wedged between curves: perfectly upright, no rolling
@@ -537,8 +548,8 @@ func _tick_update(delta: float) -> void:
 		else:
 			var spd_total: float = absf(physics._speedX) + absf(physics._speedY)
 			if spd_total > 0.3:
-				# Rolling ball: time-based roll (same look as the original 60Hz tuning)
-				_smiley_sprite.rotation = fmod(_smiley_sprite.rotation + physics._speedX * ROLL_RATE * delta, TAU)
+				# Gear roll: one full rotation per block of travel
+				_smiley_sprite.rotation = fmod(_smiley_sprite.rotation + (_roll_dx / ROLL_PX_PER_REV) * TAU, TAU)
 			else:
 				# No momentum: lerp back to upright so directional sprites look correct
 				_smiley_sprite.rotation = lerp_angle(_smiley_sprite.rotation, 0.0, _rc(0.3, delta))
