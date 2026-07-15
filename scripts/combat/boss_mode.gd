@@ -38,6 +38,8 @@ var _player_label: Label
 var _intro_label: Label
 var _mash_label: Label
 var _result_panel: PanelContainer
+var _result_label: Label
+var _result_sub: Label
 
 
 func _ready() -> void:
@@ -154,17 +156,15 @@ func _build_hud() -> void:
 	var rv: VBoxContainer = VBoxContainer.new()
 	rv.add_theme_constant_override("separation", 10)
 	_result_panel.add_child(rv)
-	var result_label: Label = Label.new()
-	result_label.name = "ResultLabel"
-	result_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	result_label.add_theme_font_size_override("font_size", 38)
-	rv.add_child(result_label)
-	var sub: Label = Label.new()
-	sub.name = "ResultSub"
-	sub.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	sub.add_theme_font_size_override("font_size", 13)
-	sub.add_theme_color_override("font_color", Color(0.75, 0.75, 0.85))
-	rv.add_child(sub)
+	_result_label = Label.new()
+	_result_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_result_label.add_theme_font_size_override("font_size", 38)
+	rv.add_child(_result_label)
+	_result_sub = Label.new()
+	_result_sub.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_result_sub.add_theme_font_size_override("font_size", 13)
+	_result_sub.add_theme_color_override("font_color", Color(0.75, 0.75, 0.85))
+	rv.add_child(_result_sub)
 	var menu_btn: Button = EditorToolsDock.make_button("Return to Menu", Color(0.3, 0.4, 0.6))
 	menu_btn.custom_minimum_size = Vector2(200, 34)
 	menu_btn.pressed.connect(_return_to_menu)
@@ -226,16 +226,14 @@ func _end(player_won: bool) -> void:
 	_over = true
 	if _struggle:
 		_exit_struggle()
-	var rl: Label = _result_panel.get_node("VBoxContainer/ResultLabel") as Label
-	var rs: Label = _result_panel.get_node("VBoxContainer/ResultSub") as Label
 	if player_won:
-		rl.text = "WARDEN  DESTROYED"
-		rl.add_theme_color_override("font_color", Color(0.3, 1.0, 0.4))
-		rs.text = "The chamber falls silent. You are the storm."
+		_result_label.text = "WARDEN  DESTROYED"
+		_result_label.add_theme_color_override("font_color", Color(0.3, 1.0, 0.4))
+		_result_sub.text = "The chamber falls silent. You are the storm."
 	else:
-		rl.text = "SYSTEM  PURGED"
-		rl.add_theme_color_override("font_color", Color(1.0, 0.35, 0.3))
-		rs.text = "The Warden endures. Study its telegraphs — parry the slam, mash the clash."
+		_result_label.text = "SYSTEM  PURGED"
+		_result_label.add_theme_color_override("font_color", Color(1.0, 0.35, 0.3))
+		_result_sub.text = "The Warden endures. Study its telegraphs — parry the slam, mash the clash."
 	_result_panel.visible = true
 
 

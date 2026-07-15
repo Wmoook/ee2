@@ -37,6 +37,8 @@ var _score_label: Label
 var _weapon_label: Label
 var _fight_label: Label
 var _result_panel: PanelContainer
+var _result_label: Label
+var _result_sub: Label
 
 
 func _ready() -> void:
@@ -169,17 +171,15 @@ func _build_hud() -> void:
 	var rv: VBoxContainer = VBoxContainer.new()
 	rv.add_theme_constant_override("separation", 10)
 	_result_panel.add_child(rv)
-	var result_label: Label = Label.new()
-	result_label.name = "ResultLabel"
-	result_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	result_label.add_theme_font_size_override("font_size", 40)
-	rv.add_child(result_label)
-	var sub: Label = Label.new()
-	sub.name = "ResultSub"
-	sub.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	sub.add_theme_font_size_override("font_size", 13)
-	sub.add_theme_color_override("font_color", Color(0.75, 0.75, 0.85))
-	rv.add_child(sub)
+	_result_label = Label.new()
+	_result_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_result_label.add_theme_font_size_override("font_size", 40)
+	rv.add_child(_result_label)
+	_result_sub = Label.new()
+	_result_sub.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_result_sub.add_theme_font_size_override("font_size", 13)
+	_result_sub.add_theme_color_override("font_color", Color(0.75, 0.75, 0.85))
+	rv.add_child(_result_sub)
 	var menu_btn: Button = EditorToolsDock.make_button("Return to Menu", Color(0.3, 0.4, 0.6))
 	menu_btn.custom_minimum_size = Vector2(200, 34)
 	menu_btn.pressed.connect(_return_to_menu)
@@ -282,26 +282,24 @@ func _end(player_won: bool) -> void:
 	_over = true
 	for b in bots:
 		b.set_dead(true)
-	var rl: Label = _result_panel.get_node("VBoxContainer/ResultLabel") as Label
-	var rs: Label = _result_panel.get_node("VBoxContainer/ResultSub") as Label
 	if player_won:
-		rl.text = "VICTORY!"
-		rl.add_theme_color_override("font_color", Color(0.3, 1.0, 0.4))
+		_result_label.text = "VICTORY!"
+		_result_label.add_theme_color_override("font_color", Color(0.3, 1.0, 0.4))
 		if bots.size() == 1:
-			rs.text = "The bot is scrap metal. %d lives remaining." % player_lives
+			_result_sub.text = "The bot is scrap metal. %d lives remaining." % player_lives
 		else:
-			rs.text = "All %d bots are scrap metal. %d lives remaining." % [bots.size(), player_lives]
+			_result_sub.text = "All %d bots are scrap metal. %d lives remaining." % [bots.size(), player_lives]
 	else:
-		rl.text = "DEFEATED"
-		rl.add_theme_color_override("font_color", Color(1.0, 0.35, 0.3))
+		_result_label.text = "DEFEATED"
+		_result_label.add_theme_color_override("font_color", Color(1.0, 0.35, 0.3))
 		var standing: int = 0
 		for l in bots_lives:
 			if l > 0:
 				standing += 1
 		if bots.size() == 1:
-			rs.text = "The bot takes this one. Rematch?"
+			_result_sub.text = "The bot takes this one. Rematch?"
 		else:
-			rs.text = "%d of %d bots still standing. Rematch?" % [standing, bots.size()]
+			_result_sub.text = "%d of %d bots still standing. Rematch?" % [standing, bots.size()]
 	_result_panel.visible = true
 
 

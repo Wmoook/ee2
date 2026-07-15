@@ -47,6 +47,13 @@ func _ready() -> void:
 		if i % 5 == 0:
 			print("t=%4.1f state=%-10s hp=%d/%d lives=%d struggle=%s" % [
 				i * 0.2, bm.boss.state_name(), bm.boss.hp, bm.boss.max_hp, bm.player_lives, bm._struggle])
+	# The result panel must actually appear (it used to crash on mangled
+	# node paths, leaving the game input-dead with no DEFEATED screen)
+	bm._end(false)
+	await get_tree().process_frame
+	print("END PANEL %s (visible=%s text=%s)" % [
+		"PASS" if (bm._result_panel.visible and bm._result_label.text != "") else "FAIL",
+		bm._result_panel.visible, bm._result_label.text])
 	var img2: Image = get_viewport().get_texture().get_image()
 	img2.save_png("user://boss_check.png")
 	print("STATES SEEN: %s" % [seen.keys()])
