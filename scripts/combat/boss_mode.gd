@@ -367,7 +367,7 @@ func _process(delta: float) -> void:
 		# HOLDS the clash. Surviving the 6s is the real goal; actually
 		# shoving it back into the Warden's face is god-tier (or DOOM-armed:
 		# counter-beam clicks count double).
-		var pull: float = [0.50, 0.56, 0.62][boss.phase - 1]
+		var pull: float = [0.50, 0.56, 0.62, 0.68, 0.75][clampi(boss.phase - 1, 0, 4)]
 		_clash_t += pull * delta
 		var lmb_now: bool = Input.is_mouse_button_pressed(MOUSE_BUTTON_LEFT)
 		if lmb_now and not _lmb_was_down:
