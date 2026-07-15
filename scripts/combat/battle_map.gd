@@ -36,7 +36,7 @@ const ARROW_UP: int = 2
 # the lift entrance, a player camping a platform).
 const CLIMB_LEFT: Array = [Vector2(568.0, 456.0), Vector2(624.0, 424.0), Vector2(680.0, 390.0)]
 const CLIMB_RIGHT: Array = [Vector2(952.0, 456.0), Vector2(912.0, 424.0), Vector2(840.0, 390.0)]
-const SUPER_POS: Vector2 = Vector2(768.0, 494.0)  # DOOM RAY drop point (center floor)
+const SUPER_POS: Vector2 = Vector2(768.0, 104.0)  # DOOM RAY drop: crown of the arrow lift — ride up to claim it
 
 
 static func build() -> void:
