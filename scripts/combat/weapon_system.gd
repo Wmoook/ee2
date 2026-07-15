@@ -131,6 +131,11 @@ func is_super_available() -> bool:
 	return _super_state == 2
 
 
+func is_super_hot() -> bool:
+	## Materializing OR on the field — worth racing for already.
+	return _super_state >= 1
+
+
 func get_super_status() -> String:
 	match _super_state:
 		0: return "DOOM RAY in %ds" % int(ceil(_super_timer))

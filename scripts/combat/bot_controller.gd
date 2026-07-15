@@ -37,6 +37,7 @@ var _backoff_timer: float = 0.0  # Backing up to build a run-up over spikes
 var _charge_hold: float = 0.0    # Winding up a charged dash
 var _threat_react: float = -1.0  # Human-limit reaction delay to incoming melee
 var _shield_hold: float = 0.0    # Holding the shield through a parry window
+var _beam_threat: bool = false   # An enemy DOOM RAY is on/near us right now
 var _jump_verified: bool = false # This think-tick's jump already passed simulation
 var _stuck_timer: float = 0.0    # Progress watchdog
 var last_jump_info: String = ""  # Forensics: last verified jump launch + prediction
@@ -241,14 +242,25 @@ func _process(delta: float) -> void:
 		var pd2: float = get_center().distance_to(get_player_center.call())
 		var unarmed_now: bool = weapon_system.get_weapon("bot") == ""
 		var threat: bool = false
+		_beam_threat = false
 		if not pa.is_empty():
 			threat = (pa.dash_time > 0.0 and pd2 < 220.0) or (pa.charging and pa.charge > 0.25 and pd2 < 280.0)
+			# The DOOM RAY counts as a threat: shield it and get out of it
+			if pa.get("beam_draw", false):
+				var bfrom: Vector2 = pa.get_center.call() + pa.aim * 16.0
+				var bto: Vector2 = pa.get("beam_end", bfrom)
+				var bseg: Vector2 = bto - bfrom
+				var bt: float = clampf((get_center() - bfrom).dot(bseg) / maxf(bseg.length_squared(), 1.0), 0.0, 1.0)
+				_beam_threat = get_center().distance_to(bfrom + bseg * bt) < 64.0
+				threat = threat or _beam_threat
 		if threat and _threat_react < 0.0 and unarmed_now:
 			_threat_react = randf_range(0.12, 0.19)  # The reaction window you can beat
 		if _threat_react >= 0.0:
 			_threat_react -= delta
 			if _threat_react < 0.0:
 				_shield_hold = 0.55
+		if _beam_threat and _shield_hold > 0.0:
+			_shield_hold = maxf(_shield_hold, 0.3)  # Keep it up while the ray is on us
 		if _shield_hold > 0.0:
 			_shield_hold -= delta
 			if unarmed_now:
@@ -372,9 +384,18 @@ func _think() -> void:
 				found = true
 		if not found:
 			goal = player_c  # Nothing up — chase anyway
-	# The DOOM RAY outranks everything — sprint for the super pad
-	if weapon_system and weapon_system.is_super_available() and weapon_system.get_weapon("bot") != "doom":
+	# The DOOM RAY outranks everything — race for it the moment the spawn
+	# animation starts, not just once it lands
+	if weapon_system and weapon_system.is_super_hot() and weapon_system.get_weapon("bot") != "doom":
 		goal = weapon_system.super_pos
+	# Under an enemy beam: survival outranks even the race — shield is up
+	# (reflex block) and we RUN laterally out of the column
+	if _beam_threat and weapon_system and weapon_system.get_weapon("bot") == "":
+		goal = my_c + Vector2(signf(my_c.x - player_c.x) * 240.0, 0.0)
+		if goal.x < 64.0:
+			goal.x = my_c.x + 240.0
+		elif goal.x > 1472.0:
+			goal.x = my_c.x - 240.0
 	# High goals (pads on platforms, the lift entrance, campers): climb the
 	# nearest tower LADDER waypoint by waypoint instead of hopping uselessly
 	# underneath the target.
