@@ -56,7 +56,7 @@ func _wire_up() -> void:
 	# Only the DOOM RAY appears in the world; guns are the permanent
 	# slots 2/3 loadout when the toggle is ON
 	weapons.super_pos = BossMap.SUPER_POS
-	boss.max_hp = 90 if GameState.battle_guns_enabled else 42
+	boss.max_hp = 130 if GameState.battle_guns_enabled else 60
 	boss.hp = boss.max_hp
 	boss.ws = weapons
 	boss.min_x = BossMap.BOUNDS_MIN_X
@@ -184,8 +184,8 @@ func _draw_boss_bar() -> void:
 	var col: Color = boss.phase_color() if boss else Color(1, 0, 0)
 	_boss_bar.draw_rect(Rect2(2, 2, (w - 4.0) * frac, h - 4.0), col)
 	_boss_bar.draw_rect(Rect2(2, 2, (w - 4.0) * frac, (h - 4.0) * 0.4), Color(1, 1, 1, 0.25))
-	# Phase notches at 2/3 and 1/3
-	for notch in [1.0 / 3.0, 2.0 / 3.0]:
+	# Phase notches at every fifth (5 phases)
+	for notch in [0.2, 0.4, 0.6, 0.8]:
 		_boss_bar.draw_line(Vector2(2.0 + (w - 4.0) * notch, 1.0), Vector2(2.0 + (w - 4.0) * notch, h - 1.0), Color(0, 0, 0, 0.8), 2.0)
 	_boss_bar.draw_rect(Rect2(0.5, 0.5, w - 1.0, h - 1.0), Color(col.r, col.g, col.b, 0.8), false, 1.5)
 
@@ -278,7 +278,8 @@ func _process(delta: float) -> void:
 	var pc: Vector2 = Vector2(player.physics.x + 8.0, player.physics.y + 8.0) if p_ok else Vector2.ZERO
 
 	# ── Body contact vs the Warden: ram bounces, dash punches land ──
-	if p_ok and boss.alive():
+	# (not while it's rifted away — the void has no hull)
+	if p_ok and boss.alive() and boss.state != BossController.ST_RIFT_GONE:
 		var dvec: Vector2 = pc - boss.pos
 		var d: float = dvec.length()
 		if d < BossController.BODY_R + 10.0 and d > 0.01:
@@ -313,9 +314,12 @@ func _process(delta: float) -> void:
 						weapons.spawn_hit(pc, Color(0.9, 0.95, 1.0), n)
 
 	# ── Annihilation beam: damage or THE CLASH ──
-	if boss.state == BossController.ST_BEAM and p_ok:
-		# The laser path is a chain of segments (wall ricochets included) —
-		# a reflected branch can catch you from behind
+	var beam_like: bool = boss.state == BossController.ST_BEAM or boss.state == BossController.ST_CAGE
+	if beam_like and p_ok:
+		# The laser path is a chain of segments (wall ricochets / the four
+		# cage beams) — a reflected branch can catch you from behind
+		var is_cage: bool = boss.state == BossController.ST_CAGE
+		var corr_r: float = 24.0 if is_cage else 34.0
 		var in_corridor: bool = false
 		var hit_dir: Vector2 = boss.beam_dir
 		for seg_d in boss.beam_segments:
@@ -323,15 +327,18 @@ func _process(delta: float) -> void:
 			if sv.length_squared() < 1.0:
 				continue
 			var st: float = clampf((pc - seg_d.from).dot(sv) / sv.length_squared(), 0.0, 1.0)
-			if pc.distance_squared_to(seg_d.from + sv * st) < 34.0 * 34.0:
+			if pc.distance_squared_to(seg_d.from + sv * st) < corr_r * corr_r:
 				in_corridor = true
 				hit_dir = sv.normalized()
 				break
 		if not _struggle:
 			if in_corridor:
 				var has_doom: bool = weapons.get_weapon("player") == "doom"
-				if weapons.is_shielded("player") or has_doom:
+				if not is_cage and (weapons.is_shielded("player") or has_doom):
 					_enter_struggle()
+				elif is_cage and weapons.is_shielded("player"):
+					# Cage beams GRIND on a raised shield — drain, no damage
+					weapons._actors["player"]["shield_energy"] = maxf(0.0, weapons._actors["player"]["shield_energy"] - delta * 0.9)
 				else:
 					_beam_tick -= delta
 					if _beam_tick <= 0.0:
@@ -479,8 +486,8 @@ func _layout_hud() -> void:
 	var vps: Vector2 = get_viewport().get_visible_rect().size
 	var top: PanelContainer = _hud.get_node_or_null("BossPanel") as PanelContainer
 	if top:
-		var protos: Array = ["SENTINEL PROTOCOL", "WRATH PROTOCOL", "ANNIHILATION PROTOCOL"]
-		_proto_label.text = "%s   —   PHASE %d/3" % [protos[boss.phase - 1], boss.phase]
+		var protos: Array = ["SENTINEL PROTOCOL", "WRATH PROTOCOL", "ANNIHILATION PROTOCOL", "VOID PROTOCOL", "OMEGA PROTOCOL"]
+		_proto_label.text = "%s   —   PHASE %d/5" % [protos[boss.phase - 1], boss.phase]
 		var hearts: String = ""
 		for i in range(player_lives):
 			hearts += "♥ "

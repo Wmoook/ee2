@@ -22,6 +22,14 @@ const ST_STUNNED: int = 9
 const ST_TRANSITION: int = 10
 const ST_DYING: int = 11
 const ST_DEAD: int = 12
+const ST_TG_SING: int = 13   # Phase 4: charge a void singularity
+const ST_TG_RIFT: int = 14   # Phase 4: dissolve into the void...
+const ST_RIFT_GONE: int = 15 # ...gone — rift marker hunts the player
+const ST_RIFT_ERUPT: int = 16 # ...ERUPTS out of the rift
+const ST_CAGE: int = 17      # Phase 5: rotating 4-beam laser cage
+const ST_TG_SKY: int = 18    # Phase 5: charge the meteor skyfall
+const ST_SKYFALL: int = 19   # Phase 5: golden comets rain
+const ST_TG_CAGE: int = 20
 
 const BODY_R: float = 34.0          # Contact/hit radius
 const PUSH_TO_PXS: float = 100.0    # EE speed unit -> px/s (impulse conversion)
@@ -70,6 +78,10 @@ var _impact_cd: Dictionary = {}  # Vector2i tile -> cooldown (one chip per hit, 
 var beam_segments: Array = []    # [{from, to}] — the laser path, wall bounces included
 var _beam_fires: int = 0         # Each firing adds one more wall reflection
 var _pending_roar: bool = false  # Phase crossed mid-beam: roar AFTER the beam ends
+var sings: Array = []            # Void singularities: {pos, vel, target, armed, t}
+var rift_pos: Vector2 = Vector2.ZERO
+var cage_angle: float = 0.0
+var _sky_t: float = 0.0
 
 # Flight envelope (set from BossMap by BossMode)
 var min_x: float = 64.0
@@ -87,7 +99,11 @@ func phase_color() -> Color:
 		return Color(0.45, 0.85, 1.0)
 	if phase == 2:
 		return Color(1.0, 0.62, 0.2)
-	return Color(1.0, 0.28, 0.32)
+	if phase == 3:
+		return Color(1.0, 0.28, 0.32)
+	if phase == 4:
+		return Color(0.72, 0.35, 1.0)
+	return Color(1.0, 0.88, 0.4)
 
 
 func get_center() -> Vector2:
@@ -103,7 +119,7 @@ func alive() -> bool:
 
 
 func vulnerable() -> bool:
-	return alive() and state != ST_SPAWN and state != ST_TRANSITION and not struggle_active
+	return alive() and state != ST_SPAWN and state != ST_TRANSITION and state != ST_RIFT_GONE and not struggle_active
 
 
 func beam_muzzle() -> Vector2:
@@ -121,7 +137,7 @@ func apply_push(v: Vector2) -> void:
 
 
 func state_name() -> String:
-	return ["SPAWN", "HOVER", "TG_SLAM", "SLAM", "TG_BURST", "TG_POUND", "POUND", "TG_BEAM", "BEAM", "STUNNED", "TRANSITION", "DYING", "DEAD"][state]
+	return ["SPAWN", "HOVER", "TG_SLAM", "SLAM", "TG_BURST", "TG_POUND", "POUND", "TG_BEAM", "BEAM", "STUNNED", "TRANSITION", "DYING", "DEAD", "TG_SING", "TG_RIFT", "RIFT_GONE", "RIFT_ERUPT", "CAGE", "TG_SKY", "SKYFALL", "TG_CAGE"][state]
 
 
 func take_damage(dmg: int, dir: Vector2 = Vector2.ZERO) -> void:
@@ -146,13 +162,19 @@ func _apply_damage(amount: int, dir: Vector2 = Vector2.ZERO) -> void:
 		_die_fx_t = 0.0
 		struggle_active = false
 		struggle_freeze = false
+		sings.clear()
 		if ws:
 			ws.play_sfx("explode", pos, 0.05, 0.7)
 		return
-	if phase == 1 and hp <= (max_hp * 2) / 3:
+	# FIVE phases: thresholds at every fifth of max HP
+	if phase == 1 and hp <= (max_hp * 4) / 5:
 		_request_phase(2)
-	elif phase == 2 and hp <= max_hp / 3:
+	elif phase == 2 and hp <= (max_hp * 3) / 5:
 		_request_phase(3)
+	elif phase == 3 and hp <= (max_hp * 2) / 5:
+		_request_phase(4)
+	elif phase == 4 and hp <= max_hp / 5:
+		_request_phase(5)
 
 
 func _request_phase(new_phase: int) -> void:
@@ -176,6 +198,7 @@ func _enter_transition(new_phase: int) -> void:
 	struggle_active = false
 	struggle_freeze = false
 	shocks.clear()
+	sings.clear()
 	if ws:
 		ws.play_sfx("doom_spawn", pos, 0.0, 0.6)
 		ws.spawn_ring(pos, phase_color(), 10.0, 130.0, 0.5)
@@ -291,10 +314,14 @@ func _process(delta: float) -> void:
 			st_t -= delta
 			if st_t <= 0.0 and p_alive:
 				if _panic():
-					# Never slam or pound INTO the doom — snipe from range
+					# Never slam or pound INTO the doom — snipe from range,
+					# or (void phases) RIFT-ESCAPE across the arena
 					if _beam_cd <= 0.0:
 						state = ST_TG_BEAM
 						st_t = 1.15
+					elif phase >= 4 and randf() < 0.45:
+						state = ST_TG_RIFT
+						st_t = 0.55
 					else:
 						state = ST_TG_BURST
 						st_t = 0.45
@@ -390,7 +417,7 @@ func _process(delta: float) -> void:
 			if st_t <= 0.0:
 				state = ST_BEAM
 				beam_t = 3.4
-				_beam_cd = 16.0 - 3.4 * phase
+				_beam_cd = maxf(6.0, 16.0 - 2.8 * phase)
 				_beam_fires += 1  # Every firing reflects one MORE time
 				if ws:
 					ws.play_sfx("doom_spawn", pos, 0.0, 1.25)
@@ -420,6 +447,142 @@ func _process(delta: float) -> void:
 				else:
 					state = ST_HOVER
 					st_t = _hover_time()
+		ST_TG_SING:
+			vel = vel.lerp(Vector2.ZERO, 1.0 - pow(0.01, delta))
+			pos += vel * delta
+			st_t -= delta
+			if ws and randf() < delta * 140.0:
+				var va: float = randf() * TAU
+				var vp: Vector2 = pos + Vector2.from_angle(va) * randf_range(40.0, 90.0)
+				ws.spawn_trail_dot(vp, (pos - vp) * 2.8, Color(0.72, 0.35, 1.0))
+			if st_t <= 0.0:
+				var starget: Vector2 = pc + (get_player_vel.call() * 0.3 if p_alive else Vector2.ZERO)
+				sings.append({
+					"pos": pos, "vel": (starget - pos).normalized() * 520.0,
+					"target": starget, "armed": false, "t": 1.2,
+				})
+				if ws:
+					ws.play_sfx("shoot_rail", pos, 0.05, 0.5)
+				state = ST_HOVER
+				st_t = _hover_time() * 0.7
+		ST_TG_RIFT:
+			vel = vel.lerp(Vector2.ZERO, 1.0 - pow(0.01, delta))
+			pos += vel * delta
+			st_t -= delta
+			if ws and randf() < delta * 200.0:
+				var ra2: float = randf() * TAU
+				ws.spawn_trail_dot(pos + Vector2.from_angle(ra2) * randf_range(10.0, 44.0), Vector2.from_angle(ra2) * -120.0, Color(0.72, 0.35, 1.0))
+			if st_t <= 0.0:
+				if _panic():
+					# Escape teleport: rift to the FAR side of the arena
+					var flee_x: float = pc.x + (620.0 if pc.x < (min_x + max_x) * 0.5 else -620.0)
+					rift_pos = Vector2(clampf(flee_x, min_x + 120.0, max_x - 120.0), 235.0)
+				else:
+					rift_pos = pc
+				state = ST_RIFT_GONE
+				st_t = 0.95
+				if ws:
+					ws.play_sfx("doom_spawn", pos, 0.05, 1.6)
+					ws.spawn_ring(pos, Color(0.72, 0.35, 1.0), 30.0, 4.0, 0.3)
+		ST_RIFT_GONE:
+			st_t -= delta
+			if not _panic():
+				rift_pos = rift_pos.move_toward(pc, 130.0 * delta)
+			if ws and randf() < delta * 220.0:
+				var ga2: float = randf() * TAU
+				var gp: Vector2 = rift_pos + Vector2.from_angle(ga2) * randf_range(26.0, 70.0)
+				ws.spawn_trail_dot(gp, (rift_pos - gp) * 3.0, Color(0.8, 0.5, 1.0))
+			if st_t <= 0.0:
+				pos = Vector2(clampf(rift_pos.x, min_x + BODY_R, max_x - BODY_R), clampf(rift_pos.y - 12.0, min_y + BODY_R, floor_y - BODY_R - 2.0))
+				vel = Vector2.ZERO
+				state = ST_RIFT_ERUPT
+				st_t = 0.3
+				if ws:
+					ws.spawn_explosion(pos, Color(0.72, 0.35, 1.0))
+					ws.spawn_ring(pos, Color(0.85, 0.55, 1.0), 8.0, 70.0, 0.35)
+					ws.play_sfx("explode", pos, 0.08, 0.7)
+				for k in range(10 + phase):
+					_spawn_proj(Vector2.from_angle(TAU * float(k) / float(10 + phase)), 260.0 + 30.0 * phase)
+				if p_alive and pos.distance_to(pc) < 86.0:
+					hurt_player.call(1, (pc - pos).normalized())
+					push_player.call((pc - pos).normalized() * 7.0 + Vector2(0.0, -3.0))
+				GameState.cam_shake = maxf(GameState.cam_shake, 9.0)
+		ST_RIFT_ERUPT:
+			st_t -= delta
+			if st_t <= 0.0:
+				state = ST_HOVER
+				st_t = _hover_time() * 0.8
+		ST_TG_CAGE:
+			pos = pos.lerp(Vector2((min_x + max_x) * 0.5, 218.0), 1.0 - pow(0.03, delta))
+			st_t -= delta
+			if ws and randf() < delta * 160.0:
+				var ca: float = randf() * TAU
+				var cp2: Vector2 = pos + Vector2.from_angle(ca) * randf_range(40.0, 100.0)
+				ws.spawn_trail_dot(cp2, (pos - cp2) * 2.6, Color(1.0, 0.88, 0.4))
+			if st_t <= 0.0:
+				state = ST_CAGE
+				st_t = 4.2
+				cage_angle = randf() * TAU
+				if ws:
+					ws.play_sfx("doom_spawn", pos, 0.0, 1.1)
+		ST_CAGE:
+			pos = pos.lerp(Vector2((min_x + max_x) * 0.5, 218.0), 1.0 - pow(0.05, delta))
+			st_t -= delta
+			cage_angle += delta * (0.45 + 0.05 * phase)
+			beam_segments.clear()
+			for k in range(4):
+				var cd: Vector2 = Vector2.from_angle(cage_angle + float(k) * PI / 2.0)
+				var cfrom: Vector2 = pos + cd * (BODY_R + 4.0)
+				var cend: Vector2 = cfrom
+				for s in range(220):
+					cend = cfrom + cd * (s * 6.0)
+					var ctx2: int = int(floor(cend.x / 16.0))
+					var cty2: int = int(floor(cend.y / 16.0))
+					if WorldManager.is_solid_at(ctx2, cty2):
+						if ws:
+							ws.damage_block(ctx2, cty2, delta * 0.5)
+						break
+				beam_segments.append({"from": cfrom, "to": cend})
+			_beam_sfx_t -= delta
+			if ws and _beam_sfx_t <= 0.0:
+				_beam_sfx_t = 0.5
+				ws.play_sfx("doom_beam", pos, 0.05, 1.3)
+			GameState.cam_shake = maxf(GameState.cam_shake, 1.5)
+			if st_t <= 0.0:
+				beam_segments.clear()
+				state = ST_HOVER
+				st_t = _hover_time()
+		ST_TG_SKY:
+			vel = vel.lerp(Vector2(0.0, -90.0), 1.0 - pow(0.02, delta))
+			pos += vel * delta
+			st_t -= delta
+			if ws and randf() < delta * 150.0:
+				ws.spawn_trail_dot(Vector2(randf_range(min_x + 40.0, max_x - 40.0), min_y + randf_range(4.0, 30.0)), Vector2(0, 60), Color(1.0, 0.88, 0.4))
+			if st_t <= 0.0:
+				state = ST_SKYFALL
+				st_t = 2.8
+				_sky_t = 0.0
+		ST_SKYFALL:
+			vel = vel.lerp(Vector2.ZERO, 1.0 - pow(0.02, delta))
+			pos += vel * delta
+			st_t -= delta
+			_sky_t -= delta
+			if _sky_t <= 0.0 and ws:
+				_sky_t = 0.09
+				# Golden comets: half random, half hunting the player's column
+				var cx2: float
+				if randf() < 0.5 and p_alive:
+					cx2 = clampf(pc.x + randf_range(-130.0, 130.0), min_x + 24.0, max_x - 24.0)
+				else:
+					cx2 = randf_range(min_x + 24.0, max_x - 24.0)
+				ws._projectiles.append({
+					"pos": Vector2(cx2, min_y + 6.0), "vel": Vector2(randf_range(-45.0, 45.0), randf_range(520.0, 650.0)),
+					"team": 1, "dmg": 1, "life": 2.5,
+					"color": Color(1.0, 0.85, 0.4), "size": 4.2,
+				})
+			if st_t <= 0.0:
+				state = ST_HOVER
+				st_t = _hover_time()
 		ST_STUNNED:
 			vel = vel.lerp(Vector2(0.0, 60.0), 1.0 - pow(0.03, delta))
 			pos += vel * delta
@@ -468,11 +631,45 @@ func _process(delta: float) -> void:
 			_burst_timer = 0.17
 			_burst_extra -= 1
 			_fire_burst(pc)
+	# Void singularities: fly to their mark, then DEVOUR — a hungry well
+	# that drags the ball in, then collapses in a violet blast
+	for si2 in range(sings.size() - 1, -1, -1):
+		var sg2: Dictionary = sings[si2]
+		sg2.t -= delta
+		if not sg2.armed:
+			sg2.pos += sg2.vel * delta
+			if sg2.t <= 0.0 or sg2.pos.distance_to(sg2.target) < 16.0:
+				sg2.armed = true
+				sg2.t = 3.2
+				if ws:
+					ws.spawn_ring(sg2.pos, Color(0.72, 0.35, 1.0), 6.0, 44.0, 0.3)
+					ws.play_sfx("doom_spawn", sg2.pos, 0.05, 0.9)
+		else:
+			if p_alive:
+				var to_s: Vector2 = sg2.pos - pc
+				var sd: float = to_s.length()
+				if sd < 320.0 and sd > 4.0:
+					push_player.call(to_s / sd * lerpf(8.5, 1.6, sd / 320.0) * delta)
+			if ws and randf() < delta * 170.0:
+				var ia: float = randf() * TAU
+				var ip: Vector2 = sg2.pos + Vector2.from_angle(ia) * randf_range(30.0, 95.0)
+				ws.spawn_trail_dot(ip, (sg2.pos - ip) * 2.6, Color(0.75, 0.4, 1.0))
+			if sg2.t <= 0.0:
+				if ws:
+					ws.spawn_explosion(sg2.pos, Color(0.75, 0.35, 1.0))
+					ws.spawn_ring(sg2.pos, Color(0.85, 0.55, 1.0), 6.0, 76.0, 0.4)
+					ws.play_sfx("explode", sg2.pos, 0.1, 0.8)
+				if p_alive and pc.distance_to(sg2.pos) < 90.0:
+					hurt_player.call(1, (pc - sg2.pos).normalized())
+					push_player.call((pc - sg2.pos).normalized() * 8.0 + Vector2(0.0, -3.0))
+				GameState.cam_shake = maxf(GameState.cam_shake, 7.0)
+				sings.remove_at(si2)
 	# Clamp to the flight envelope
 	pos.x = clampf(pos.x, min_x + BODY_R, max_x - BODY_R)
 	pos.y = clampf(pos.y, min_y + BODY_R, floor_y - BODY_R - 2.0)
 	# SOLID vs the arena: the Warden cannot pass through blocks
-	if alive():
+	# (not while it IS the void — the rift passes through everything)
+	if alive() and state != ST_RIFT_GONE:
 		_collide_tiles()
 	for ck in _impact_cd.keys():
 		_impact_cd[ck] -= delta
@@ -490,10 +687,10 @@ func _process(delta: float) -> void:
 
 
 func _collide_tiles() -> void:
-	## Circle-vs-tile resolution: push out of any solid block and kill the
-	## into-surface velocity. HARD impacts chip the block they struck —
-	## two hits shatter it (the indestructible shell always contains the
-	## Warden, so it can never leave the arena).
+	## Circle-vs-tile resolution: the Warden cannot pass through blocks.
+	## HARD impacts (slam/pound speed) SHATTER the block in one hit and
+	## carom the Warden off it; soft contact just slides. The
+	## indestructible shell always contains it — it can never leave.
 	var col_r: float = 30.0
 	var t0x: int = int(floor((pos.x - col_r) / 16.0))
 	var t1x: int = int(floor((pos.x + col_r) / 16.0))
@@ -512,21 +709,23 @@ func _collide_tiles() -> void:
 			var n: Vector2 = dvec / d if d > 0.01 else Vector2(0, -1)
 			pos += n * (col_r - d)
 			var into: float = -vel.dot(n)
-			if into > 0.0:
-				vel += n * into
-			# A real hit (slam/pound speed) chips the block: 2 hits = shattered
 			if into > 260.0 and ws:
+				# A real hit (slam/pound speed): the block SHATTERS in one
+				# and the Warden CAROMS off it — crash, debris, rebound
 				var key: Vector2i = Vector2i(tx, ty)
 				if not _impact_cd.has(key):
 					_impact_cd[key] = 0.35
-					ws.damage_block(tx, ty, WeaponSystem.BLOCK_BREAK_TIME * 0.55)
+					ws.damage_block(tx, ty, WeaponSystem.BLOCK_BREAK_TIME + 0.01)
 					ws.spawn_hit(Vector2(rx, ry), phase_color(), n)
 					ws.play_sfx("bonk", Vector2(rx, ry), 0.08, 0.9)
-					GameState.cam_shake = maxf(GameState.cam_shake, 3.5)
+					GameState.cam_shake = maxf(GameState.cam_shake, 4.0)
+				vel = vel.bounce(n) * 0.55
+			elif into > 0.0:
+				vel += n * into
 
 
 func _hover_time() -> float:
-	return maxf(0.7, 1.7 - 0.35 * phase)
+	return maxf(0.5, 1.7 - 0.28 * phase)
 
 
 func _pick_attack() -> void:
@@ -539,14 +738,28 @@ func _pick_attack() -> void:
 		pattern = [ST_TG_SLAM, ST_TG_BURST, ST_TG_SLAM, ST_TG_POUND]
 	elif phase == 2:
 		pattern = [ST_TG_SLAM, ST_TG_BURST, ST_TG_POUND, ST_TG_BURST, ST_TG_SLAM]
-	else:
+	elif phase == 3:
 		pattern = [ST_TG_SLAM, ST_TG_BURST, ST_TG_POUND, ST_TG_SLAM, ST_TG_BURST]
+	elif phase == 4:
+		# VOID PROTOCOL: singularities + rift teleport-strikes
+		pattern = [ST_TG_RIFT, ST_TG_BURST, ST_TG_SING, ST_TG_SLAM, ST_TG_RIFT, ST_TG_SING, ST_TG_POUND]
+	else:
+		# OMEGA PROTOCOL: everything, plus the laser cage and the skyfall
+		pattern = [ST_TG_CAGE, ST_TG_RIFT, ST_TG_SKY, ST_TG_BURST, ST_TG_SING, ST_TG_SLAM, ST_TG_SKY, ST_TG_RIFT]
 	state = pattern[_attack_idx % pattern.size()]
 	_attack_idx += 1
 	if state == ST_TG_SLAM:
-		st_t = maxf(0.45, 0.85 - 0.1 * phase)
+		st_t = maxf(0.35, 0.85 - 0.1 * phase)
 	elif state == ST_TG_BURST:
 		st_t = 0.55
+	elif state == ST_TG_SING:
+		st_t = 0.7
+	elif state == ST_TG_RIFT:
+		st_t = 0.55
+	elif state == ST_TG_SKY:
+		st_t = 0.6
+	elif state == ST_TG_CAGE:
+		st_t = 0.8
 	else:
 		st_t = 0.65
 
@@ -687,6 +900,8 @@ func _draw() -> void:
 	var mat: float = 1.0
 	if state == ST_SPAWN:
 		mat = clampf(1.0 - st_t / 2.2, 0.05, 1.0)
+	elif state == ST_TG_RIFT:
+		mat = clampf(st_t / 0.55, 0.1, 1.0)  # Dissolving into the void
 	var pulse: float = 0.5 + 0.5 * sin(_time * 3.2)
 
 	# ── Shockwaves: traveling energy walls along the surface they hit ──
@@ -697,6 +912,31 @@ func _draw() -> void:
 		draw_line(Vector2(sx, sy), Vector2(sx, sy - 40.0 - wob), Color(col.r, col.g, col.b, 0.85), 5.0)
 		draw_line(Vector2(sx, sy), Vector2(sx, sy - 26.0), Color(1, 1, 0.9, 0.9), 2.5)
 		draw_circle(Vector2(sx, sy - 6.0), 7.0, Color(col.r, col.g, col.b, 0.6))
+
+	# ── Void singularities ──
+	for sg in sings:
+		if sg.armed:
+			var swirl: float = _time * 9.0
+			draw_circle(sg.pos, 26.0, Color(0.2, 0.05, 0.3, 0.35))
+			draw_circle(sg.pos, 10.0, Color(0.04, 0.0, 0.08, 0.92))
+			for k in range(3):
+				var aa: float = swirl + float(k) * TAU / 3.0
+				draw_arc(sg.pos, 16.0 + 5.0 * sin(_time * 7.0 + float(k)), aa, aa + 2.2, 12, Color(0.75, 0.4, 1.0, 0.8), 2.2)
+			draw_arc(sg.pos, 30.0, -swirl, -swirl + 1.6, 10, Color(0.9, 0.6, 1.0, 0.5), 1.6)
+		else:
+			draw_circle(sg.pos, 8.0, Color(0.6, 0.25, 0.95))
+			draw_circle(sg.pos, 4.0, Color(0.95, 0.85, 1.0))
+
+	# ── Rifted away: only the hunting void tear is visible ──
+	if state == ST_RIFT_GONE:
+		var rs: float = _time * 12.0
+		draw_circle(rift_pos, 20.0 + 4.0 * sin(_time * 10.0), Color(0.2, 0.05, 0.3, 0.4))
+		draw_circle(rift_pos, 8.0, Color(0.05, 0.0, 0.1, 0.9))
+		for k in range(2):
+			var ra3: float = rs + float(k) * PI
+			draw_arc(rift_pos, 15.0, ra3, ra3 + 2.4, 12, Color(0.8, 0.5, 1.0, 0.85), 2.4)
+		draw_arc(rift_pos, 26.0, -rs * 0.7, -rs * 0.7 + 1.8, 10, Color(0.9, 0.7, 1.0, 0.5), 1.6)
+		return
 
 	# ── The RICOCHET LASER (emerald annihilation beam) ──
 	if state == ST_BEAM:
@@ -755,6 +995,15 @@ func _draw() -> void:
 				draw_circle(endp, 12.0 + 6.0 * flicker, Color(0.3, 1.0, 0.4, 0.7))
 				draw_circle(endp, 6.5, Color(0.95, 1.0, 0.9))
 		draw_circle(mz, 12.0, Color(0.9, 1.0, 0.9))
+	elif state == ST_CAGE:
+		# OMEGA: the rotating golden laser cage
+		var cflick: float = 0.85 + 0.15 * sin(_time * 55.0)
+		for sg in beam_segments:
+			draw_line(sg.from, sg.to, Color(1.0, 0.85, 0.3, 0.18), 30.0 * cflick)
+			draw_line(sg.from, sg.to, Color(1.0, 0.9, 0.45, 0.55), 15.0 * cflick)
+			draw_line(sg.from, sg.to, Color(1.0, 0.98, 0.8), 6.0)
+			draw_circle(sg.to, 8.0 + 4.0 * cflick, Color(1.0, 0.9, 0.5, 0.7))
+		draw_circle(c, 16.0, Color(1.0, 0.95, 0.75, 0.9))
 	elif state == ST_TG_BEAM:
 		# Telegraph: thin emerald aim line + swelling charge orb
 		var mz2: Vector2 = pos + beam_dir * (BODY_R + 4.0)
@@ -762,6 +1011,11 @@ func _draw() -> void:
 		draw_line(mz2, mz2 + beam_dir * 900.0, Color(0.3, 1.0, 0.4, 0.25 + 0.3 * chg), 2.0)
 		draw_circle(mz2, 4.0 + 14.0 * chg, Color(0.4, 1.0, 0.5, 0.8))
 		draw_circle(mz2, 2.0 + 8.0 * chg, Color(0.95, 1.0, 0.9))
+	elif state == ST_TG_SING:
+		# Winding up the singularity: collapsing violet charge
+		var sc2: float = 1.0 - st_t / 0.7
+		draw_circle(c, 10.0 + 26.0 * sc2, Color(0.72, 0.35, 1.0, 0.22 + 0.3 * sc2))
+		draw_arc(c, 14.0 + 30.0 * sc2, _time * 8.0, _time * 8.0 + 2.0, 12, Color(0.85, 0.6, 1.0, 0.8), 2.5)
 
 	# ── Slam telegraph: warning dashes toward the player ──
 	if state == ST_TG_SLAM:

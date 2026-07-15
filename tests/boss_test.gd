@@ -43,6 +43,11 @@ func _ready() -> void:
 			bm.boss.vel = Vector2.ZERO
 			bm.boss.state = bm.boss.ST_TG_BEAM
 			bm.boss.st_t = 0.6
+		if i == 70:
+			# Force the endgame: drive the Warden into PHASE 5 (OMEGA)
+			bm.boss.hp = mini(bm.boss.hp, bm.boss.max_hp / 5 + 2)
+			while bm.boss.phase < 5 and bm.boss.alive():
+				bm.boss._apply_damage(1, Vector2.ZERO)
 		if bm._struggle:
 			saw_struggle = true
 			if not clash_shot:
@@ -107,8 +112,14 @@ func _ready() -> void:
 	var img2: Image = get_viewport().get_texture().get_image()
 	img2.save_png("user://boss_check.png")
 	print("STATES SEEN: %s" % [seen.keys()])
-	var ok: bool = seen.has("BEAM") and seen.has("HOVER") and saw_struggle
-	print("BOSS SMOKE %s (struggle=%s)" % ["PASS" if ok else "FAIL", saw_struggle])
+	var super_states: Array = ["TG_SING", "TG_RIFT", "RIFT_GONE", "RIFT_ERUPT", "CAGE", "TG_CAGE", "TG_SKY", "SKYFALL"]
+	var saw_super: bool = false
+	for ss in super_states:
+		if seen.has(ss):
+			saw_super = true
+			break
+	var ok: bool = seen.has("BEAM") and seen.has("HOVER") and saw_struggle and saw_super
+	print("BOSS SMOKE %s (struggle=%s super_phases=%s phase=%d)" % ["PASS" if ok else "FAIL", saw_struggle, saw_super, bm.boss.phase])
 	GameState.battle_mode = false
 	GameState.boss_fight = false
 	get_tree().quit(0)
