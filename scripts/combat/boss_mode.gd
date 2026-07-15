@@ -404,11 +404,16 @@ func _process(delta: float) -> void:
 			weapons.spawn_explosion(pc, Color(1.0, 0.5, 0.2))
 			GameState.cam_shake += 10.0
 		elif _struggle_timer > 6.0:
-			# Stalemate — both thrown back, no damage
+			# STALEMATE — a successful defense. The beam dies INSTANTLY (it
+			# used to linger aimed at you and tick 1 damage right after the
+			# clash), both sides recoil, and you get a clean disengage window.
 			weapons.spawn_ring(boss.clash_point, Color(1, 1, 1), 8.0, 60.0, 0.35)
-			boss.end_beam(0.1)
+			weapons.spawn_ring(boss.clash_point, Color(0.6, 0.95, 1.0), 4.0, 36.0, 0.25)
+			boss.end_beam(0.0)
+			boss.vel = -boss.beam_dir * 260.0
 			player.physics._speedX += -boss.beam_dir.x * 6.0
 			player.physics._speedY += -3.0
+			_player_invuln = maxf(_player_invuln, 0.7)
 			_exit_struggle()
 	_mash_label.visible = _struggle
 	if _struggle:
@@ -480,6 +485,7 @@ func _exit_struggle() -> void:
 	boss.struggle_freeze = false
 	boss.struggle_active = false
 	_mash_label.visible = false
+	_beam_tick = 0.45  # Never an instant damage tick right after a clash
 
 
 func _layout_hud() -> void:
