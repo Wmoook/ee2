@@ -47,10 +47,16 @@ const DASH_DMG: int = 1
 const SHIELD_MAX: float = 1.2        # Max shield hold (drains; regens when down)
 const STUN_TIME: float = 1.0         # Parry stun duration
 
+const BLOCK_BREAK_TIME: float = 0.8   # Seconds of beam-cook to shatter a block
+const BLOCK_RESPAWN: float = 10.0     # Shattered terrain re-materializes after this
+
 var _actors: Dictionary = {}      # id -> actor dict
 var _pads: Array = []             # {pos, weapon, respawn_left, phase, super}
 var _projectiles: Array = []      # {pos, vel, team, dmg, life, color, size}
 var _fx: Array = []               # {pos, vel, life, max_life, color, size}
+var _block_dmg: Dictionary = {}   # Vector2i tile -> accumulated break progress (0..BREAK_TIME)
+var _cooked_now: Dictionary = {}  # Tiles damaged this frame (skip their decay)
+var _broken: Array = []           # {x, y, id, respawn} — shattered tiles pending respawn
 var _sfx: Dictionary = {}         # name -> AudioStream
 var _sfx_pool: Array = []
 var _sfx_next: int = 0
@@ -349,6 +355,82 @@ func add_pad(pos: Vector2, weapon: String) -> void:
 	_pads.append({"pos": pos, "weapon": weapon, "respawn_left": 0.0, "phase": randf() * TAU})
 
 
+func damage_block(tx: int, ty: int, amount: float) -> bool:
+	## Terrain destruction: beams cook blocks over BLOCK_BREAK_TIME seconds,
+	## boss impacts chip them in halves. Cracks glow as damage builds, then
+	## the block shatters with debris and re-materializes BLOCK_RESPAWN
+	## later. The arena shell (outer 2 tiles) is indestructible — nothing
+	## ever escapes the world. Returns true when the block shatters.
+	if tx <= 1 or ty <= 1 or tx >= WorldManager.world_width - 2 or ty >= WorldManager.world_height - 2:
+		return false
+	if not WorldManager.is_solid_at(tx, ty):
+		return false
+	var key: Vector2i = Vector2i(tx, ty)
+	var dmg: float = _block_dmg.get(key, 0.0) + amount
+	_cooked_now[key] = true
+	var cpos: Vector2 = Vector2(tx * 16.0 + 8.0, ty * 16.0 + 8.0)
+	if randf() < amount * 30.0:
+		_fx.append({
+			"pos": cpos + Vector2(randf_range(-7.0, 7.0), randf_range(-7.0, 7.0)),
+			"vel": Vector2(randf_range(-30.0, 30.0), randf_range(-70.0, -20.0)),
+			"life": randf_range(0.12, 0.3), "max_life": 0.3,
+			"color": Color(1.0, randf_range(0.35, 0.6), 0.15), "size": randf_range(1.0, 2.2),
+		})
+	if dmg < BLOCK_BREAK_TIME:
+		_block_dmg[key] = dmg
+		return false
+	_block_dmg.erase(key)
+	var old_id: int = WorldManager.get_tile(tx, ty)
+	if old_id <= 0:
+		return false
+	WorldManager.fg_tiles[ty][tx] = 0
+	WorldManager.tile_changed.emit(tx, ty, 0)
+	_broken.append({"x": tx, "y": ty, "id": old_id, "respawn": BLOCK_RESPAWN})
+	play_sfx("explode", cpos, 0.1, 1.5)
+	spawn_ring(cpos, Color(1.0, 0.55, 0.2), 3.0, 22.0, 0.22)
+	for _i in range(12):
+		var dang: float = randf() * TAU
+		_fx.append({
+			"pos": cpos, "vel": Vector2.from_angle(dang) * randf_range(40.0, 220.0),
+			"life": randf_range(0.15, 0.4), "max_life": 0.4,
+			"color": Color(0.25, 0.18, 0.2).lerp(Color(1.0, 0.5, 0.2), randf() * 0.7),
+			"size": randf_range(1.5, 3.2),
+		})
+	GameState.cam_shake += 1.5
+	return true
+
+
+func _hashf(n: int) -> float:
+	return fmod(absf(sin(float(n) * 12.9898) * 43758.5453), 1.0)
+
+
+func _draw_block_cracks() -> void:
+	## Damage overlay on cooking blocks: heat glow + jagged cracks that
+	## multiply and ignite as the block nears shattering.
+	for key in _block_dmg:
+		var f: float = clampf(_block_dmg[key] / BLOCK_BREAK_TIME, 0.0, 1.0)
+		var bx: float = key.x * 16.0
+		var by: float = key.y * 16.0
+		var cpos: Vector2 = Vector2(bx + 8.0, by + 8.0)
+		draw_rect(Rect2(bx, by, 16, 16), Color(1.0, 0.35, 0.12, 0.1 + 0.3 * f))
+		var n: int = 2 + int(f * 3.0)
+		for k in range(n):
+			var h1: float = _hashf(key.x * 7 + key.y * 13 + k * 31)
+			var h2: float = _hashf(key.x * 17 + key.y * 5 + k * 47)
+			var h3: float = _hashf(key.x * 29 + key.y * 23 + k * 11)
+			var a0: float = h1 * TAU
+			var p0: Vector2 = cpos + Vector2.from_angle(a0) * 1.5
+			var p1: Vector2 = cpos + Vector2.from_angle(a0 + (h2 - 0.5) * 1.2) * (4.5 + 4.0 * h3)
+			var p2: Vector2 = cpos + Vector2.from_angle(a0 + (h2 - 0.5) * 2.2) * 8.5
+			var ccol: Color = Color(0.06, 0.02, 0.02, 0.5 + 0.45 * f)
+			draw_line(p0, p1, ccol, 1.3)
+			draw_line(p1, p2, ccol, 1.0)
+			if f > 0.6:
+				draw_line(p0, p1, Color(1.0, 0.55, 0.2, (f - 0.6) * 1.8), 0.7)
+		if f > 0.85:
+			draw_rect(Rect2(bx, by, 16, 16), Color(1.0, 0.9, 0.7, (f - 0.85) * 2.2), false, 1.5)
+
+
 # ── FX helpers ────────────────────────────────────────────────────────────────
 
 func spawn_explosion(pos: Vector2, color: Color) -> void:
@@ -409,6 +491,40 @@ func play_sfx(name: String, pos: Vector2, pitch_jitter: float = 0.08, pitch_base
 
 func _process(delta: float) -> void:
 	_time += delta
+	# Cracked-but-unbroken blocks slowly heal once nothing is cooking them
+	for key in _block_dmg.keys():
+		if not _cooked_now.has(key):
+			_block_dmg[key] -= delta * 0.25
+			if _block_dmg[key] <= 0.0:
+				_block_dmg.erase(key)
+	_cooked_now.clear()
+	# Shattered terrain re-materializes — but never inside a ball
+	for bi in range(_broken.size() - 1, -1, -1):
+		var br: Dictionary = _broken[bi]
+		br.respawn -= delta
+		if br.respawn > 0.0:
+			continue
+		var rc: Vector2 = Vector2(br.x * 16.0 + 8.0, br.y * 16.0 + 8.0)
+		var blocked: bool = false
+		for aid in _actors:
+			var ar: Dictionary = _actors[aid]
+			if ar.is_alive.call() and ar.get_center.call().distance_to(rc) < ar.get("hit_radius", ACTOR_RADIUS) + 14.0:
+				blocked = true
+				break
+		if blocked:
+			br.respawn = 0.4
+			continue
+		if WorldManager.get_tile(br.x, br.y) == 0:
+			WorldManager.fg_tiles[br.y][br.x] = br.id
+			WorldManager.tile_changed.emit(br.x, br.y, br.id)
+			spawn_ring(rc, Color(0.6, 0.9, 1.0), 2.0, 15.0, 0.25)
+			for _i in range(6):
+				var sang: float = randf() * TAU
+				_fx.append({
+					"pos": rc + Vector2.from_angle(sang) * 10.0, "vel": Vector2.from_angle(sang) * -42.0,
+					"life": 0.2, "max_life": 0.2, "color": Color(0.6, 0.9, 1.0), "size": 1.5,
+				})
+		_broken.remove_at(bi)
 	# Cooldowns + timed weapons (the DOOM RAY expires)
 	for id in _actors:
 		var a: Dictionary = _actors[id]
@@ -610,7 +726,10 @@ func _process(delta: float) -> void:
 		var steps: int = int(w.range / 6.0)
 		for s in range(steps):
 			beam_end = from + a.aim * (s * 6.0)
-			if WorldManager.is_solid_at(int(floor(beam_end.x / 16.0)), int(floor(beam_end.y / 16.0))):
+			var mtx: int = int(floor(beam_end.x / 16.0))
+			var mty: int = int(floor(beam_end.y / 16.0))
+			if WorldManager.is_solid_at(mtx, mty):
+				damage_block(mtx, mty, delta)  # The ray COOKS the wall it hits
 				break
 			for vid in _actors:
 				var v: Dictionary = _actors[vid]
@@ -661,7 +780,10 @@ func _process(delta: float) -> void:
 			split_to = hit_pt
 			for s2 in range(steps):
 				split_to = hit_pt + split_dir * (s2 * 6.0)
-				if WorldManager.is_solid_at(int(floor(split_to.x / 16.0)), int(floor(split_to.y / 16.0))):
+				var stx: int = int(floor(split_to.x / 16.0))
+				var sty: int = int(floor(split_to.y / 16.0))
+				if WorldManager.is_solid_at(stx, sty):
+					damage_block(stx, sty, delta)  # The deflected column cooks too
 					break
 		a.beam_end = beam_end
 		a["beam_pin"] = shielded_victim.get_center.call() if not shielded_victim.is_empty() else Vector2.ZERO
@@ -856,6 +978,8 @@ func _process(delta: float) -> void:
 # ── Rendering ────────────────────────────────────────────────────────────────
 
 func _draw() -> void:
+	# Terrain damage overlay first — everything else layers above it
+	_draw_block_cracks()
 	# Super weapon materialization: growing ring + light pillar
 	if _super_state == 1 and super_pos != Vector2.ZERO:
 		var prog: float = 1.0 - _super_anim / SUPER_ANIM_TIME

@@ -72,6 +72,14 @@ func _ready() -> void:
 		"PASS" if (slot1_ok and slot2_ok) else "FAIL",
 		"PASS" if armed_shield else "FAIL",
 		"PASS" if shot_drops else "FAIL"])
+	# Terrain destruction: altar block breaks, shell is immune
+	var was_solid: bool = WorldManager.is_solid_at(36, 30)
+	var broke: bool = bm.weapons.damage_block(36, 30, 99.0)
+	var now_air: bool = WorldManager.get_tile(36, 30) == 0
+	var shell_immune: bool = not bm.weapons.damage_block(0, 10, 99.0) and WorldManager.is_solid_at(0, 10)
+	print("BLOCK BREAK %s (was_solid=%s broke=%s now_air=%s shell_immune=%s)" % [
+		"PASS" if (was_solid and broke and now_air and shell_immune) else "FAIL",
+		was_solid, broke, now_air, shell_immune])
 	var img2: Image = get_viewport().get_texture().get_image()
 	img2.save_png("user://boss_check.png")
 	print("STATES SEEN: %s" % [seen.keys()])

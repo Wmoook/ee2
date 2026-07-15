@@ -66,6 +66,7 @@ var _die_fx_t: float = 0.0
 var _beam_sfx_t: float = 0.0
 var _jink_t: float = 0.0
 var _jink_target: Vector2 = Vector2(512.0, 240.0)
+var _impact_cd: Dictionary = {}  # Vector2i tile -> cooldown (one chip per hit, not per frame)
 
 # Flight envelope (set from BossMap by BossMode)
 var min_x: float = 64.0
@@ -292,7 +293,11 @@ func _process(delta: float) -> void:
 			pos += vel * delta
 			st_t -= delta
 			_slam_contact(pc, p_alive)
+			# Stopped by arena bounds OR by crunching into terrain (tile
+			# collision kills the into-surface velocity)
 			var stopped: bool = pos.x <= min_x + BODY_R or pos.x >= max_x - BODY_R or pos.y <= min_y + BODY_R or pos.y >= floor_y - BODY_R
+			if st_t < 0.55 and vel.length() < 260.0:
+				stopped = true
 			if stopped or st_t <= 0.0:
 				if stopped and ws:
 					ws.spawn_hit(pos + slam_dir * BODY_R, phase_color(), -slam_dir)
@@ -327,13 +332,16 @@ func _process(delta: float) -> void:
 				state = ST_POUND_DROP
 		ST_POUND_DROP:
 			pos += vel * delta
-			if pos.y >= floor_y - BODY_R - 2.0:
-				pos.y = floor_y - BODY_R - 2.0
-				shocks.append({"x": pos.x - BODY_R, "dir": -1, "hit": false})
-				shocks.append({"x": pos.x + BODY_R, "dir": 1, "hit": false})
+			# Lands on the floor OR on terrain (tile collision bleeds the
+			# fall speed) — the shockwave runs along whatever it hit
+			if pos.y >= floor_y - BODY_R - 2.0 or vel.y < 320.0:
+				pos.y = minf(pos.y, floor_y - BODY_R - 2.0)
+				var land_y: float = pos.y + BODY_R + 2.0
+				shocks.append({"x": pos.x - BODY_R, "dir": -1, "hit": false, "y": land_y})
+				shocks.append({"x": pos.x + BODY_R, "dir": 1, "hit": false, "y": land_y})
 				if ws:
-					ws.spawn_explosion(Vector2(pos.x, floor_y - 8.0), phase_color())
-					ws.spawn_ring(Vector2(pos.x, floor_y - 10.0), phase_color(), 8.0, 70.0, 0.3)
+					ws.spawn_explosion(Vector2(pos.x, land_y - 8.0), phase_color())
+					ws.spawn_ring(Vector2(pos.x, land_y - 10.0), phase_color(), 8.0, 70.0, 0.3)
 					ws.play_sfx("bonk", pos, 0.05, 0.5)
 				GameState.cam_shake = maxf(GameState.cam_shake, 10.0)
 				vel = Vector2.ZERO
@@ -372,6 +380,12 @@ func _process(delta: float) -> void:
 				beam_dir = Vector2.from_angle(rotate_toward(cur, want, turn * delta))
 				beam_t -= delta
 			_march_beam()
+			# The annihilation beam cooks the terrain it lands on
+			if not struggle_active and ws:
+				var cbx: int = int(floor(beam_hit.x / 16.0))
+				var cby: int = int(floor(beam_hit.y / 16.0))
+				if WorldManager.is_solid_at(cbx, cby):
+					ws.damage_block(cbx, cby, delta)
 			_beam_sfx_t -= delta
 			if ws and _beam_sfx_t <= 0.0:
 				_beam_sfx_t = 0.42
@@ -431,15 +445,58 @@ func _process(delta: float) -> void:
 	# Clamp to the flight envelope
 	pos.x = clampf(pos.x, min_x + BODY_R, max_x - BODY_R)
 	pos.y = clampf(pos.y, min_y + BODY_R, floor_y - BODY_R - 2.0)
+	# SOLID vs the arena: the Warden cannot pass through blocks
+	if alive():
+		_collide_tiles()
+	for ck in _impact_cd.keys():
+		_impact_cd[ck] -= delta
+		if _impact_cd[ck] <= 0.0:
+			_impact_cd.erase(ck)
 	# Floor shockwaves travel until they hit a wall
 	for si in range(shocks.size() - 1, -1, -1):
 		var sh: Dictionary = shocks[si]
 		sh.x += sh.dir * 430.0 * delta
 		if ws and randf() < delta * 60.0:
-			ws.spawn_trail_dot(Vector2(sh.x, floor_y - randf_range(4.0, 30.0)), Vector2(sh.dir * 40.0, randf_range(-60.0, -20.0)), phase_color())
+			ws.spawn_trail_dot(Vector2(sh.x, sh.get("y", floor_y) - randf_range(4.0, 30.0)), Vector2(sh.dir * 40.0, randf_range(-60.0, -20.0)), phase_color())
 		if sh.x < min_x + 8.0 or sh.x > max_x - 8.0:
 			shocks.remove_at(si)
 	queue_redraw()
+
+
+func _collide_tiles() -> void:
+	## Circle-vs-tile resolution: push out of any solid block and kill the
+	## into-surface velocity. HARD impacts chip the block they struck —
+	## two hits shatter it (the indestructible shell always contains the
+	## Warden, so it can never leave the arena).
+	var col_r: float = 30.0
+	var t0x: int = int(floor((pos.x - col_r) / 16.0))
+	var t1x: int = int(floor((pos.x + col_r) / 16.0))
+	var t0y: int = int(floor((pos.y - col_r) / 16.0))
+	var t1y: int = int(floor((pos.y + col_r) / 16.0))
+	for ty in range(t0y, t1y + 1):
+		for tx in range(t0x, t1x + 1):
+			if not WorldManager.is_solid_at(tx, ty):
+				continue
+			var rx: float = clampf(pos.x, tx * 16.0, tx * 16.0 + 16.0)
+			var ry: float = clampf(pos.y, ty * 16.0, ty * 16.0 + 16.0)
+			var dvec: Vector2 = pos - Vector2(rx, ry)
+			var d: float = dvec.length()
+			if d >= col_r:
+				continue
+			var n: Vector2 = dvec / d if d > 0.01 else Vector2(0, -1)
+			pos += n * (col_r - d)
+			var into: float = -vel.dot(n)
+			if into > 0.0:
+				vel += n * into
+			# A real hit (slam/pound speed) chips the block: 2 hits = shattered
+			if into > 260.0 and ws:
+				var key: Vector2i = Vector2i(tx, ty)
+				if not _impact_cd.has(key):
+					_impact_cd[key] = 0.35
+					ws.damage_block(tx, ty, WeaponSystem.BLOCK_BREAK_TIME * 0.55)
+					ws.spawn_hit(Vector2(rx, ry), phase_color(), n)
+					ws.play_sfx("bonk", Vector2(rx, ry), 0.08, 0.9)
+					GameState.cam_shake = maxf(GameState.cam_shake, 3.5)
 
 
 func _hover_time() -> float:
@@ -548,13 +605,14 @@ func _draw() -> void:
 		mat = clampf(1.0 - st_t / 2.2, 0.05, 1.0)
 	var pulse: float = 0.5 + 0.5 * sin(_time * 3.2)
 
-	# ── Floor shockwaves: traveling energy walls ──
+	# ── Shockwaves: traveling energy walls along the surface they hit ──
 	for sh in shocks:
 		var sx: float = sh.x
+		var sy: float = sh.get("y", floor_y)
 		var wob: float = 4.0 * sin(_time * 30.0 + sx)
-		draw_line(Vector2(sx, floor_y), Vector2(sx, floor_y - 40.0 - wob), Color(col.r, col.g, col.b, 0.85), 5.0)
-		draw_line(Vector2(sx, floor_y), Vector2(sx, floor_y - 26.0), Color(1, 1, 0.9, 0.9), 2.5)
-		draw_circle(Vector2(sx, floor_y - 6.0), 7.0, Color(col.r, col.g, col.b, 0.6))
+		draw_line(Vector2(sx, sy), Vector2(sx, sy - 40.0 - wob), Color(col.r, col.g, col.b, 0.85), 5.0)
+		draw_line(Vector2(sx, sy), Vector2(sx, sy - 26.0), Color(1, 1, 0.9, 0.9), 2.5)
+		draw_circle(Vector2(sx, sy - 6.0), 7.0, Color(col.r, col.g, col.b, 0.6))
 
 	# ── Annihilation beam ──
 	if state == ST_BEAM:

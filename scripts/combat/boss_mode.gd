@@ -405,12 +405,13 @@ func _process(delta: float) -> void:
 		for sh in boss.shocks:
 			if sh.hit:
 				continue
-			if player.physics.is_grounded and pc.y > BossMap.FLOOR_Y - 30.0 and absf(pc.x - sh.x) < 16.0:
+			var sh_y: float = sh.get("y", BossMap.FLOOR_Y)
+			if player.physics.is_grounded and absf(pc.y - sh_y) < 34.0 and absf(pc.x - sh.x) < 16.0:
 				sh.hit = true
 				_hurt_player(1, Vector2(sh.dir, -0.6).normalized())
 				player.physics._speedX += sh.dir * 4.0
 				player.physics._speedY -= 7.0
-				weapons.spawn_hit(Vector2(sh.x, BossMap.FLOOR_Y - 12.0), boss.phase_color(), Vector2(0, -1))
+				weapons.spawn_hit(Vector2(sh.x, sh_y - 12.0), boss.phase_color(), Vector2(0, -1))
 
 	# ── Player input: aim/shoot/dash/shield (skipped during the clash) ──
 	if p_ok and not _struggle:
