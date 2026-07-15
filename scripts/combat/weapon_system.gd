@@ -669,9 +669,11 @@ func _process(delta: float) -> void:
 		# (This block previously sat inside the dash-contact loop, whose
 		# early `continue` skipped it for anyone not mid-dash — the doom
 		# never expired at all.)
-		# The DOOM RAY burns down whether it's in hand or waiting in slot 2
+		# The DOOM RAY's 10s is FIRE TIME — it only burns while the beam is
+		# actually on. Stow it or hold your fire to SAVE it for the moment.
 		if a.get("super_left", 0.0) > 0.0:
-			a.super_left -= delta
+			if a.weapon == "doom" and a.get("beam_draw", false):
+				a.super_left -= delta
 			if a.weapon == "doom":
 				a.weapon_left = a.super_left
 			if a.super_left <= 0.0:
