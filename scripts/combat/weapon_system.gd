@@ -99,6 +99,7 @@ func register_actor(id: String, team: int, get_center: Callable, get_vel: Callab
 		"team": team, "get_center": get_center, "get_vel": get_vel,
 		"is_alive": is_alive, "hurt": hurt, "get_hp": get_hp, "max_hp": max_hp,
 		"get_grounded": get_grounded, "push": push,
+		"hit_radius": ACTOR_RADIUS, "no_pickup": false,
 		"weapon": "", "cooldown": 0.0, "aim": Vector2.RIGHT,
 		"weapon_left": -1.0, "beam_on": false, "beam_end": Vector2.ZERO, "beam_tick": 0.0,
 		"dash_cd": 0.0, "dash_time": 0.0, "dash_dmg": 1,
@@ -466,6 +467,9 @@ func _process(delta: float) -> void:
 			var v: Dictionary = _actors[vid]
 			if v.team == a.team or not v.is_alive.call():
 				continue
+			# Big actors (the boss) resolve dash contact in their own mode code
+			if v.get("hit_radius", ACTOR_RADIUS) > 20.0:
+				continue
 			var vc: Vector2 = v.get_center.call()
 			# 20px, NOT 16: the body-collision separation holds balls at
 			# exactly 16px apart, which kept dash punches permanently out of
@@ -528,7 +532,7 @@ func _process(delta: float) -> void:
 			continue
 		for id in _actors:
 			var a: Dictionary = _actors[id]
-			if not a.is_alive.call():
+			if not a.is_alive.call() or a.get("no_pickup", false):
 				continue
 			var c: Vector2 = a.get_center.call()
 			if c.distance_to(pad.pos) < PICKUP_RADIUS:
@@ -580,8 +584,10 @@ func _process(delta: float) -> void:
 				var v: Dictionary = _actors[vid]
 				if v.team == a.team or not v.is_alive.call():
 					continue
-				# Fat beam: ~3 smiley widths — generous hit corridor
-				if v.get_center.call().distance_squared_to(beam_end) < 676.0:
+				# Fat beam: ~3 smiley widths — generous hit corridor (scales
+				# up for big-bodied actors like the boss)
+				var corr: float = 16.0 + v.get("hit_radius", ACTOR_RADIUS)
+				if v.get_center.call().distance_squared_to(beam_end) < corr * corr:
 					if v.shield_on:
 						# The ray SHATTERS on a raised shield: it stops at the
 						# clash point and a deflected column splits off it
@@ -771,18 +777,20 @@ func _process(delta: float) -> void:
 					if a.team == pr.team or not a.is_alive.call():
 						continue
 					var c: Vector2 = a.get_center.call()
-					var hit_r: float = 14.0 if a.shield_on else ACTOR_RADIUS
+					var hit_r: float = 14.0 if a.shield_on else a.get("hit_radius", ACTOR_RADIUS)
 					if c.distance_squared_to(pr.pos) < hit_r * hit_r:
 						if a.shield_on:
-							# DEFLECT: bullets ricochet off shields into the
-							# world — no stun (that's reserved for parried
-							# DASH attacks)
+							# DEFLECT: bullets ricochet off shields — energized
+							# (faster, longer-lived) and they SWITCH SIDES: a
+							# deflected shot belongs to the defender and can hit
+							# the one who fired it. No stun (dash parries only).
 							var nrm: Vector2 = (pr.pos - c).normalized()
 							if nrm.length() < 0.5:
 								nrm = -pr.vel.normalized()
-							pr.vel = pr.vel.bounce(nrm) * 0.9
+							pr.vel = pr.vel.bounce(nrm) * 1.35
 							pr.pos = c + nrm * 18.0
-							pr.life = minf(pr.life, 0.45)
+							pr.life = minf(pr.life, 1.0)
+							pr.team = a.team
 							spawn_hit(pr.pos, Color(0.7, 0.95, 1.0), nrm)
 							play_sfx("hit", pr.pos, 0.05, 1.35)
 						else:

@@ -75,11 +75,16 @@ func _setup_scene() -> void:
 	var hud: CanvasLayer = preload("res://scripts/ui/game_hud.gd").new()
 	add_child(hud)
 
-	# 1v1 Bot battle mode (weapons, AI opponent, lives HUD)
+	# Combat modes (weapons, AI opponents, lives HUD)
 	if GameState.battle_mode:
-		var battle: BattleMode = BattleMode.new()
-		battle.name = "BattleMode"
-		add_child(battle)
+		if GameState.boss_fight:
+			var boss: BossMode = BossMode.new()
+			boss.name = "BossMode"
+			add_child(boss)
+		else:
+			var battle: BattleMode = BattleMode.new()
+			battle.name = "BattleMode"
+			add_child(battle)
 
 	# Show tunnel URL with copy button when hosting
 	if NetworkManager.is_host:
@@ -199,6 +204,8 @@ func _input(event: InputEvent) -> void:
 			if not GameState.battle_mode:
 				WorldManager.save_to_file("user://world_save.json")
 			GameState.battle_mode = false
+			GameState.boss_fight = false
+			GameState.player_stunned = false
 			GameState.cam_shake = 0.0
 			NetworkManager.disconnect_game()
 			get_tree().change_scene_to_file("res://scenes/ui/main_menu.tscn")

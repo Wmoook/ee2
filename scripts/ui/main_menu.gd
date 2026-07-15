@@ -81,6 +81,13 @@ func _ready() -> void:
 	fight_btn.tooltip_text = "10 lives each. Bots hunt everyone — including each other."
 	fight_btn.pressed.connect(_on_battle)
 	bv.add_child(fight_btn)
+	# ☠ BOSS FIGHT — you vs THE WARDEN
+	var boss_btn: Button = EditorToolsDock.make_button("☠  BOSS FIGHT", Color(0.62, 0.18, 0.46))
+	boss_btn.custom_minimum_size = Vector2(0, 40)
+	boss_btn.add_theme_font_size_override("font_size", 15)
+	boss_btn.tooltip_text = "THE WARDEN: 3 lives vs a giant. Parry its slam, jump its shockwaves, MASH LMB to win the beam clash. Guns toggle applies!"
+	boss_btn.pressed.connect(_on_boss)
+	bv.add_child(boss_btn)
 	var refresh_battle_ui: Callable = func() -> void:
 		var n: int = clampi(GameState.battle_bot_count, 1, 3)
 		GameState.battle_bot_count = n
@@ -104,9 +111,19 @@ func _ready() -> void:
 func _on_battle() -> void:
 	_apply_settings()
 	GameState.battle_mode = true
+	GameState.boss_fight = false
 	GameState.set_edit_mode(false)
 	GameState.camera_offset = Vector2.ZERO  # No stale pan from the camera pad
 	BattleMap.build()
+	get_tree().change_scene_to_file("res://scenes/world/game.tscn")
+
+func _on_boss() -> void:
+	_apply_settings()
+	GameState.battle_mode = true
+	GameState.boss_fight = true
+	GameState.set_edit_mode(false)
+	GameState.camera_offset = Vector2.ZERO
+	BossMap.build()
 	get_tree().change_scene_to_file("res://scenes/world/game.tscn")
 
 func _on_host() -> void:

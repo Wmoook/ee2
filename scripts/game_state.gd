@@ -23,6 +23,7 @@ const SlopeGenerator = preload("res://scripts/world/slope_generator.gd")
 var BLOCK_CATEGORIES: Array = [
 	{"name": "Blocks", "ids": [
 		5000, 5001, 5002, 5003, 5004, 5005, 5006, 5007, 5008, 5009, 5010,
+		5011, 5012, 5013, 5014, 5015,
 	]},
 	{"name": "Slopes", "ids": [
 		2000, 2001, 2002, 2003,
@@ -149,6 +150,7 @@ var rotation_enabled: bool = true  # Ball roll visual toggle (HUD "Rotate" butto
 var battle_mode: bool = false  # 1v1 bot arena active — blocks world saves + editing
 var battle_guns_enabled: bool = true  # OFF = pure melee duel (dash + parry only)
 var battle_bot_count: int = 1  # Enemy bots in the arena: 1 = 1v1 ... 3 = 1v1v1v1 (FFA)
+var boss_fight: bool = false  # BOSS FIGHT mode (battle_mode is also set — same gating)
 var cam_shake: float = 0.0  # Screen shake impulse (added by combat, decays in player controller)
 var player_stunned: bool = false  # Set by battle mode: parried players lose control briefly
 
@@ -185,6 +187,11 @@ func _register_custom_blocks() -> void:
 		{"id": 5008, "path": "res://assets/sprites/NEW_BLOCK_SPRITE/block_9.png", "path16": "res://assets/sprites/NEW_BLOCK_SPRITE/block_9_16.png"},
 		{"id": 5009, "path": "res://assets/sprites/NEW_BLOCK_SPRITE/block_10.png", "path16": "res://assets/sprites/NEW_BLOCK_SPRITE/block_10_16.png"},
 		{"id": 5010, "path": "res://assets/sprites/NEW_BLOCK_SPRITE/block_11.png", "path16": "res://assets/sprites/NEW_BLOCK_SPRITE/block_11_16.png"},
+		{"id": 5011, "path": "res://assets/sprites/NEW_BLOCK_SPRITE/block_12.png", "path16": "res://assets/sprites/NEW_BLOCK_SPRITE/block_12_16.png"},
+		{"id": 5012, "path": "res://assets/sprites/NEW_BLOCK_SPRITE/block_13.png", "path16": "res://assets/sprites/NEW_BLOCK_SPRITE/block_13_16.png"},
+		{"id": 5013, "path": "res://assets/sprites/NEW_BLOCK_SPRITE/block_14.png", "path16": "res://assets/sprites/NEW_BLOCK_SPRITE/block_14_16.png"},
+		{"id": 5014, "path": "res://assets/sprites/NEW_BLOCK_SPRITE/block_15.png", "path16": "res://assets/sprites/NEW_BLOCK_SPRITE/block_15_16.png"},
+		{"id": 5015, "path": "res://assets/sprites/NEW_BLOCK_SPRITE/block_16.png", "path16": "res://assets/sprites/NEW_BLOCK_SPRITE/block_16_16.png"},
 	]
 	for cb in custom_blocks:
 		var tex: Texture2D = load(cb.path) as Texture2D
@@ -442,9 +449,11 @@ var _custom_block_warps: Dictionary = {
 	5000: Vector2(0.0, 0.35), 5001: Vector2(0.0, 0.35), 5002: Vector2(0.0, 0.35), 5003: Vector2(0.0, 0.35), 5004: Vector2(0.0, 0.35),
 	5005: Vector2(0.0, 0.35), 5006: Vector2(0.0, 0.35), 5007: Vector2(0.0, 0.35), 5008: Vector2(0.0, 0.35),
 	5009: Vector2(0.0, 0.35), 5010: Vector2(0.0, 0.35),
+	5011: Vector2(0.0, 0.35), 5012: Vector2(0.0, 0.35), 5013: Vector2(0.0, 0.35), 5014: Vector2(0.0, 0.35), 5015: Vector2(0.0, 0.35),
 	5100: Vector2(0.0, 0.35), 5101: Vector2(0.0, 0.35), 5102: Vector2(0.0, 0.35), 5103: Vector2(0.0, 0.35), 5104: Vector2(0.0, 0.35),
 	5105: Vector2(0.0, 0.35), 5106: Vector2(0.0, 0.35), 5107: Vector2(0.0, 0.35), 5108: Vector2(0.0, 0.35),
 	5109: Vector2(0.0, 0.35), 5110: Vector2(0.0, 0.35),
+	5111: Vector2(0.0, 0.35), 5112: Vector2(0.0, 0.35), 5113: Vector2(0.0, 0.35), 5114: Vector2(0.0, 0.35), 5115: Vector2(0.0, 0.35),
 }  # Baked warp for 40x40 blocks (FG + BG versions)
 
 func get_custom_block_warp(id: int) -> Vector2:
