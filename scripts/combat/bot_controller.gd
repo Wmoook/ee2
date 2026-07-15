@@ -418,6 +418,18 @@ func _think() -> void:
 				blocked = true
 				break
 		if blocked:
+			# Only slide out if I'm truly UNDER the platform interior; merely
+			# touching its edge means the wall-jump will mount it — shifting
+			# the goal away would just ping-pong off the step forever.
+			var toward: int = 1 if goal.x > my_c.x else -1
+			var behind_blocked: bool = false
+			for r3 in range(goal_row, my_row):
+				if WorldManager.is_solid_at(my_col - toward, r3):
+					behind_blocked = true
+					break
+			if not behind_blocked:
+				blocked = false
+		if blocked:
 			for off in range(1, 10):
 				var clear_l: bool = true
 				var clear_r: bool = true
@@ -545,8 +557,13 @@ func _think() -> void:
 				if not WorldManager.is_solid_at(edge_tx, foot_row):
 					if _landing_is_hazard(edge_tx, my_c.y) and _landing_is_hazard(edge_tx + _in_h, my_c.y):
 						_in_h = 0  # Hold the edge; goal logic re-routes
-		if goal.y < my_c.y - 40.0:
-			want_jump = true
+		if goal.y < my_c.y - 14.0 and not want_jump:
+			# GHOST-CONFIRMED MOUNT: only jump if the simulated arc actually
+			# LANDS up at the target — pointless wall hops never fire
+			var mount: Dictionary = _simulate_jump(_in_h, 220)
+			if not mount.died and mount.end_y < physics.y - 8.0 and absf(mount.end_x + 8.0 - goal.x) < 64.0:
+				want_jump = true
+				_jump_verified = true
 		if armed and not escaping and randf() < 0.05:
 			want_jump = true  # Unpredictable dodge hop
 		# Dodge incoming projectiles (hard: reacts most of the time).
@@ -597,13 +614,14 @@ func _think() -> void:
 	if _backoff_timer > 0.0 and physics.is_grounded:
 		_in_h = -_in_h
 		want_jump = false
-	# UNIVERSAL SURVIVAL FILTER: no jump is taken unless its full simulated
-	# trajectory survives. Dumb deaths are not allowed — only outplays.
+	# UNIVERSAL FILTER: a jump must SURVIVE its simulated trajectory AND be
+	# USEFUL (gain real height or distance) — no deaths, no in-place hops.
 	if want_jump and not _jump_verified:
 		var survival: Dictionary = _simulate_jump(_in_h, 220)
-		if survival.died:
+		var useful: bool = not survival.died and (absf(survival.end_x - physics.x) > 24.0 or survival.end_y < physics.y - 8.0)
+		if not useful:
 			want_jump = false
-			_backoff_timer = maxf(_backoff_timer, 0.3)
+			_backoff_timer = maxf(_backoff_timer, 0.25)
 		else:
 			_jump_verified = true  # Survivor — commit its input like any other
 			last_jump_info = "launch(%.0f,%.0f) ih=%d spd=%.1f pred_end=%.0f" % [my_c.x, my_c.y, _in_h, physics._speedX, survival.end_x + 8.0]
@@ -697,4 +715,4 @@ func _simulate_jump(ih: int, max_ticks: int, impulse: Vector2 = Vector2.ZERO, do
 		if i > 30 and ghost.is_grounded:
 			landed = true
 			break
-	return {"safe": landed and not died, "died": died, "end_x": ghost.x}
+	return {"safe": landed and not died, "died": died, "end_x": ghost.x, "end_y": ghost.y}

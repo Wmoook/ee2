@@ -172,12 +172,26 @@ func _kill_bot() -> void:
 		_bot_respawn_in = 1.5
 
 
+func _pick_spawn(avoid_px: Vector2) -> Vector2:
+	## Random curated spot, preferring ones far from the opponent — no more
+	## camping a fixed respawn with the DOOM RAY.
+	var candidates: Array = []
+	for s in BattleMap.SPAWN_SPOTS:
+		if Vector2(s.x * 16.0 + 8.0, s.y * 16.0 + 8.0).distance_to(avoid_px) > 300.0:
+			candidates.append(s)
+	if candidates.is_empty():
+		candidates = BattleMap.SPAWN_SPOTS.duplicate()
+	return candidates[randi() % candidates.size()]
+
+
 func _on_player_died() -> void:
 	if _over:
 		return
 	# Death animation for EVERY death cause — spikes included
 	weapons.spawn_explosion(Vector2(player.physics.x + 8.0, player.physics.y + 8.0), Color(0.4, 0.8, 1.0))
 	weapons.strip_weapon("player")
+	# Random respawn away from the bot (the controller respawns at index 0)
+	WorldManager.spawn_points[0] = _pick_spawn(bot.get_center())
 	player_lives -= 1
 	player_hp = MAX_HP
 	_player_invuln = INVULN_TIME + 0.7  # Covers the respawn delay
@@ -305,11 +319,8 @@ func _process(delta: float) -> void:
 	if _bot_respawn_in > 0.0:
 		_bot_respawn_in -= delta
 		if _bot_respawn_in <= 0.0:
-			var pc: Vector2 = Vector2(player.physics.x, player.physics.y)
-			var s0: Vector2 = WorldManager.get_spawn_pixel(0)
-			var s1: Vector2 = WorldManager.get_spawn_pixel(1)
-			var pick: Vector2 = WorldManager.get_spawn_point(1) if pc.distance_to(s1) > pc.distance_to(s0) else WorldManager.get_spawn_point(0)
-			bot.spawn_at(pick)
+			var pc: Vector2 = Vector2(player.physics.x + 8.0, player.physics.y + 8.0)
+			bot.spawn_at(_pick_spawn(pc))
 			_bot_invuln = INVULN_TIME
 	# Player aiming + shooting (LMB), blocked while editing (editing is
 	# disabled in battle mode anyway) or over UI

@@ -34,9 +34,17 @@ const ARROW_UP: int = 2
 # Tower climb ladders (standing positions, bottom -> top): the bot walks
 # these waypoint by waypoint whenever its goal is high above (scatter pads,
 # the lift entrance, a player camping a platform).
-const CLIMB_LEFT: Array = [Vector2(568.0, 456.0), Vector2(624.0, 424.0), Vector2(680.0, 390.0)]
-const CLIMB_RIGHT: Array = [Vector2(952.0, 456.0), Vector2(912.0, 424.0), Vector2(840.0, 390.0)]
+const CLIMB_LEFT: Array = [Vector2(568.0, 456.0), Vector2(624.0, 408.0), Vector2(680.0, 390.0)]
+const CLIMB_RIGHT: Array = [Vector2(952.0, 456.0), Vector2(912.0, 408.0), Vector2(840.0, 390.0)]
 const SUPER_POS: Vector2 = Vector2(768.0, 104.0)  # DOOM RAY drop: crown of the arrow lift — ride up to claim it
+
+# Curated respawn spots (tile coords, all in open air above solid ground) on
+# both sides of the map — respawns pick randomly among these, never inside a
+# block, and never right next to the opponent.
+const SPAWN_SPOTS: Array = [
+	Vector2(18, 30), Vector2(28, 30), Vector2(35, 27),
+	Vector2(77, 30), Vector2(67, 30), Vector2(60, 27),
+]
 
 
 static func build() -> void:
@@ -94,13 +102,20 @@ static func build() -> void:
 		_fg(x, 25, PLATE)
 	_fg(45, 25, CORE)
 	_fg(50, 25, CORE)
-	# Mini-steps ABOVE the shelf ends keep the climb smooth:
-	# shelf (y29) -> step (y27) -> mid (y25). Two tiles wide so the hops are
-	# forgiving, placed over the shelves so walk-offs never reach the strips.
-	_fg(38, 27, CORE)
-	_fg(39, 27, PLATE)
-	_fg(56, 27, PLATE)
-	_fg(57, 27, CORE)
+	# SOLID STAIRCASES fused to the shelf inner ends:
+	# shelf (y29, top 464) -> step top (y26, top 416) -> mid (y25, top 400).
+	# One standard 48px hop up, then a trivial 16px hop onto the mid — no
+	# corner-clip margins, no gaps, no fall-chutes anywhere in the chain.
+	for sx in [38, 39]:
+		_fg(sx, 26, CORE if sx == 38 else PLATE)
+		_fg(sx, 27, PLATE)
+		_fg(sx, 28, PLATE)
+	_fg(39, 29, PLATE)
+	for sx in [56, 57]:
+		_fg(sx, 26, CORE if sx == 57 else PLATE)
+		_fg(sx, 27, PLATE)
+		_fg(sx, 28, PLATE)
+	_fg(56, 29, PLATE)
 	# Perches y=23 (cover + sightlines)
 	for x in range(34, 38):
 		_fg(x, 23, PLATE)

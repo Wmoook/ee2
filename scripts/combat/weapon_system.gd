@@ -386,6 +386,23 @@ func _process(delta: float) -> void:
 		var a: Dictionary = _actors[id]
 		if a.cooldown > 0.0:
 			a.cooldown = maxf(0.0, a.cooldown - delta)
+		# Timed weapons: the DOOM RAY burns out after exactly 10s.
+		# (This block previously sat inside the dash-contact loop, whose
+		# early `continue` skipped it for anyone not mid-dash — the doom
+		# never expired at all.)
+		if a.weapon != "" and a.weapon_left > 0.0:
+			a.weapon_left -= delta
+			if a.weapon_left <= 0.0:
+				var fizzle_c: Vector2 = a.get_center.call()
+				for _i in range(16):
+					var fang: float = randf() * TAU
+					_fx.append({
+						"pos": fizzle_c, "vel": Vector2.from_angle(fang) * randf_range(30.0, 140.0),
+						"life": randf_range(0.1, 0.3), "max_life": 0.3,
+						"color": WEAPONS[a.weapon].color, "size": randf_range(1.0, 2.4),
+					})
+				play_sfx("pickup", fizzle_c, 0.02)
+				strip_weapon(id)
 		# Melee kit timers
 		if a.dash_cd > 0.0:
 			a.dash_cd = maxf(0.0, a.dash_cd - delta)
@@ -468,19 +485,6 @@ func _process(delta: float) -> void:
 					play_sfx("hit", vc)
 					GameState.cam_shake += 3.0 + a.dash_dmg * 1.5
 				break
-		if a.weapon != "" and a.weapon_left > 0.0:
-			a.weapon_left -= delta
-			if a.weapon_left <= 0.0:
-				var fizzle_c: Vector2 = a.get_center.call()
-				for _i in range(16):
-					var fang: float = randf() * TAU
-					_fx.append({
-						"pos": fizzle_c, "vel": Vector2.from_angle(fang) * randf_range(30.0, 140.0),
-						"life": randf_range(0.1, 0.3), "max_life": 0.3,
-						"color": WEAPONS[a.weapon].color, "size": randf_range(1.0, 2.4),
-					})
-				play_sfx("pickup", fizzle_c, 0.02)
-				strip_weapon(id)
 	# Super weapon cycle: countdown -> materialize animation -> pad on field
 	if super_pos != Vector2.ZERO:
 		if _super_state == 0:
