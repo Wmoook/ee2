@@ -591,6 +591,22 @@ func _process(delta: float) -> void:
 			})
 		spawn_hit(beam_end, Color(1.0, 0.4, 0.2), a.aim)
 		GameState.cam_shake = maxf(GameState.cam_shake, 2.5)
+		# UNSHIELDED target under the ray: SENT FLYING — continuous blast
+		# force with an upward tumble bias, plus a storm of embers blown off
+		# them down-beam. They ragdoll into the wall while burning.
+		if not victim.is_empty():
+			if not victim.push.is_null():
+				victim.push.call((a.aim + Vector2(0.0, -0.22)).normalized() * delta * 30.0)
+			var vc2: Vector2 = victim.get_center.call()
+			if randf() < delta * 420.0:
+				var ember_ang: float = randf() * TAU
+				_fx.append({
+					"pos": vc2 + Vector2.from_angle(ember_ang) * randf_range(2.0, 10.0),
+					"vel": a.aim * randf_range(120.0, 320.0) + Vector2.from_angle(ember_ang) * 50.0,
+					"life": randf_range(0.08, 0.22), "max_life": 0.22,
+					"color": Color(1.0, randf_range(0.3, 0.7), 0.15), "size": randf_range(1.4, 3.2),
+				})
+			GameState.cam_shake = maxf(GameState.cam_shake, 4.5)
 		# Shielded target under the beam: NO damage, NO stun — instead a
 		# continuous blast that plows them into the wall while the ray
 		# engulfs them, and their shield cooks off under the pressure
@@ -613,7 +629,21 @@ func _process(delta: float) -> void:
 			a.beam_tick = w.tick
 			if not victim.is_empty():
 				victim.hurt.call(w.dmg, a.aim)
-				play_sfx("hit", beam_end)
+				var hitc: Vector2 = victim.get_center.call()
+				play_sfx("hit", hitc)
+				# Every damage tick is a mini-detonation on the victim
+				spawn_ring(hitc, Color(1.0, 0.5, 0.2), 4.0, 24.0, 0.22)
+				_fx.append({
+					"pos": hitc, "vel": Vector2.ZERO, "life": 0.07, "max_life": 0.07,
+					"color": Color(1, 1, 1), "size": 11.0,
+				})
+				for _bd in range(6):
+					_fx.append({
+						"pos": hitc, "vel": a.aim.rotated(randf_range(-0.7, 0.7)) * randf_range(140.0, 380.0),
+						"life": randf_range(0.1, 0.24), "max_life": 0.24,
+						"color": Color(1.0, 0.6, 0.2), "size": randf_range(1.5, 3.0),
+					})
+				GameState.cam_shake += 2.5
 	if _beam_audio and _beam_audio.stream:
 		if any_beam and not _beam_audio.playing:
 			_beam_audio.play()

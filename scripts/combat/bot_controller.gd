@@ -397,14 +397,41 @@ func _think() -> void:
 		elif goal.x > 1472.0:
 			goal.x = my_c.x - 240.0
 	# High goals (pads on platforms, the lift entrance, campers): climb the
-	# nearest tower LADDER waypoint by waypoint instead of hopping uselessly
-	# underneath the target.
+	# tower on MY side of the arena, ladder waypoint by waypoint.
 	if goal.y < my_c.y - 56.0:
-		var route: Array = BattleMap.CLIMB_LEFT if goal.x < 768.0 else BattleMap.CLIMB_RIGHT
+		var route: Array = BattleMap.CLIMB_LEFT if my_c.x < 768.0 else BattleMap.CLIMB_RIGHT
 		for wp in route:
 			if wp.y < my_c.y - 10.0:
 				goal = wp
 				break
+	# MOUNTING: platforms must be jumped onto from BESIDE their lip. If a
+	# solid ceiling sits between me and my goal height at my column (I'm
+	# underneath the platform), slide the goal out to just past the nearest
+	# open edge — then the jump up onto the lip verifies and commits.
+	if goal.y < my_c.y - 40.0:
+		var my_col: int = int(floor(my_c.x / 16.0))
+		var goal_row: int = maxi(int(floor(goal.y / 16.0)), 2)
+		var my_row: int = int(floor(my_c.y / 16.0))
+		var blocked: bool = false
+		for r in range(goal_row, my_row):
+			if WorldManager.is_solid_at(my_col, r):
+				blocked = true
+				break
+		if blocked:
+			for off in range(1, 10):
+				var clear_l: bool = true
+				var clear_r: bool = true
+				for r2 in range(goal_row, my_row):
+					if WorldManager.is_solid_at(my_col - off, r2):
+						clear_l = false
+					if WorldManager.is_solid_at(my_col + off, r2):
+						clear_r = false
+				if clear_l:
+					goal.x = (my_col - off) * 16.0 - 2.0
+					break
+				if clear_r:
+					goal.x = (my_col + off) * 16.0 + 18.0
+					break
 	else:
 		# Engage: keep a mid-range band, strafe inside it
 		var dist: float = my_c.distance_to(player_c)
