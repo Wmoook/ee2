@@ -61,12 +61,14 @@ func get_visible_range() -> Array:
 
 func _draw() -> void:
 	var r: Array = get_visible_range()
-	# BG tiles
+	# BG tiles: drawn OPAQUE but heavily darkened and cooled so the back
+	# layer is unmistakable at a glance (translucent-white BG read almost
+	# identical to foreground blocks)
 	for y in range(r[1], r[3]):
 		for x in range(r[0], r[2]):
 			var bg_id: int = WorldManager.get_bg_tile(x, y)
 			if bg_id != 0:
-				draw_block(x, y, bg_id, 0.55)
+				draw_block(x, y, bg_id, 1.0, Color(0.36, 0.37, 0.5))
 	# FG tiles also drawn here (behind player) for the base layer
 	for y in range(r[1], r[3]):
 		for x in range(r[0], r[2]):
@@ -239,10 +241,11 @@ func _curve_uv(dist: float, cap_frac: float, uv0: float, uv1: float) -> float:
 		tile_t += 1.0
 	return uv0 + tile_t * uv_range
 
-func draw_block(x: int, y: int, block_id: int, alpha: float) -> void:
+func draw_block(x: int, y: int, block_id: int, alpha: float, tint: Color = Color(1, 1, 1)) -> void:
 	var dest: Rect2 = Rect2(x * TILE_SIZE, y * TILE_SIZE, TILE_SIZE, TILE_SIZE)
 	# Door/gate visual swap when key is active
 	var render_id: int = _get_visual_id(block_id)
+	var mod: Color = Color(tint.r, tint.g, tint.b, alpha)
 	# Custom blocks (with optional warp for visual scale tuning)
 	if GameState.is_custom_block(render_id):
 		var ctex: Texture2D = GameState.get_custom_block_texture(render_id)
@@ -250,13 +253,13 @@ func draw_block(x: int, y: int, block_id: int, alpha: float) -> void:
 			# Check for per-block warp (visual expansion, hitbox unchanged)
 			var warp: Vector2 = GameState.get_custom_block_warp(render_id)
 			var wdest: Rect2 = Rect2(dest.position.x - warp.x, dest.position.y - warp.y, dest.size.x + warp.x * 2, dest.size.y + warp.y * 2)
-			draw_texture_rect(ctex, wdest, false, Color(1, 1, 1, alpha))
+			draw_texture_rect(ctex, wdest, false, mod)
 		return
 	# Slope blocks use generated ImageTextures instead of atlas lookup
 	if GameState.is_slope(render_id):
 		var slope_tex = GameState.get_slope_texture(render_id)
 		if slope_tex:
-			draw_texture_rect(slope_tex, dest, false, Color(1, 1, 1, alpha))
+			draw_texture_rect(slope_tex, dest, false, mod)
 		else:
 			draw_rect(dest, Color(0.5, 0.5, 0.5, alpha))
 		return
@@ -278,7 +281,7 @@ func draw_block(x: int, y: int, block_id: int, alpha: float) -> void:
 	var tex: Texture2D = textures[tex_key]
 	var cols: int = tex.get_width() / TILE_SIZE
 	var src: Rect2 = Rect2((local_off % cols) * TILE_SIZE, (local_off / cols) * TILE_SIZE, TILE_SIZE, TILE_SIZE)
-	draw_texture_rect_region(tex, dest, src, Color(1, 1, 1, alpha))
+	draw_texture_rect_region(tex, dest, src, mod)
 
 func draw_block_to(target: CanvasItem, x: int, y: int, block_id: int, alpha: float) -> void:
 	var dest: Rect2 = Rect2(x * TILE_SIZE, y * TILE_SIZE, TILE_SIZE, TILE_SIZE)

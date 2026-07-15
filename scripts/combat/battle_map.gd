@@ -198,12 +198,9 @@ static func build() -> void:
 
 
 static func add_weapon_pads(ws: WeaponSystem) -> void:
-	ws.add_pad(Vector2(352, 494), "blaster")     # Left floor, by the spawn
-	ws.add_pad(Vector2(1184, 494), "blaster")    # Right floor, by the spawn
-	ws.add_pad(Vector2(680, 382), "scatter")     # Left mid platform (contested)
-	ws.add_pad(Vector2(840, 382), "scatter")     # Right mid platform (contested)
-	ws.add_pad(Vector2(768, 126), "rail")        # Top of the lift
-	ws.super_pos = SUPER_POS                     # DOOM RAY materializes center floor
+	# Guns live in the permanent loadout now (slots 2/3) — the only world
+	# pickup is the DOOM RAY's 60s materialization
+	ws.super_pos = SUPER_POS
 
 
 static func _fg(x: int, y: int, id: int) -> void:

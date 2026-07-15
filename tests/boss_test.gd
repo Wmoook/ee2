@@ -33,6 +33,7 @@ func _ready() -> void:
 		if i >= 40 and not doom_given:
 			doom_given = true
 			bm.weapons.give_weapon("player", "doom")
+			bm.weapons.select_slot("player", 2)  # Draw it (no auto-equip)
 			bm.boss._beam_cd = 1.0
 			if pl and not pl._is_dead:
 				pl.physics.x = 488.0
@@ -54,13 +55,21 @@ func _ready() -> void:
 	print("END PANEL %s (visible=%s text=%s)" % [
 		"PASS" if (bm._result_panel.visible and bm._result_label.text != "") else "FAIL",
 		bm._result_panel.visible, bm._result_label.text])
-	# Weapon slots (1 = fists / 2 = gun) + shields-while-armed
-	# (_over is set by _end above, so mode input can't override these)
-	bm.weapons.give_weapon("player", "blaster")
-	bm.weapons.select_slot("player", 1)
-	var slot1_ok: bool = bm.weapons.get_weapon("player") == "" and bm.weapons._actors["player"].stowed_weapon == "blaster"
+	# Inventory (1 fists / 2 blaster / 3 scatter), doom never auto-cancels
+	# fists, shields work armed (_over is set by _end above → no override)
+	bm.weapons._actors["player"]["loadout"] = true
+	bm.weapons._actors["player"]["auto_equip"] = false
+	bm.weapons._actors["player"]["super_left"] = -1.0
 	bm.weapons.select_slot("player", 2)
 	var slot2_ok: bool = bm.weapons.get_weapon("player") == "blaster"
+	bm.weapons.select_slot("player", 3)
+	var slot3_ok: bool = bm.weapons.get_weapon("player") == "scatter"
+	bm.weapons.select_slot("player", 1)
+	var slot1_ok: bool = bm.weapons.get_weapon("player") == ""
+	bm.weapons.give_weapon("player", "doom")
+	var no_cancel: bool = bm.weapons.get_weapon("player") == ""  # STAYED on fists
+	bm.weapons.select_slot("player", 2)
+	var doom_ok: bool = bm.weapons.get_weapon("player") == "doom"
 	bm.weapons.set_shield("player", true)
 	await get_tree().process_frame
 	await get_tree().process_frame
@@ -68,8 +77,9 @@ func _ready() -> void:
 	bm.weapons._actors["player"]["cooldown"] = 0.0
 	bm.weapons.try_shoot("player")
 	var shot_drops: bool = not bm.weapons._actors["player"].shield_on and bm.weapons._actors["player"].shield_lock > 0.0
-	print("SLOTS %s | ARMED_SHIELD %s | SHOT_DROPS_SHIELD %s" % [
-		"PASS" if (slot1_ok and slot2_ok) else "FAIL",
+	print("SLOTS %s | DOOM_NO_CANCEL %s | ARMED_SHIELD %s | SHOT_DROPS_SHIELD %s" % [
+		"PASS" if (slot1_ok and slot2_ok and slot3_ok and doom_ok) else "FAIL",
+		"PASS" if no_cancel else "FAIL",
 		"PASS" if armed_shield else "FAIL",
 		"PASS" if shot_drops else "FAIL"])
 	# Terrain destruction: altar block breaks, shell is immune

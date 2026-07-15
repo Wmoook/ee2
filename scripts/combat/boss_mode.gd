@@ -53,12 +53,10 @@ func _ready() -> void:
 
 
 func _wire_up() -> void:
-	if GameState.battle_guns_enabled:
-		BossMap.add_weapon_pads(weapons)
-		boss.max_hp = 90
-	else:
-		weapons.super_pos = BossMap.SUPER_POS
-		boss.max_hp = 42
+	# Only the DOOM RAY appears in the world; guns are the permanent
+	# slots 2/3 loadout when the toggle is ON
+	weapons.super_pos = BossMap.SUPER_POS
+	boss.max_hp = 90 if GameState.battle_guns_enabled else 42
 	boss.hp = boss.max_hp
 	boss.ws = weapons
 	boss.min_x = BossMap.BOUNDS_MIN_X
@@ -92,6 +90,8 @@ func _wire_up() -> void:
 		boss.apply_push)
 	weapons._actors["boss"]["hit_radius"] = BossController.BODY_R
 	weapons._actors["boss"]["no_pickup"] = true
+	weapons._actors["player"]["loadout"] = GameState.battle_guns_enabled
+	weapons._actors["player"]["auto_equip"] = false  # Doom waits in slot 2
 	if player.has_signal("died"):
 		player.died.connect(_on_player_died)
 
@@ -314,12 +314,19 @@ func _process(delta: float) -> void:
 
 	# ── Annihilation beam: damage or THE CLASH ──
 	if boss.state == BossController.ST_BEAM and p_ok:
-		var mz: Vector2 = boss.beam_muzzle()
-		var seg: Vector2 = boss.beam_hit - mz
+		# The laser path is a chain of segments (wall ricochets included) —
+		# a reflected branch can catch you from behind
 		var in_corridor: bool = false
-		if seg.length_squared() > 1.0:
-			var t: float = clampf((pc - mz).dot(seg) / seg.length_squared(), 0.0, 1.0)
-			in_corridor = pc.distance_squared_to(mz + seg * t) < 34.0 * 34.0
+		var hit_dir: Vector2 = boss.beam_dir
+		for seg_d in boss.beam_segments:
+			var sv: Vector2 = seg_d.to - seg_d.from
+			if sv.length_squared() < 1.0:
+				continue
+			var st: float = clampf((pc - seg_d.from).dot(sv) / sv.length_squared(), 0.0, 1.0)
+			if pc.distance_squared_to(seg_d.from + sv * st) < 34.0 * 34.0:
+				in_corridor = true
+				hit_dir = sv.normalized()
+				break
 		if not _struggle:
 			if in_corridor:
 				var has_doom: bool = weapons.get_weapon("player") == "doom"
@@ -329,9 +336,9 @@ func _process(delta: float) -> void:
 					_beam_tick -= delta
 					if _beam_tick <= 0.0:
 						_beam_tick = 0.32
-						_hurt_player(1, boss.beam_dir)
-					player.physics._speedX += boss.beam_dir.x * delta * 26.0
-					player.physics._speedY += (boss.beam_dir.y - 0.2) * delta * 26.0
+						_hurt_player(1, hit_dir)
+					player.physics._speedX += hit_dir.x * delta * 26.0
+					player.physics._speedY += (hit_dir.y - 0.2) * delta * 26.0
 			else:
 				_beam_tick = 0.05
 	elif _struggle:
@@ -366,7 +373,7 @@ func _process(delta: float) -> void:
 		boss.clash_point = boss.beam_muzzle().lerp(pc, clampf(_clash_t, 0.0, 1.0))
 		if randf() < delta * 200.0:
 			var perp: Vector2 = boss.beam_dir.orthogonal()
-			weapons.spawn_trail_dot(boss.clash_point, perp * randf_range(-260.0, 260.0), Color(1.0, 0.85, 0.4))
+			weapons.spawn_trail_dot(boss.clash_point, perp * randf_range(-260.0, 260.0), Color(0.6, 1.0, 0.6) if randf() < 0.6 else Color(0.6, 0.95, 1.0))
 		GameState.cam_shake = maxf(GameState.cam_shake, lerpf(7.0, 2.5, _clash_t))
 		if _clash_t <= 0.06:
 			# WON THE CLASH — the beam backfires
@@ -417,11 +424,13 @@ func _process(delta: float) -> void:
 	if p_ok and not _struggle:
 		var aim: Vector2 = weapons.get_global_mouse_position() - pc
 		weapons.set_aim("player", aim)
-		# Weapon slots: 1 = fists (full melee kit), 2 = draw the stowed gun
+		# Inventory: 1 = fists, 2 = blaster/DOOM, 3 = scatter
 		if Input.is_physical_key_pressed(KEY_1):
 			weapons.select_slot("player", 1)
 		elif Input.is_physical_key_pressed(KEY_2):
 			weapons.select_slot("player", 2)
+		elif Input.is_physical_key_pressed(KEY_3):
+			weapons.select_slot("player", 3)
 		var unarmed: bool = weapons.get_weapon("player") == ""
 		# RMB: parry shield — works armed too (firing drops it briefly)
 		weapons.set_shield("player", Input.is_mouse_button_pressed(MOUSE_BUTTON_RIGHT) and not GameState.is_edit_mode)
@@ -476,17 +485,17 @@ func _layout_hud() -> void:
 		for i in range(player_lives):
 			hearts += "♥ "
 		var wname: String = weapons.get_weapon("player")
+		var pa_hud: Dictionary = weapons._actors["player"]
 		var wtext: String
 		if wname != "":
 			wtext = WeaponSystem.WEAPONS[wname].label
 			if weapons._actors["player"].weapon_left > 0.0:
 				wtext += " %.1fs" % weapons._actors["player"].weapon_left
-			wtext += "  [1: fists]"
 		else:
 			wtext = "FISTS — dash punch, parry shield"
-			var stowed: String = weapons._actors["player"].get("stowed_weapon", "")
-			if stowed != "":
-				wtext = "FISTS — dash & parry  [2: %s]" % WeaponSystem.WEAPONS[stowed].label
+		var s2: String = "DOOM %.0fs" % maxf(pa_hud.get("super_left", 0.0), 0.0) if pa_hud.get("super_left", 0.0) > 0.0 else ("blaster" if pa_hud.get("loadout", false) else "—")
+		var s3: String = "scatter" if pa_hud.get("loadout", false) else "—"
+		wtext += "   [1 fists · 2 %s · 3 %s]" % [s2, s3]
 		if weapons.super_pos != Vector2.ZERO:
 			_player_label.text = "%s  |  HP %d/%d  |  %s  |  %s" % [hearts.strip_edges(), player_hp, MAX_HP, wtext, weapons.get_super_status()]
 		else:

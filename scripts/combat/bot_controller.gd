@@ -57,6 +57,7 @@ var _committed_h: int = 0        # Input held through a sim-verified jump arc
 var _commit_active: bool = false # True while flying a verified arc (even with input 0)
 var _commit_air_seen: bool = false # Arc actually left the ground (release gate)
 var _dash_dir: int = 0           # Held input during an active dash window
+var _slot_t: float = 0.0         # Cooldown between loadout slot switches
 
 
 func _ready() -> void:
@@ -380,6 +381,21 @@ func _think() -> void:
 			_reroute_dir = 1 if randf() < 0.5 else -1
 		_stuck_anchor = my_c
 	var player_c: Vector2 = get_player_center.call()
+	# Loadout tactics (guns mode): scatter up close, blaster at range,
+	# fists inside melee/parry distance. The doom overrides everything.
+	_slot_t -= 0.033
+	if weapon_system and _slot_t <= 0.0 and weapon_system._actors.get(actor_id, {}).get("loadout", false) and weapon_system.get_weapon(actor_id) != "doom":
+		var slot_d: float = my_c.distance_to(player_c)
+		var want_slot: int = 1
+		if weapon_system._actors[actor_id].get("super_left", 0.0) > 0.0:
+			want_slot = 2  # A stored DOOM RAY gets drawn IMMEDIATELY
+		elif slot_d > 260.0:
+			want_slot = 2
+		elif slot_d > 140.0:
+			want_slot = 3
+		if want_slot != weapon_system._actors[actor_id].cur_slot:
+			weapon_system.select_slot(actor_id, want_slot)
+			_slot_t = 0.8  # Hysteresis — no slot flickering
 	var armed: bool = weapon_system != null and weapon_system.get_weapon(actor_id) != ""
 	var goal: Vector2 = player_c
 	# Navigation goals (pads, the super race, ladder waypoints, beam escapes)

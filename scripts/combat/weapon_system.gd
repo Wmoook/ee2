@@ -47,7 +47,7 @@ const DASH_DMG: int = 1
 const SHIELD_MAX: float = 1.2        # Max shield hold (drains; regens when down)
 const STUN_TIME: float = 1.0         # Parry stun duration
 
-const BLOCK_BREAK_TIME: float = 0.8   # Seconds of beam-cook to shatter a block
+const BLOCK_BREAK_TIME: float = 0.35  # Seconds of beam-cook to shatter a block
 const BLOCK_RESPAWN: float = 10.0     # Shattered terrain re-materializes after this
 
 var _actors: Dictionary = {}      # id -> actor dict
@@ -108,7 +108,7 @@ func register_actor(id: String, team: int, get_center: Callable, get_vel: Callab
 		"hit_radius": ACTOR_RADIUS, "no_pickup": false,
 		"weapon": "", "cooldown": 0.0, "aim": Vector2.RIGHT,
 		"weapon_left": -1.0, "beam_on": false, "beam_end": Vector2.ZERO, "beam_tick": 0.0,
-		"stowed_weapon": "", "stowed_left": -1.0,
+		"cur_slot": 1, "super_left": -1.0, "loadout": false, "auto_equip": true,
 		"dash_cd": 0.0, "dash_time": 0.0, "dash_dmg": 1,
 		"charge": 0.0, "charging": false, "charge_fed": false,
 		"shield_req": false, "shield_on": false, "shield_energy": SHIELD_MAX,
@@ -123,38 +123,69 @@ func set_aim(id: String, dir: Vector2) -> void:
 
 
 func give_weapon(id: String, weapon: String) -> void:
-	if _actors.has(id) and WEAPONS.has(weapon):
-		_actors[id].weapon = weapon
-		_actors[id].cooldown = 0.15
-		_actors[id].weapon_left = WEAPONS[weapon].get("duration", -1.0)
-		_actors[id].stowed_weapon = ""  # A fresh pickup replaces the arsenal
+	if not (_actors.has(id) and WEAPONS.has(weapon)):
+		return
+	var ga: Dictionary = _actors[id]
+	if weapon == "doom":
+		# The DOOM RAY loads into SLOT 2 — it never yanks you out of your
+		# current kit (press 2 to unleash it). Bots draw it instantly.
+		ga.super_left = WEAPONS.doom.get("duration", 10.0)
+		if ga.get("auto_equip", true) or ga.cur_slot == 2:
+			ga.cur_slot = 2
+			ga.weapon = "doom"
+			ga.weapon_left = ga.super_left
+			ga.cooldown = 0.15
+		else:
+			play_sfx("doom_spawn", ga.get_center.call(), 0.05, 1.8)
+			spawn_ring(ga.get_center.call(), Color(1.0, 0.5, 0.2), 4.0, 26.0, 0.3)
+		return
+	ga.weapon = weapon
+	ga.cur_slot = 2
+	ga.cooldown = 0.15
+	ga.weapon_left = WEAPONS[weapon].get("duration", -1.0)
 
 
 func strip_weapon(id: String) -> void:
 	if _actors.has(id):
 		_actors[id].weapon = ""
 		_actors[id].beam_on = false
-		_actors[id]["stowed_weapon"] = ""
+		_actors[id]["super_left"] = -1.0
+		_actors[id]["cur_slot"] = 1
+
+
+func slot_weapon(id: String, slot: int) -> String:
+	## What a slot holds: 1 = fists, 2 = DOOM RAY if charged else blaster,
+	## 3 = scatter. Gun slots are empty without the permanent loadout
+	## (fists-only mode) — except the doom, which always answers to 2.
+	if not _actors.has(id):
+		return ""
+	var a: Dictionary = _actors[id]
+	if slot == 2:
+		if a.get("super_left", 0.0) > 0.0:
+			return "doom"
+		return "blaster" if a.get("loadout", false) else ""
+	if slot == 3:
+		return "scatter" if a.get("loadout", false) else ""
+	return ""
 
 
 func select_slot(id: String, slot: int) -> void:
-	## Weapon slots: 1 = fists (stow the gun), 2 = draw the stowed gun.
+	## Permanent inventory: 1 = fists, 2 = blaster/DOOM, 3 = scatter.
 	## Idempotent — safe to call every frame while the key is held.
 	if not _actors.has(id):
 		return
 	var a: Dictionary = _actors[id]
-	if slot == 1 and a.weapon != "":
-		a.stowed_weapon = a.weapon
-		a.stowed_left = a.weapon_left
-		a.weapon = ""
-		a.beam_on = false
-		play_sfx("pickup", a.get_center.call(), 0.04, 0.65)
-	elif slot == 2 and a.weapon == "" and a.get("stowed_weapon", "") != "":
-		a.weapon = a.stowed_weapon
-		a.weapon_left = a.stowed_left
-		a.stowed_weapon = ""
-		a.cooldown = 0.18  # Draw time
-		play_sfx("pickup", a.get_center.call(), 0.04, 1.25)
+	if a.cur_slot == slot:
+		return
+	var w: String = slot_weapon(id, slot)
+	if slot != 1 and w == "":
+		return  # Empty gun slot (fists-only mode without a stored doom)
+	a.cur_slot = slot
+	a.weapon = w
+	a.beam_on = false
+	a.cooldown = 0.18  # Draw time
+	a.weapon_left = a.super_left if w == "doom" else -1.0
+	play_sfx("pickup", a.get_center.call(), 0.04, 0.65 if slot == 1 else 1.25)
 
 
 func is_super_available() -> bool:
@@ -534,24 +565,28 @@ func _process(delta: float) -> void:
 		# (This block previously sat inside the dash-contact loop, whose
 		# early `continue` skipped it for anyone not mid-dash — the doom
 		# never expired at all.)
-		# Stowed timed weapons keep burning down too — no pocket-pausing the doom
-		if a.get("stowed_weapon", "") != "" and a.stowed_left > 0.0:
-			a.stowed_left -= delta
-			if a.stowed_left <= 0.0:
-				a.stowed_weapon = ""
-		if a.weapon != "" and a.weapon_left > 0.0:
-			a.weapon_left -= delta
-			if a.weapon_left <= 0.0:
+		# The DOOM RAY burns down whether it's in hand or waiting in slot 2
+		if a.get("super_left", 0.0) > 0.0:
+			a.super_left -= delta
+			if a.weapon == "doom":
+				a.weapon_left = a.super_left
+			if a.super_left <= 0.0:
 				var fizzle_c: Vector2 = a.get_center.call()
 				for _i in range(16):
 					var fang: float = randf() * TAU
 					_fx.append({
 						"pos": fizzle_c, "vel": Vector2.from_angle(fang) * randf_range(30.0, 140.0),
 						"life": randf_range(0.1, 0.3), "max_life": 0.3,
-						"color": WEAPONS[a.weapon].color, "size": randf_range(1.0, 2.4),
+						"color": WEAPONS.doom.color, "size": randf_range(1.0, 2.4),
 					})
 				play_sfx("pickup", fizzle_c, 0.02)
-				strip_weapon(id)
+				if a.weapon == "doom":
+					# Slot 2 reverts to its base gun (or fists without loadout)
+					a.beam_on = false
+					a.weapon = slot_weapon(id, 2)
+					a.weapon_left = -1.0
+					if a.weapon == "":
+						a.cur_slot = 1
 		# Melee kit timers
 		if a.dash_cd > 0.0:
 			a.dash_cd = maxf(0.0, a.dash_cd - delta)

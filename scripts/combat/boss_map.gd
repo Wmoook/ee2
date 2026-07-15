@@ -135,10 +135,8 @@ static func build() -> void:
 
 
 static func add_weapon_pads(ws: WeaponSystem) -> void:
-	ws.add_pad(Vector2(320, 526), "blaster")     # Left floor
-	ws.add_pad(Vector2(832, 526), "blaster")     # Right floor
-	ws.add_pad(Vector2(128, 434), "scatter")     # Left gallery
-	ws.add_pad(Vector2(1024, 434), "scatter")    # Right gallery
+	# Guns live in the permanent loadout (slots 2/3) — only the DOOM RAY
+	# materializes in the world, on the altar
 	ws.super_pos = SUPER_POS
 
 

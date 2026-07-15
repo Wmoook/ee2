@@ -70,12 +70,10 @@ func _bot_id(i: int) -> String:
 
 
 func _wire_up() -> void:
-	if GameState.battle_guns_enabled:
-		BattleMap.add_weapon_pads(weapons)
-	else:
-		# Guns OFF: pure dash & parry — but the DOOM RAY still drops every
-		# 60s as the chaos prize
-		weapons.super_pos = BattleMap.SUPER_POS
+	# Only the DOOM RAY appears in the world (60s cycle). Guns are a
+	# permanent loadout — slots 1/2/3 (fists/blaster/scatter) — when the
+	# guns toggle is ON; fists-only otherwise.
+	weapons.super_pos = BattleMap.SUPER_POS
 	weapons.register_actor("player", 0,
 		func() -> Vector2: return Vector2(player.physics.x + 8.0, player.physics.y + 8.0),
 		func() -> Vector2: return Vector2(player.physics._speedX, player.physics._speedY) * EEPhysics.EE_TICK_FRAC * EEPhysics.TPS,
@@ -86,6 +84,8 @@ func _wire_up() -> void:
 		func(v: Vector2) -> void:
 			player.physics._speedX += v.x
 			player.physics._speedY += v.y)
+	weapons._actors["player"]["loadout"] = GameState.battle_guns_enabled
+	weapons._actors["player"]["auto_equip"] = false  # Pickups never yank your kit
 	for i in range(bots.size()):
 		var idx: int = i
 		var b: BotController = bots[i]
@@ -106,6 +106,7 @@ func _wire_up() -> void:
 			func(v: Vector2) -> void:
 				b.physics._speedX += v.x
 				b.physics._speedY += v.y)
+		weapons._actors[_bot_id(i)]["loadout"] = GameState.battle_guns_enabled
 	if player.has_signal("died"):
 		player.died.connect(_on_player_died)
 
@@ -372,11 +373,13 @@ func _process(delta: float) -> void:
 		var pc2: Vector2 = Vector2(player.physics.x + 8.0, player.physics.y + 8.0)
 		var aim: Vector2 = weapons.get_global_mouse_position() - pc2
 		weapons.set_aim("player", aim)
-		# Weapon slots: 1 = fists (full melee kit), 2 = draw the stowed gun
+		# Inventory: 1 = fists, 2 = blaster/DOOM, 3 = scatter
 		if Input.is_physical_key_pressed(KEY_1):
 			weapons.select_slot("player", 1)
 		elif Input.is_physical_key_pressed(KEY_2):
 			weapons.select_slot("player", 2)
+		elif Input.is_physical_key_pressed(KEY_3):
+			weapons.select_slot("player", 3)
 		var unarmed: bool = weapons.get_weapon("player") == ""
 		# RMB: parry shield — works armed too (firing drops it briefly)
 		weapons.set_shield("player", Input.is_mouse_button_pressed(MOUSE_BUTTON_RIGHT) and not GameState.is_edit_mode)
@@ -494,18 +497,18 @@ func _layout_hud() -> void:
 			_score_label.text = "YOU  %d ♥ %s  BOTS" % [player_lives, " · ".join(bot_bits)]
 		var wname: String = weapons.get_weapon("player")
 		var wtext: String
+		var pa_hud: Dictionary = weapons._actors["player"]
 		if wname != "":
 			wtext = WeaponSystem.WEAPONS[wname].label
 			if weapons._actors["player"].weapon_left > 0.0:
 				wtext += " %.1fs" % weapons._actors["player"].weapon_left
-			wtext += "  [1: fists]"
 			_weapon_label.add_theme_color_override("font_color", weapons.get_weapon_color("player"))
 		else:
-			wtext = "FISTS — LMB dash punch, RMB parry shield" if not GameState.battle_guns_enabled else "UNARMED — LMB dash punch, RMB parry shield"
-			var stowed: String = weapons._actors["player"].get("stowed_weapon", "")
-			if stowed != "":
-				wtext = "FISTS — dash & parry  [2: %s]" % WeaponSystem.WEAPONS[stowed].label
+			wtext = "FISTS — LMB dash punch, RMB parry shield"
 			_weapon_label.add_theme_color_override("font_color", Color(0.7, 0.7, 0.8))
+		var s2: String = "DOOM %.0fs" % maxf(pa_hud.get("super_left", 0.0), 0.0) if pa_hud.get("super_left", 0.0) > 0.0 else ("blaster" if pa_hud.get("loadout", false) else "—")
+		var s3: String = "scatter" if pa_hud.get("loadout", false) else "—"
+		wtext += "   [1 fists · 2 %s · 3 %s]" % [s2, s3]
 		if weapons.super_pos != Vector2.ZERO:
 			_weapon_label.text = "%s  |  HP %d/%d  |  %s" % [wtext, player_hp, MAX_HP, weapons.get_super_status()]
 		else:

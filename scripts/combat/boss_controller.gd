@@ -67,6 +67,9 @@ var _beam_sfx_t: float = 0.0
 var _jink_t: float = 0.0
 var _jink_target: Vector2 = Vector2(512.0, 240.0)
 var _impact_cd: Dictionary = {}  # Vector2i tile -> cooldown (one chip per hit, not per frame)
+var beam_segments: Array = []    # [{from, to}] — the laser path, wall bounces included
+var _beam_fires: int = 0         # Each firing adds one more wall reflection
+var _pending_roar: bool = false  # Phase crossed mid-beam: roar AFTER the beam ends
 
 # Flight envelope (set from BossMap by BossMode)
 var min_x: float = 64.0
@@ -147,9 +150,23 @@ func _apply_damage(amount: int, dir: Vector2 = Vector2.ZERO) -> void:
 			ws.play_sfx("explode", pos, 0.05, 0.7)
 		return
 	if phase == 1 and hp <= (max_hp * 2) / 3:
-		_enter_transition(2)
+		_request_phase(2)
 	elif phase == 2 and hp <= max_hp / 3:
-		_enter_transition(3)
+		_request_phase(3)
+
+
+func _request_phase(new_phase: int) -> void:
+	## Phase crossings must NEVER cut the annihilation beam short (that was
+	## the "ray ends early" bug — the transition roar hijacked ST_BEAM).
+	## Mid-beam: power up silently, roar once the beam finishes.
+	if state == ST_BEAM:
+		phase = new_phase
+		_pending_roar = true
+		phase_changed.emit(phase)
+		if ws:
+			ws.spawn_ring(pos, phase_color(), 8.0, 70.0, 0.35)
+	else:
+		_enter_transition(new_phase)
 
 
 func _enter_transition(new_phase: int) -> void:
@@ -177,6 +194,7 @@ func struggle_backfire() -> void:
 	struggle_freeze = false
 	beam_t = 0.0
 	_apply_damage(12, -beam_dir)
+	_pending_roar = false  # The stun IS the drama — no late roar
 	if alive():
 		state = ST_STUNNED
 		st_t = 3.4
@@ -236,7 +254,7 @@ func _process(delta: float) -> void:
 				# whenever the live beam ray sweeps close.
 				_jink_t -= delta
 				if _jink_t <= 0.0:
-					_jink_t = randf_range(0.2, 0.45)
+					_jink_t = randf_range(0.13, 0.3)
 					_jink_target = Vector2(randf_range(min_x + 110.0, max_x - 110.0), randf_range(min_y + 50.0, 340.0))
 					if absf(_jink_target.x - pc.x) < 240.0:
 						var flee: float = signf(pos.x - pc.x)
@@ -244,7 +262,7 @@ func _process(delta: float) -> void:
 							flee = 1.0
 						_jink_target.x = clampf(pc.x + flee * randf_range(300.0, 480.0), min_x + 100.0, max_x - 100.0)
 				anchor = _jink_target
-				vmax = 430.0 + 60.0 * phase
+				vmax = 500.0 + 70.0 * phase
 				var pa2: Dictionary = ws._actors.get("player", {})
 				if not pa2.is_empty() and pa2.get("beam_draw", false):
 					var bd: Vector2 = pa2.aim
@@ -256,9 +274,17 @@ func _process(delta: float) -> void:
 							if offv.dot(side) < 0.0:
 								side = -side
 							vel += side * 2400.0 * delta
-				vel = vel.lerp((anchor - pos) * 3.0, 1.0 - pow(0.004, delta))
+				vel = vel.lerp((anchor - pos) * 3.4, 1.0 - pow(0.003, delta))
 			else:
-				vel = vel.lerp((anchor - pos) * 2.1, 1.0 - pow(0.02, delta))
+				# Restless even when calm: periodic wander jinks so the
+				# Warden never just floats above you
+				_jink_t -= delta
+				if _jink_t <= 0.0:
+					_jink_t = randf_range(0.4, 0.8)
+					_jink_target = anchor + Vector2(randf_range(-200.0, 200.0), randf_range(-70.0, 85.0))
+				anchor = Vector2(clampf(_jink_target.x, min_x + 90.0, max_x - 90.0), clampf(_jink_target.y, min_y + 50.0, 370.0))
+				vmax = 300.0 + 85.0 * phase
+				vel = vel.lerp((anchor - pos) * 2.5, 1.0 - pow(0.01, delta))
 			if vel.length() > vmax:
 				vel = vel.normalized() * vmax
 			pos += vel * delta
@@ -365,6 +391,7 @@ func _process(delta: float) -> void:
 				state = ST_BEAM
 				beam_t = 3.4
 				_beam_cd = 16.0 - 3.4 * phase
+				_beam_fires += 1  # Every firing reflects one MORE time
 				if ws:
 					ws.play_sfx("doom_spawn", pos, 0.0, 1.25)
 		ST_BEAM:
@@ -379,21 +406,20 @@ func _process(delta: float) -> void:
 				var turn: float = 0.5 + 0.18 * phase
 				beam_dir = Vector2.from_angle(rotate_toward(cur, want, turn * delta))
 				beam_t -= delta
-			_march_beam()
-			# The annihilation beam cooks the terrain it lands on
-			if not struggle_active and ws:
-				var cbx: int = int(floor(beam_hit.x / 16.0))
-				var cby: int = int(floor(beam_hit.y / 16.0))
-				if WorldManager.is_solid_at(cbx, cby):
-					ws.damage_block(cbx, cby, delta)
+			_march_beam(delta)
 			_beam_sfx_t -= delta
 			if ws and _beam_sfx_t <= 0.0:
 				_beam_sfx_t = 0.42
 				ws.play_sfx("doom_beam", pos, 0.05, 0.85)
 			GameState.cam_shake = maxf(GameState.cam_shake, 2.0)
 			if beam_t <= 0.0 and not struggle_freeze:
-				state = ST_HOVER
-				st_t = _hover_time()
+				if _pending_roar:
+					# The deferred phase roar fires now that the beam is done
+					_pending_roar = false
+					_enter_transition(phase)
+				else:
+					state = ST_HOVER
+					st_t = _hover_time()
 		ST_STUNNED:
 			vel = vel.lerp(Vector2(0.0, 60.0), 1.0 - pow(0.03, delta))
 			pos += vel * delta
@@ -580,13 +606,47 @@ func _spawn_proj(dir: Vector2, spd: float) -> void:
 	})
 
 
-func _march_beam() -> void:
-	var mz: Vector2 = beam_muzzle()
-	beam_hit = mz
-	for s in range(220):
-		beam_hit = mz + beam_dir * (s * 6.0)
-		if WorldManager.is_solid_at(int(floor(beam_hit.x / 16.0)), int(floor(beam_hit.y / 16.0))):
-			break
+func _march_beam(delta: float = 0.0) -> void:
+	## The RICOCHET LASER: marches from the muzzle, REFLECTS off walls
+	## (one more bounce per firing, up to 7) and cooks every surface it
+	## touches. Segments feed the draw pass and BossMode's corridor checks.
+	beam_segments.clear()
+	var dir: Vector2 = beam_dir
+	var p: Vector2 = beam_muzzle()
+	var seg_start: Vector2 = p
+	var bounces_left: int = mini(_beam_fires, 7)
+	var budget: int = 300
+	var done: bool = false
+	while budget > 0 and not done:
+		var prev: Vector2 = p
+		p += dir * 6.0
+		budget -= 1
+		var tx: int = int(floor(p.x / 16.0))
+		var ty: int = int(floor(p.y / 16.0))
+		if WorldManager.is_solid_at(tx, ty):
+			if ws and not struggle_active and delta > 0.0:
+				ws.damage_block(tx, ty, delta)
+			beam_segments.append({"from": seg_start, "to": prev})
+			if bounces_left <= 0:
+				done = true
+			else:
+				bounces_left -= 1
+				# Reflect off the crossed tile face
+				var ptx: int = int(floor(prev.x / 16.0))
+				var pty: int = int(floor(prev.y / 16.0))
+				var nrm: Vector2 = Vector2.ZERO
+				if ptx != tx:
+					nrm.x = -signf(dir.x)
+				if pty != ty:
+					nrm.y = -signf(dir.y)
+				if nrm == Vector2.ZERO:
+					nrm = -dir
+				dir = dir.bounce(nrm.normalized()).normalized()
+				p = prev
+				seg_start = prev
+	if not done:
+		beam_segments.append({"from": seg_start, "to": p})
+	beam_hit = beam_segments[0].to if beam_segments.size() > 0 else beam_muzzle()
 
 
 func _draw() -> void:
@@ -614,36 +674,70 @@ func _draw() -> void:
 		draw_line(Vector2(sx, sy), Vector2(sx, sy - 26.0), Color(1, 1, 0.9, 0.9), 2.5)
 		draw_circle(Vector2(sx, sy - 6.0), 7.0, Color(col.r, col.g, col.b, 0.6))
 
-	# ── Annihilation beam ──
+	# ── The RICOCHET LASER (emerald annihilation beam) ──
 	if state == ST_BEAM:
 		var mz: Vector2 = pos + beam_dir * (BODY_R + 4.0)
-		var to: Vector2 = clash_point if struggle_active else beam_hit
 		var flicker: float = 0.85 + 0.15 * sin(_time * 60.0)
-		draw_line(mz, to, Color(col.r, col.g, col.b, 0.22), 58.0 * flicker)
-		draw_line(mz, to, Color(1.0, 0.35, 0.15, 0.55), 34.0 * flicker)
-		draw_line(mz, to, Color(1.0, 0.75, 0.4, 0.9), 18.0 * flicker)
-		draw_line(mz, to, Color(1, 1, 0.92), 8.0)
-		draw_circle(mz, 12.0, Color(1, 1, 0.92))
-		draw_circle(to, 12.0 + 6.0 * flicker, Color(1.0, 0.6, 0.3, 0.75))
 		if struggle_active:
-			# The player's counter-stream + the white-hot clash core
+			# Locked in the clash: laser grinds against the defender
+			var to: Vector2 = clash_point
 			var pc2: Vector2 = get_player_center.call()
-			draw_line(pc2, to, Color(0.3, 0.8, 1.0, 0.3), 30.0 * flicker)
-			draw_line(pc2, to, Color(0.55, 0.9, 1.0, 0.7), 16.0 * flicker)
-			draw_line(pc2, to, Color(0.95, 1.0, 1.0), 7.0)
+			var bdir: Vector2 = (to - mz).normalized()
+			draw_line(mz, to, Color(0.15, 1.0, 0.35, 0.22), 58.0 * flicker)
+			draw_line(mz, to, Color(0.3, 1.0, 0.45, 0.55), 34.0 * flicker)
+			draw_line(mz, to, Color(0.7, 1.0, 0.6, 0.9), 18.0 * flicker)
+			draw_line(mz, to, Color(0.96, 1.0, 0.9), 8.0)
+			var doom_held: bool = ws != null and ws.get_weapon("player") == "doom"
+			if doom_held:
+				# DOOM counter-beam: your own annihilation stream meets it
+				draw_line(pc2, to, Color(1.0, 0.2, 0.08, 0.28), 30.0 * flicker)
+				draw_line(pc2, to, Color(1.0, 0.45, 0.15, 0.6), 16.0 * flicker)
+				draw_line(pc2, to, Color(1.0, 0.85, 0.5), 7.0)
+			else:
+				# SHIELD projection: your barrier shoved out to the contact
+				# point — a cyan energy wall HOLDING the laser, fed by thin
+				# streamers from the ball. No magic counter-beam.
+				var fang: float = bdir.angle() + PI
+				var arc_c: Vector2 = to + bdir * 14.0
+				draw_arc(arc_c, 20.0, fang - 1.1, fang + 1.1, 18, Color(0.55, 0.9, 1.0, 0.92), 3.5)
+				draw_arc(arc_c, 26.0, fang - 0.8, fang + 0.8, 14, Color(0.4, 0.8, 1.0, 0.5 + 0.3 * sin(_time * 30.0)), 2.0)
+				var perp: Vector2 = bdir.orthogonal()
+				for k in range(3):
+					var wob2: float = sin(_time * 22.0 + float(k) * 2.1) * 6.0
+					var mid1: Vector2 = pc2.lerp(to, 0.55) + perp * wob2
+					draw_line(pc2, mid1, Color(0.5, 0.9, 1.0, 0.35), 1.5)
+					draw_line(mid1, to - bdir * 4.0, Color(0.5, 0.9, 1.0, 0.35), 1.5)
+			# White-hot clash core + radial sparks
 			var cr: float = 15.0 + 4.0 * sin(_time * 45.0)
-			draw_circle(to, cr + 8.0, Color(1.0, 0.8, 0.5, 0.35))
+			draw_circle(to, cr + 8.0, Color(0.7, 1.0, 0.7, 0.3))
 			draw_circle(to, cr, Color(1, 1, 1, 0.95))
 			for k in range(6):
 				var ra: float = _time * 14.0 + TAU * float(k) / 6.0
-				draw_line(to + Vector2.from_angle(ra) * 6.0, to + Vector2.from_angle(ra) * (cr + 14.0), Color(1, 1, 0.9, 0.8), 2.0)
+				draw_line(to + Vector2.from_angle(ra) * 6.0, to + Vector2.from_angle(ra) * (cr + 14.0), Color(0.8, 1.0, 0.85, 0.8), 2.0)
+		else:
+			# Free-firing: every segment of the bouncing laser, with bright
+			# emerald nodes at each wall reflection
+			for sgi in range(beam_segments.size()):
+				var sg: Dictionary = beam_segments[sgi]
+				draw_line(sg.from, sg.to, Color(0.15, 1.0, 0.35, 0.2), 52.0 * flicker)
+				draw_line(sg.from, sg.to, Color(0.3, 1.0, 0.45, 0.55), 30.0 * flicker)
+				draw_line(sg.from, sg.to, Color(0.7, 1.0, 0.6, 0.9), 16.0 * flicker)
+				draw_line(sg.from, sg.to, Color(0.96, 1.0, 0.9), 7.0)
+				if sgi > 0:
+					draw_circle(sg.from, 9.0 + 4.0 * flicker, Color(0.6, 1.0, 0.6, 0.8))
+					draw_circle(sg.from, 5.0, Color(0.95, 1.0, 0.9))
+			if beam_segments.size() > 0:
+				var endp: Vector2 = beam_segments[-1].to
+				draw_circle(endp, 12.0 + 6.0 * flicker, Color(0.3, 1.0, 0.4, 0.7))
+				draw_circle(endp, 6.5, Color(0.95, 1.0, 0.9))
+		draw_circle(mz, 12.0, Color(0.9, 1.0, 0.9))
 	elif state == ST_TG_BEAM:
-		# Telegraph: thin aim line + swelling charge orb
+		# Telegraph: thin emerald aim line + swelling charge orb
 		var mz2: Vector2 = pos + beam_dir * (BODY_R + 4.0)
 		var chg: float = 1.0 - st_t / 1.15
-		draw_line(mz2, mz2 + beam_dir * 900.0, Color(1.0, 0.3, 0.2, 0.25 + 0.3 * chg), 2.0)
-		draw_circle(mz2, 4.0 + 14.0 * chg, Color(1.0, 0.6, 0.3, 0.8))
-		draw_circle(mz2, 2.0 + 8.0 * chg, Color(1, 1, 0.9))
+		draw_line(mz2, mz2 + beam_dir * 900.0, Color(0.3, 1.0, 0.4, 0.25 + 0.3 * chg), 2.0)
+		draw_circle(mz2, 4.0 + 14.0 * chg, Color(0.4, 1.0, 0.5, 0.8))
+		draw_circle(mz2, 2.0 + 8.0 * chg, Color(0.95, 1.0, 0.9))
 
 	# ── Slam telegraph: warning dashes toward the player ──
 	if state == ST_TG_SLAM:

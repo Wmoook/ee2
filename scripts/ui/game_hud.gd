@@ -728,14 +728,18 @@ func _build_chat() -> void:
 	_chat_log.scroll_following = true
 	_chat_log.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_chat_log.add_theme_font_size_override("normal_font_size", 12)
+	# Invisible chat backdrop — messages float over the world (shadows keep
+	# them readable without the dark box)
 	var log_style: StyleBoxFlat = StyleBoxFlat.new()
-	log_style.bg_color = Color(0.0, 0.0, 0.0, 0.4)
-	log_style.set_corner_radius_all(4)
+	log_style.bg_color = Color(0.0, 0.0, 0.0, 0.0)
 	log_style.content_margin_left = 6.0
 	log_style.content_margin_right = 6.0
 	log_style.content_margin_top = 4.0
 	log_style.content_margin_bottom = 4.0
 	_chat_log.add_theme_stylebox_override("normal", log_style)
+	_chat_log.add_theme_color_override("font_shadow_color", Color(0, 0, 0, 0.9))
+	_chat_log.add_theme_constant_override("shadow_offset_x", 1)
+	_chat_log.add_theme_constant_override("shadow_offset_y", 1)
 	_chat_container.add_child(_chat_log)
 
 	# Chat input (hidden until Enter pressed)
