@@ -44,7 +44,7 @@ const SUPER_ANIM_TIME: float = 1.8   # Spawn-in animation length
 const DASH_CD: float = 1.1           # Seconds between dashes
 const DASH_WINDOW: float = 0.35      # Contact window after dashing
 const DASH_DMG: int = 1
-const SHIELD_MAX: float = 1.2        # Max shield hold (drains; regens when down)
+const SHIELD_MAX: float = 2.4        # Max shield hold (drains; regens when down)
 const STUN_TIME: float = 1.0         # Parry stun duration
 
 const BLOCK_BREAK_TIME: float = 0.35  # Seconds of beam-cook to shatter a block
@@ -122,7 +122,7 @@ func register_actor(id: String, team: int, get_center: Callable, get_vel: Callab
 		"weapon_left": -1.0, "beam_on": false, "beam_end": Vector2.ZERO, "beam_tick": 0.0,
 		"cur_slot": 1, "super_left": -1.0, "loadout": false, "auto_equip": true,
 		"abil_fly": 0.0, "abil_od": 0.0, "abil_regen": 0.0,
-		"slot2_flash": 0.0,
+		"slot2_flash": 0.0, "beam_cut": -1.0,
 		"dash_cd": 0.0, "dash_time": 0.0, "dash_dmg": 1,
 		"charge": 0.0, "charging": false, "charge_fed": false,
 		"shield_req": false, "shield_on": false, "shield_energy": SHIELD_MAX,
@@ -871,7 +871,13 @@ func _process(delta: float) -> void:
 		var shielded_victim: Dictionary = {}
 		var shielded_vid: String = ""
 		var steps: int = int(w.range / 6.0)
+		# Beam-vs-beam: if the Warden's laser crossed this ray last frame,
+		# the two annihilate — this ray stops at the crossing
+		var cut_d: float = a.get("beam_cut", -1.0)
 		for s in range(steps):
+			if cut_d > 0.0 and s * 6.0 >= cut_d:
+				beam_end = from + a.aim * cut_d
+				break
 			beam_end = from + a.aim * (s * 6.0)
 			var mtx: int = int(floor(beam_end.x / 16.0))
 			var mty: int = int(floor(beam_end.y / 16.0))

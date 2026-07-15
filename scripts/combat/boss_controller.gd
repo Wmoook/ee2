@@ -245,6 +245,9 @@ func _process(delta: float) -> void:
 	_ring_b -= delta * (0.9 + 0.35 * phase)
 	var p_alive: bool = not is_player_alive.is_null() and is_player_alive.call()
 	var pc: Vector2 = get_player_center.call() if p_alive else Vector2(512.0, 400.0)
+	# Beam-cut resets each frame; re-set by _cancel_vs_player_doom on crossing
+	if ws and ws._actors.has("player"):
+		ws._actors["player"]["beam_cut"] = -1.0
 	_eye = _eye.lerp((pc - pos).normalized() * 6.5, 1.0 - pow(0.001, delta))
 	if state != ST_BEAM and state != ST_TG_BEAM:
 		_beam_cd -= delta
@@ -435,6 +438,7 @@ func _process(delta: float) -> void:
 				beam_dir = Vector2.from_angle(rotate_toward(cur, want, turn * delta))
 				beam_t -= delta
 			_march_beam(delta)
+			_cancel_vs_player_doom()
 			_beam_sfx_t -= delta
 			if ws and _beam_sfx_t <= 0.0:
 				_beam_sfx_t = 0.42
@@ -544,6 +548,7 @@ func _process(delta: float) -> void:
 							ws.damage_block(ctx2, cty2, delta * 0.5)
 						break
 				beam_segments.append({"from": cfrom, "to": cend})
+			_cancel_vs_player_doom()
 			_beam_sfx_t -= delta
 			if ws and _beam_sfx_t <= 0.0:
 				_beam_sfx_t = 0.5
@@ -723,6 +728,38 @@ func _collide_tiles() -> void:
 				vel = vel.bounce(n) * 0.55
 			elif into > 0.0:
 				vel += n * into
+
+
+func _cancel_vs_player_doom() -> void:
+	## BEAM vs BEAM: if the player's DOOM RAY crosses the Warden's laser,
+	## they ANNIHILATE each other at the crossing — both beams stop there
+	## in a white-hot flare and nothing beyond it gets hit.
+	if ws == null or not ws._actors.has("player"):
+		return
+	var pa: Dictionary = ws._actors["player"]
+	if not pa.get("beam_draw", false):
+		return
+	var p_from: Vector2 = pa.get_center.call() + pa.aim * 16.0
+	var p_to: Vector2 = pa.beam_end
+	for i in range(beam_segments.size()):
+		var sg: Dictionary = beam_segments[i]
+		var hit = Geometry2D.segment_intersects_segment(sg.from, sg.to, p_from, p_to)
+		if hit == null:
+			continue
+		var x: Vector2 = hit
+		# Truncate the Warden's laser at the crossing (later bounces die)
+		sg.to = x
+		beam_segments.resize(i + 1)
+		beam_hit = x
+		# The player's doom stops there next frame too
+		pa["beam_cut"] = p_from.distance_to(x)
+		# Annihilation flare
+		if randf() < 0.6:
+			ws.spawn_trail_dot(x, Vector2(randf_range(-220, 220), randf_range(-220, 220)), Color(1.0, 0.9, 0.6) if randf() < 0.5 else Color(0.5, 1.0, 0.55))
+		if randf() < 0.14:
+			ws.spawn_ring(x, Color(1.0, 0.95, 0.8), 4.0, 28.0, 0.2)
+		GameState.cam_shake = maxf(GameState.cam_shake, 2.5)
+		break
 
 
 func _hover_time() -> float:
