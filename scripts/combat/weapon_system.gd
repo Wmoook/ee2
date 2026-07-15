@@ -221,10 +221,6 @@ func try_shoot(id: String) -> bool:
 		return false
 	if a.stun_left > 0.0 or a.stun_pending:
 		return false  # Parried — no shooting while stunned
-	# Attacking drops the shield — no turtling behind it while firing
-	# (same rule as the melee kit; stop shooting to guard)
-	a.shield_on = false
-	a.shield_lock = 0.45
 	var w: Dictionary = WEAPONS[a.weapon]
 	if w.get("beam", false):
 		# Beam weapons fire continuously: request the beam for this frame

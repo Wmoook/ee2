@@ -624,26 +624,50 @@ func _march_beam(delta: float = 0.0) -> void:
 		var tx: int = int(floor(p.x / 16.0))
 		var ty: int = int(floor(p.y / 16.0))
 		if WorldManager.is_solid_at(tx, ty):
+			# Binary-refine the contact point: the raw 6px march made bounce
+			# points pop around as the beam swept, thrashing the whole
+			# reflected path (the "glitching" look)
+			var lo: Vector2 = prev
+			var hi: Vector2 = p
+			for _r in range(4):
+				var mid: Vector2 = (lo + hi) * 0.5
+				if WorldManager.is_solid_at(int(floor(mid.x / 16.0)), int(floor(mid.y / 16.0))):
+					hi = mid
+				else:
+					lo = mid
+			if seg_start.distance_squared_to(lo) > 16.0:
+				beam_segments.append({"from": seg_start, "to": lo})
+			# EVERY contact melts terrain — bounce mirrors included. When a
+			# mirror gives way the laser punches through and re-paths.
 			if ws and not struggle_active and delta > 0.0:
 				ws.damage_block(tx, ty, delta)
-			beam_segments.append({"from": seg_start, "to": prev})
 			if bounces_left <= 0:
 				done = true
 			else:
 				bounces_left -= 1
-				# Reflect off the crossed tile face
-				var ptx: int = int(floor(prev.x / 16.0))
-				var pty: int = int(floor(prev.y / 16.0))
-				var nrm: Vector2 = Vector2.ZERO
-				if ptx != tx:
-					nrm.x = -signf(dir.x)
-				if pty != ty:
-					nrm.y = -signf(dir.y)
-				if nrm == Vector2.ZERO:
+				# Corner hits pick ONE stable axis (dominant travel axis) —
+				# alternating X/Y normals made the far path flip-flop
+				var ptx: int = int(floor(lo.x / 16.0))
+				var pty: int = int(floor(lo.y / 16.0))
+				var cx: bool = ptx != tx
+				var cy: bool = pty != ty
+				var nrm: Vector2
+				if cx and cy:
+					nrm = Vector2(-signf(dir.x), 0.0) if absf(dir.x) >= absf(dir.y) else Vector2(0.0, -signf(dir.y))
+				elif cx:
+					nrm = Vector2(-signf(dir.x), 0.0)
+				elif cy:
+					nrm = Vector2(0.0, -signf(dir.y))
+				else:
 					nrm = -dir
 				dir = dir.bounce(nrm.normalized()).normalized()
-				p = prev
-				seg_start = prev
+				p = lo
+				seg_start = lo
+				# Corner pocket: next probe still solid -> terminate cleanly
+				# instead of strobing micro-bounces in place
+				var probe: Vector2 = p + dir * 6.0
+				if WorldManager.is_solid_at(int(floor(probe.x / 16.0)), int(floor(probe.y / 16.0))):
+					done = true
 	if not done:
 		beam_segments.append({"from": seg_start, "to": p})
 	beam_hit = beam_segments[0].to if beam_segments.size() > 0 else beam_muzzle()
