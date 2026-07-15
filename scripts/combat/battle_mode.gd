@@ -159,10 +159,12 @@ func _build_hud() -> void:
 	_weapon_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	_weapon_label.add_theme_font_size_override("font_size", 11)
 	v.add_child(_weapon_label)
+	# Inventory bar: pinned TOP-LEFT of the screen
 	_slot_bar = Control.new()
-	_slot_bar.custom_minimum_size = Vector2(140, 38)
+	_slot_bar.position = Vector2(12, 10)
+	_slot_bar.custom_minimum_size = Vector2(140, 40)
 	_slot_bar.draw.connect(_draw_slots)
-	v.add_child(_slot_bar)
+	_hud.add_child(_slot_bar)
 
 	_fight_label = Label.new()
 	_fight_label.text = "FIGHT!"
@@ -196,8 +198,7 @@ func _build_hud() -> void:
 
 
 func _draw_slots() -> void:
-	var total: float = 3.0 * 40.0 + 2.0 * 6.0
-	weapons.draw_player_slots(_slot_bar, Vector2(_slot_bar.size.x / 2.0 - total / 2.0, 3.0))
+	weapons.draw_player_slots(_slot_bar, Vector2.ZERO)
 
 
 func _hurt_player(dmg: int, dir: Vector2) -> void:

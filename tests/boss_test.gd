@@ -20,6 +20,7 @@ func _ready() -> void:
 	bm.boss._beam_cd = 2.0
 	var seen: Dictionary = {}
 	var doom_given: bool = false
+	var beam_cancel_seen: bool = false
 	var pl: Node = game._get_player(1)
 	for i in range(110):
 		await get_tree().create_timer(0.2).timeout
@@ -53,6 +54,15 @@ func _ready() -> void:
 			bm.boss.hp = mini(bm.boss.hp, bm.boss.max_hp / 5 + 2)
 			while bm.boss.phase < 5 and bm.boss.alive():
 				bm.boss._apply_damage(1, Vector2.ZERO)
+		# Head-on beam duel: while holding the doom, fire INTO the boss laser.
+		# Beams must be re-requested EVERY FRAME, so pump a few frames of fire.
+		if doom_given and pl and not pl._is_dead and bm.weapons.get_weapon("player") == "doom":
+			for _f in range(4):
+				bm.weapons.set_aim("player", bm.boss.pos - Vector2(pl.physics.x + 8.0, pl.physics.y + 8.0))
+				bm.weapons.try_shoot("player")
+				await get_tree().process_frame
+				if bm.weapons._actors["player"].get("beam_cut", -1.0) > 0.0:
+					beam_cancel_seen = true
 		if i % 5 == 0:
 			print("t=%4.1f state=%-10s hp=%d/%d lives=%d" % [
 				i * 0.2, bm.boss.state_name(), bm.boss.hp, bm.boss.max_hp, bm.player_lives])
@@ -116,7 +126,8 @@ func _ready() -> void:
 		if seen.has(ss):
 			saw_super = true
 			break
-	var ok: bool = seen.has("BEAM") and seen.has("HOVER") and saw_super
+	print("BEAM CANCEL %s" % ("PASS" if beam_cancel_seen else "FAIL"))
+	var ok: bool = seen.has("BEAM") and seen.has("HOVER") and saw_super and beam_cancel_seen
 	print("BOSS SMOKE %s (super_phases=%s phase=%d)" % ["PASS" if ok else "FAIL", saw_super, bm.boss.phase])
 	GameState.battle_mode = false
 	GameState.boss_fight = false

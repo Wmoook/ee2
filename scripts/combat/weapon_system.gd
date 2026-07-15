@@ -241,7 +241,8 @@ func try_shoot(id: String) -> bool:
 		# Beam weapons fire continuously: request the beam for this frame
 		a.beam_on = true
 		return true
-	a.cooldown = w.cooldown
+	# OVERDRIVE: guns fire twice as fast while it lasts
+	a.cooldown = w.cooldown * (0.5 if a.get("abil_od", 0.0) > 0.0 else 1.0)
 	var center: Vector2 = a.get_center.call()
 	var muzzle: Vector2 = center + a.aim * 18.0
 	for i in range(w.count):

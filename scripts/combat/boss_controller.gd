@@ -741,24 +741,39 @@ func _cancel_vs_player_doom() -> void:
 		return
 	var p_from: Vector2 = pa.get_center.call() + pa.aim * 16.0
 	var p_to: Vector2 = pa.beam_end
+	var p_dir: Vector2 = (p_to - p_from).normalized()
 	for i in range(beam_segments.size()):
 		var sg: Dictionary = beam_segments[i]
-		var hit = Geometry2D.segment_intersects_segment(sg.from, sg.to, p_from, p_to)
-		if hit == null:
+		var s_dir: Vector2 = (sg.to - sg.from).normalized()
+		var x: Vector2 = Vector2.ZERO
+		var found: bool = false
+		var xhit = Geometry2D.segment_intersects_segment(sg.from, sg.to, p_from, p_to)
+		if xhit != null:
+			x = xhit
+			found = true
+		elif s_dir.dot(p_dir) < -0.3:
+			# HEAD-ON DUEL: beams firing INTO each other are (anti)parallel —
+			# an exact crossing never exists geometrically. If the two fat
+			# columns overlap, they annihilate at the midpoint of the gap
+			# between their sources (the anime meet-in-the-middle).
+			var cps: PackedVector2Array = Geometry2D.get_closest_points_between_segments(sg.from, sg.to, p_from, p_to)
+			if cps.size() >= 2 and cps[0].distance_to(cps[1]) < 34.0:
+				x = (sg.from + p_from) * 0.5
+				found = true
+		if not found:
 			continue
-		var x: Vector2 = hit
-		# Truncate the Warden's laser at the crossing (later bounces die)
+		# Truncate the Warden's laser at the clash (later bounces die)
 		sg.to = x
 		beam_segments.resize(i + 1)
 		beam_hit = x
 		# The player's doom stops there next frame too
-		pa["beam_cut"] = p_from.distance_to(x)
-		# Annihilation flare
-		if randf() < 0.6:
-			ws.spawn_trail_dot(x, Vector2(randf_range(-220, 220), randf_range(-220, 220)), Color(1.0, 0.9, 0.6) if randf() < 0.5 else Color(0.5, 1.0, 0.55))
-		if randf() < 0.14:
-			ws.spawn_ring(x, Color(1.0, 0.95, 0.8), 4.0, 28.0, 0.2)
-		GameState.cam_shake = maxf(GameState.cam_shake, 2.5)
+		pa["beam_cut"] = maxf(p_from.distance_to(x), 8.0)
+		# Annihilation flare — unmissable
+		if randf() < 0.9:
+			ws.spawn_trail_dot(x, Vector2(randf_range(-240, 240), randf_range(-240, 240)), Color(1.0, 0.9, 0.6) if randf() < 0.5 else Color(0.5, 1.0, 0.55))
+		if randf() < 0.2:
+			ws.spawn_ring(x, Color(1.0, 0.95, 0.8), 4.0, 30.0, 0.2)
+		GameState.cam_shake = maxf(GameState.cam_shake, 3.0)
 		break
 
 
