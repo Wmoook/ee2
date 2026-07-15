@@ -473,10 +473,16 @@ func _process(delta: float) -> void:
 			if ac.distance_to(vc) < 20.0:
 				a.dash_time = 0.0
 				if v.shield_on:
-					# PARRIED mid-strike: launched away hard, stunned on landing
+					# PARRIED mid-strike: the shield takes the WHOLE dash and
+					# throws it straight back — full momentum redirect off the
+					# shield face (with a lift), stunned on landing. Additive
+					# nudges couldn't cancel a charged dash; the attacker kept
+					# plowing forward through the parry.
 					var away: Vector2 = (ac - vc).normalized()
 					if not a.push.is_null():
-						a.push.call(Vector2(away.x * 6.0, minf(away.y * 6.0, 0.0) - 4.0))
+						var vel_ee: Vector2 = a.get_vel.call() / (EEPhysics.EE_TICK_FRAC * EEPhysics.TPS)
+						var mag: float = maxf(vel_ee.length() * 1.2, 8.0)
+						a.push.call(away * mag + Vector2(0.0, -3.0) - vel_ee)
 					_stun_team(a.team, (ac + vc) * 0.5, true)
 				else:
 					v.hurt.call(a.dash_dmg, (vc - ac).normalized())
@@ -564,6 +570,7 @@ func _process(delta: float) -> void:
 		var beam_end: Vector2 = from
 		var victim: Dictionary = {}
 		var shielded_victim: Dictionary = {}
+		var shielded_vid: String = ""
 		var steps: int = int(w.range / 6.0)
 		for s in range(steps):
 			beam_end = from + a.aim * (s * 6.0)
@@ -576,15 +583,52 @@ func _process(delta: float) -> void:
 				# Fat beam: ~3 smiley widths — generous hit corridor
 				if v.get_center.call().distance_squared_to(beam_end) < 676.0:
 					if v.shield_on:
-						# The ray plows THROUGH a shielded target and keeps
-						# going to the wall — they get engulfed inside it
+						# The ray SHATTERS on a raised shield: it stops at the
+						# clash point and a deflected column splits off it
 						shielded_victim = v
+						shielded_vid = vid
 					else:
 						victim = v
-			if not victim.is_empty():
+			if not victim.is_empty() or not shielded_victim.is_empty():
 				break
+		# SHIELD SPLIT: reflect the ray off the shield bubble. WHERE the beam
+		# axis strikes the bubble decides the deflection — edge grazes carom
+		# off shallow, a dead-center hit fires the ray STRAIGHT BACK at the
+		# shooter. The deflected column is live and hurts anyone in it.
+		var split_from: Vector2 = Vector2.ZERO
+		var split_to: Vector2 = Vector2.ZERO
+		var split_dir: Vector2 = Vector2.ZERO
+		if not shielded_victim.is_empty():
+			var svc0: Vector2 = shielded_victim.get_center.call()
+			var srad: float = 15.0
+			var oc: Vector2 = from - svc0
+			var bq: float = oc.dot(a.aim)
+			var disc: float = bq * bq - (oc.length_squared() - srad * srad)
+			var hit_pt: Vector2
+			var nrm: Vector2
+			if disc > 0.0:
+				var t_hit: float = maxf(-bq - sqrt(disc), 0.0)
+				hit_pt = from + a.aim * t_hit
+				nrm = (hit_pt - svc0).normalized()
+			else:
+				# The axis skims past the bubble — deflect outward off the near side
+				var t_c: float = clampf((svc0 - from).dot(a.aim), 0.0, w.range)
+				hit_pt = from + a.aim * t_c
+				nrm = (hit_pt - svc0).normalized()
+			if nrm == Vector2.ZERO:
+				nrm = -a.aim
+			split_dir = (a.aim - 2.0 * a.aim.dot(nrm) * nrm).normalized()
+			beam_end = hit_pt
+			split_from = hit_pt
+			split_to = hit_pt
+			for s2 in range(steps):
+				split_to = hit_pt + split_dir * (s2 * 6.0)
+				if WorldManager.is_solid_at(int(floor(split_to.x / 16.0)), int(floor(split_to.y / 16.0))):
+					break
 		a.beam_end = beam_end
 		a["beam_pin"] = shielded_victim.get_center.call() if not shielded_victim.is_empty() else Vector2.ZERO
+		a["beam_split_from"] = split_from
+		a["beam_split_to"] = split_to
 		# Sparks along the beam + at the impact point
 		if randf() < delta * 240.0:
 			var bt: float = randf()
@@ -611,23 +655,36 @@ func _process(delta: float) -> void:
 					"color": Color(1.0, randf_range(0.3, 0.7), 0.15), "size": randf_range(1.4, 3.2),
 				})
 			GameState.cam_shake = maxf(GameState.cam_shake, 4.5)
-		# Shielded target under the beam: NO damage, NO stun — instead a
-		# continuous blast that plows them into the wall while the ray
-		# engulfs them, and their shield cooks off under the pressure
+		# Shielded target under the beam: NO damage, NO stun — they HOLD the
+		# clash point (light pressure only) while their shield cooks off, and
+		# the ray fractures off the shield face as a live deflected column
 		if not shielded_victim.is_empty():
 			if not shielded_victim.push.is_null():
-				shielded_victim.push.call(a.aim * delta * 30.0)
+				shielded_victim.push.call(a.aim * delta * 12.0)
 			shielded_victim.shield_energy = maxf(0.0, shielded_victim.shield_energy - delta * 1.2)
-			var svc: Vector2 = shielded_victim.get_center.call()
-			if randf() < delta * 320.0:
-				var storm_ang: float = randf() * TAU
+			if randf() < delta * 380.0:
 				_fx.append({
-					"pos": svc + Vector2.from_angle(storm_ang) * randf_range(10.0, 16.0),
-					"vel": a.aim * randf_range(80.0, 200.0) + Vector2.from_angle(storm_ang) * 60.0,
-					"life": randf_range(0.06, 0.16), "max_life": 0.16,
-					"color": Color(0.7, 0.95, 1.0), "size": randf_range(1.2, 2.6),
+					"pos": split_from,
+					"vel": split_dir.rotated(randf_range(-0.55, 0.55)) * randf_range(140.0, 380.0),
+					"life": randf_range(0.06, 0.18), "max_life": 0.18,
+					"color": Color(0.7, 0.95, 1.0) if randf() < 0.5 else Color(1.0, 0.6, 0.25),
+					"size": randf_range(1.2, 2.8),
 				})
 			GameState.cam_shake = maxf(GameState.cam_shake, 4.0)
+			# Continuous blast force along the deflected column — anyone else
+			# standing in it (the shooter included!) gets swept down-beam
+			var sseg: Vector2 = split_to - split_from
+			if sseg.length_squared() > 36.0:
+				for vid2 in _actors:
+					if vid2 == shielded_vid:
+						continue
+					var v2: Dictionary = _actors[vid2]
+					if not v2.is_alive.call() or v2.push.is_null():
+						continue
+					var v2c: Vector2 = v2.get_center.call()
+					var st: float = clampf((v2c - split_from).dot(sseg) / sseg.length_squared(), 0.0, 1.0)
+					if v2c.distance_squared_to(split_from + sseg * st) < 676.0:
+						v2.push.call((split_dir + Vector2(0.0, -0.22)).normalized() * delta * 30.0)
 		a.beam_tick -= delta
 		if a.beam_tick <= 0.0:
 			a.beam_tick = w.tick
@@ -648,6 +705,24 @@ func _process(delta: float) -> void:
 						"color": Color(1.0, 0.6, 0.2), "size": randf_range(1.5, 3.0),
 					})
 				GameState.cam_shake += 2.5
+			# Deflected-column damage ticks: the defender's counter-ray cooks
+			# anyone caught in it — including the original shooter
+			if not shielded_victim.is_empty():
+				var sseg2: Vector2 = split_to - split_from
+				if sseg2.length_squared() > 36.0:
+					for vid3 in _actors:
+						if vid3 == shielded_vid:
+							continue
+						var v3: Dictionary = _actors[vid3]
+						if not v3.is_alive.call():
+							continue
+						var v3c: Vector2 = v3.get_center.call()
+						var st3: float = clampf((v3c - split_from).dot(sseg2) / sseg2.length_squared(), 0.0, 1.0)
+						if v3c.distance_squared_to(split_from + sseg2 * st3) < 676.0:
+							v3.hurt.call(w.dmg, split_dir)
+							play_sfx("hit", v3c)
+							spawn_ring(v3c, Color(1.0, 0.5, 0.2), 4.0, 24.0, 0.22)
+							GameState.cam_shake += 2.0
 	if _beam_audio and _beam_audio.stream:
 		if any_beam and not _beam_audio.playing:
 			_beam_audio.play()
@@ -807,6 +882,19 @@ func _draw() -> void:
 			draw_arc(pin, 13.5, 0, TAU, 24, Color(1, 1, 1, 0.95), 2.5)
 			draw_arc(pin, 17.0 + 2.0 * sin(_time * 22.0), 0, TAU, 24, Color(0.7, 0.95, 1.0, 0.8), 1.8)
 			draw_circle(pin, 8.0, Color(0.08, 0.04, 0.06, 0.85))
+		# Deflected branch off a shield: the split ray, slightly thinner, with
+		# a white-hot clash flare where it fractures
+		var sfrom: Vector2 = a.get("beam_split_from", Vector2.ZERO)
+		var sto: Vector2 = a.get("beam_split_to", Vector2.ZERO)
+		if sfrom.distance_squared_to(sto) > 36.0:
+			draw_line(sfrom, sto, Color(1.0, 0.18, 0.1, 0.24), 36.0 * flicker)
+			draw_line(sfrom, sto, Color(1.0, 0.45, 0.15, 0.55), 20.0 * flicker)
+			draw_line(sfrom, sto, Color(1.0, 0.8, 0.45, 0.85), 11.0 * flicker)
+			draw_line(sfrom, sto, Color(1, 1, 0.95), 5.0)
+			draw_circle(sto, 10.0 + 5.0 * flicker, Color(1.0, 0.6, 0.3, 0.7))
+			draw_circle(sto, 5.5, Color(1, 1, 0.9))
+			draw_circle(sfrom, 10.0 + 3.0 * sin(_time * 40.0), Color(1.0, 1.0, 0.95, 0.9))
+			draw_arc(sfrom, 15.0 + 3.0 * flicker, 0, TAU, 24, Color(0.7, 0.95, 1.0, 0.85), 2.2)
 	# Shields and stun stars
 	for id in _actors:
 		var a: Dictionary = _actors[id]

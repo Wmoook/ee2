@@ -417,10 +417,22 @@ func _collide_pair(a: Dictionary, b: Dictionary) -> void:
 		return
 	var n: Vector2 = dvec / d
 	var overlap: float = 16.0 - d
+	var a_sh: bool = weapons.is_shielded(a.id)
+	var b_sh: bool = weapons.is_shielded(b.id)
 	# Separate — but NEVER push a ball inside solid tiles (that was the
-	# stuck-in-a-block bug); a blocked side just keeps its position
-	var a_sep: Vector2 = -n * overlap * 0.5
-	var b_sep: Vector2 = n * overlap * 0.5
+	# stuck-in-a-block bug); a blocked side just keeps its position. A shield
+	# holder is an ANCHOR: the rammer takes ALL of the push-out, the holder
+	# is never displaced by the hit (displacing them read as "swapping places").
+	var a_w: float = 0.5
+	var b_w: float = 0.5
+	if a_sh and not b_sh:
+		a_w = 0.0
+		b_w = 1.0
+	elif b_sh and not a_sh:
+		a_w = 1.0
+		b_w = 0.0
+	var a_sep: Vector2 = -n * overlap * a_w
+	var b_sep: Vector2 = n * overlap * b_w
 	if not ap._collides_px(ap.x + a_sep.x, ap.y + a_sep.y):
 		ap.x += a_sep.x
 		ap.y += a_sep.y
@@ -434,29 +446,29 @@ func _collide_pair(a: Dictionary, b: Dictionary) -> void:
 	var approach: float = a_n - b_n
 	if approach <= 0.0:
 		return
-	var a_sh: bool = weapons.is_shielded(a.id)
-	var b_sh: bool = weapons.is_shielded(b.id)
-	var a_new: float
-	var b_new: float
 	if b_sh and not a_sh:
-		a_new = -a_n * 1.15
-		b_new = b_n
+		# FULL-FORCE REDIRECT: the shield catches ALL of the rammer's momentum
+		# (tangential included — flipping only the normal part let glancing
+		# hits slide past like a place-swap) and hurls it straight back off
+		# the shield face. Slow bumps still get a minimum rejection pop; the
+		# holder's velocity is completely untouched.
+		av = -n * maxf(av.length() * 1.2, 4.5)
 	elif a_sh and not b_sh:
-		a_new = a_n
-		b_new = -b_n * 1.15
+		bv = n * maxf(bv.length() * 1.2, 4.5)
 	elif a_sh and b_sh:
-		a_new = -a_n * 1.1
-		b_new = -b_n * 1.1
+		av = -n * maxf(av.length() * 1.1, 3.0)
+		bv = n * maxf(bv.length() * 1.1, 3.0)
 	else:
-		a_new = b_n * 1.05
-		b_new = a_n * 1.05
-	av += n * (a_new - a_n)
-	bv += n * (b_new - b_n)
+		# Equal-mass elastic swap along the contact normal
+		var a_new: float = b_n * 1.05
+		var b_new: float = a_n * 1.05
+		av += n * (a_new - a_n)
+		bv += n * (b_new - b_n)
 	ap._speedX = av.x
 	ap._speedY = av.y
 	bp._speedX = bv.x
 	bp._speedY = bv.y
-	if approach > 1.2:
+	if approach > 1.2 or a_sh or b_sh:
 		var mid: Vector2 = (ac + bc) * 0.5
 		var shield_bounce: bool = a_sh or b_sh
 		weapons.play_sfx("bonk", mid, 0.08, clampf((1.8 if shield_bounce else 1.5) - approach * 0.07, 0.7, 1.8))
