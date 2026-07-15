@@ -427,10 +427,11 @@ func _process(delta: float) -> void:
 			if struggle_freeze:
 				beam_dir = (pc - pos).normalized()
 			else:
-				# Sweep the beam toward the player at a dodgeable turn rate
+				# Sweep the beam toward the player SLOWLY — a full-speed run
+				# always outpaces the sweep (evasion is a real answer)
 				var want: float = (pc - pos).angle()
 				var cur: float = beam_dir.angle()
-				var turn: float = 0.5 + 0.18 * phase
+				var turn: float = 0.32 + 0.08 * phase
 				beam_dir = Vector2.from_angle(rotate_toward(cur, want, turn * delta))
 				beam_t -= delta
 			_march_beam(delta)

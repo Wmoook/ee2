@@ -122,6 +122,7 @@ func register_actor(id: String, team: int, get_center: Callable, get_vel: Callab
 		"weapon_left": -1.0, "beam_on": false, "beam_end": Vector2.ZERO, "beam_tick": 0.0,
 		"cur_slot": 1, "super_left": -1.0, "loadout": false, "auto_equip": true,
 		"abil_fly": 0.0, "abil_od": 0.0, "abil_regen": 0.0,
+		"slot2_flash": 0.0,
 		"dash_cd": 0.0, "dash_time": 0.0, "dash_dmg": 1,
 		"charge": 0.0, "charging": false, "charge_fed": false,
 		"shield_req": false, "shield_on": false, "shield_energy": SHIELD_MAX,
@@ -143,6 +144,7 @@ func give_weapon(id: String, weapon: String) -> void:
 		# The DOOM RAY loads into SLOT 2 — it never yanks you out of your
 		# current kit (press 2 to unleash it). Bots draw it instantly.
 		ga.super_left = WEAPONS.doom.get("duration", 10.0)
+		ga.slot2_flash = 2.5  # Flash the slot bar so you KNOW it landed
 		if ga.get("auto_equip", true) or ga.cur_slot == 2:
 			ga.cur_slot = 2
 			ga.weapon = "doom"
@@ -283,7 +285,7 @@ func try_dash(id: String) -> bool:
 
 
 func charge_dash(id: String, delta: float) -> void:
-	## Hold to wind up a heavy dash: 3s = full power. Call every held frame.
+	## Hold to wind up a heavy dash: 1.5s = full power. Call every held frame.
 	if not _actors.has(id):
 		return
 	var a: Dictionary = _actors[id]
@@ -292,7 +294,7 @@ func charge_dash(id: String, delta: float) -> void:
 	a.charge_fed = true
 	a.charging = true
 	var was: float = a.charge
-	a.charge = minf(1.0, a.charge + delta / 3.0)
+	a.charge = minf(1.0, a.charge + delta / 1.5)
 	# Charge-up: energy converges into the ball, denser as it builds
 	if randf() < delta * (14.0 + 60.0 * a.charge):
 		var c: Vector2 = a.get_center.call()
@@ -439,6 +441,63 @@ func damage_block(tx: int, ty: int, amount: float) -> bool:
 		})
 	GameState.cam_shake += 1.5
 	return true
+
+
+func draw_player_slots(ci: CanvasItem, origin: Vector2) -> void:
+	## The 1-2-3 inventory bar: current slot highlighted, the DOOM RAY
+	## flashes slot 2 when it lands so you always KNOW what you're carrying.
+	if not _actors.has("player"):
+		return
+	var a: Dictionary = _actors["player"]
+	var font: Font = ThemeDB.fallback_font
+	var bw: float = 40.0
+	var bh: float = 32.0
+	var gap: float = 6.0
+	for k in range(3):
+		var slot: int = k + 1
+		var r: Rect2 = Rect2(origin.x + float(k) * (bw + gap), origin.y, bw, bh)
+		var cur: bool = a.get("cur_slot", 1) == slot
+		var w: String = "fists" if slot == 1 else slot_weapon("player", slot)
+		var col: Color
+		if w == "doom":
+			col = WEAPONS.doom.color
+		elif w == "blaster":
+			col = WEAPONS.blaster.color
+		elif w == "scatter":
+			col = WEAPONS.scatter.color
+		elif w == "fists":
+			col = Color(0.65, 0.7, 0.85)
+		else:
+			col = Color(0.3, 0.32, 0.4)
+		ci.draw_rect(r, Color(0.06, 0.06, 0.1, 0.88))
+		if cur:
+			ci.draw_rect(Rect2(r.position + Vector2(2, 2), r.size - Vector2(4, 4)), Color(col.r, col.g, col.b, 0.14))
+			ci.draw_rect(r, Color(1, 1, 1, 0.95), false, 2.0)
+		else:
+			ci.draw_rect(r, Color(col.r, col.g, col.b, 0.55 if w != "" else 0.25), false, 1.0)
+		if slot == 2 and a.get("slot2_flash", 0.0) > 0.0:
+			var fl: float = 0.5 + 0.5 * sin(_time * 18.0)
+			ci.draw_rect(Rect2(r.position - Vector2(2, 2), r.size + Vector2(4, 4)), Color(1.0, 0.45, 0.15, 0.4 + 0.5 * fl), false, 2.5)
+		ci.draw_string(font, r.position + Vector2(3.0, 10.0), str(slot), HORIZONTAL_ALIGNMENT_LEFT, -1, 9, Color(0.75, 0.78, 0.9, 0.9))
+		var cctr: Vector2 = r.get_center() + Vector2(2.0, 2.0)
+		if w == "fists":
+			ci.draw_circle(cctr, 5.0, Color(0.85, 0.88, 1.0))
+			for j in range(3):
+				var ja: float = -0.5 + float(j) * 0.5
+				ci.draw_line(cctr + Vector2(6, 0).rotated(ja), cctr + Vector2(10, 0).rotated(ja), Color(0.85, 0.88, 1.0, 0.8), 1.5)
+		elif w == "doom":
+			ci.draw_line(cctr + Vector2(-9, 0), cctr + Vector2(9, 0), Color(1.0, 0.3, 0.1, 0.5), 7.0)
+			ci.draw_line(cctr + Vector2(-9, 0), cctr + Vector2(9, 0), Color(1.0, 0.7, 0.3), 3.0)
+			var frac: float = clampf(a.get("super_left", 0.0) / WEAPONS.doom.get("duration", 10.0), 0.0, 1.0)
+			ci.draw_rect(Rect2(r.position.x + 3.0, r.end.y - 5.0, (bw - 6.0) * frac, 2.5), Color(1.0, 0.55, 0.2))
+		elif w != "":
+			ci.draw_line(cctr + Vector2(-8, 2), cctr + Vector2(6, 2), col, 3.0)
+			ci.draw_line(cctr + Vector2(2, 2), cctr + Vector2(2, -3), col, 2.0)
+			if w == "scatter":
+				for j in range(3):
+					ci.draw_line(cctr + Vector2(6, 2), cctr + Vector2(11, -2 + float(j) * 4.0), Color(col.r, col.g, col.b, 0.8), 1.2)
+		else:
+			ci.draw_line(cctr + Vector2(-4, 0), cctr + Vector2(4, 0), Color(0.4, 0.42, 0.5), 1.5)
 
 
 func _hashf(n: int) -> float:
@@ -631,6 +690,8 @@ func _process(delta: float) -> void:
 					a.weapon_left = -1.0
 					if a.weapon == "":
 						a.cur_slot = 1
+		if a.get("slot2_flash", 0.0) > 0.0:
+			a.slot2_flash = maxf(0.0, a.slot2_flash - delta)
 		# Ability timers
 		if a.get("abil_fly", 0.0) > 0.0:
 			a.abil_fly = maxf(0.0, a.abil_fly - delta)
@@ -875,6 +936,19 @@ func _process(delta: float) -> void:
 		a["beam_pin"] = shielded_victim.get_center.call() if not shielded_victim.is_empty() else Vector2.ZERO
 		a["beam_split_from"] = split_from
 		a["beam_split_to"] = split_to
+		# The ray VAPORIZES enemy projectiles caught in the column
+		for pi2 in range(_projectiles.size() - 1, -1, -1):
+			var prj: Dictionary = _projectiles[pi2]
+			if prj.team == a.team:
+				continue
+			var bseg2: Vector2 = beam_end - from
+			if bseg2.length_squared() < 1.0:
+				continue
+			var pt2: float = clampf((prj.pos - from).dot(bseg2) / bseg2.length_squared(), 0.0, 1.0)
+			if prj.pos.distance_squared_to(from + bseg2 * pt2) < 676.0:
+				spawn_hit(prj.pos, prj.color, Vector2.UP)
+				spawn_ring(prj.pos, prj.color, 2.0, 12.0, 0.15)
+				_projectiles.remove_at(pi2)
 		# Sparks along the beam + at the impact point
 		if randf() < delta * 240.0:
 			var bt: float = randf()

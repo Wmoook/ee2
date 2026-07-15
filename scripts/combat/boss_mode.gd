@@ -32,6 +32,7 @@ var _struggle_timer: float = 0.0
 
 var _hud: CanvasLayer
 var _boss_bar: Control
+var _slot_bar: Control
 var _bar_chip: float = 1.0       # Delayed white damage trail
 var _name_label: Label
 var _proto_label: Label
@@ -132,6 +133,10 @@ func _build_hud() -> void:
 	_player_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	_player_label.add_theme_font_size_override("font_size", 12)
 	v.add_child(_player_label)
+	_slot_bar = Control.new()
+	_slot_bar.custom_minimum_size = Vector2(140, 38)
+	_slot_bar.draw.connect(_draw_slots)
+	v.add_child(_slot_bar)
 
 	_intro_label = Label.new()
 	_intro_label.text = "THE  WARDEN  AWAKENS"
@@ -172,6 +177,11 @@ func _build_hud() -> void:
 	menu_btn.custom_minimum_size = Vector2(200, 34)
 	menu_btn.pressed.connect(_return_to_menu)
 	rv.add_child(menu_btn)
+
+
+func _draw_slots() -> void:
+	var total: float = 3.0 * 40.0 + 2.0 * 6.0
+	weapons.draw_player_slots(_slot_bar, Vector2(_slot_bar.size.x / 2.0 - total / 2.0, 3.0))
 
 
 func _draw_boss_bar() -> void:
@@ -236,7 +246,7 @@ func _end(player_won: bool) -> void:
 	else:
 		_result_label.text = "SYSTEM  PURGED"
 		_result_label.add_theme_color_override("font_color", Color(1.0, 0.35, 0.3))
-		_result_sub.text = "The Warden endures. Study its telegraphs — parry the slam, mash the clash."
+		_result_sub.text = "The Warden endures. Parry the slam, block or outrun the laser."
 	_result_panel.visible = true
 
 
@@ -273,6 +283,8 @@ func _process(delta: float) -> void:
 		_bar_chip = maxf(float(boss.hp) / float(boss.max_hp), _bar_chip - delta * 0.25)
 	if _boss_bar:
 		_boss_bar.queue_redraw()
+	if _slot_bar:
+		_slot_bar.queue_redraw()
 	if _over:
 		_layout_hud()
 		return
@@ -330,7 +342,7 @@ func _process(delta: float) -> void:
 						weapons.play_sfx("bonk", pc, 0.08, 1.1)
 						weapons.spawn_hit(pc, Color(0.9, 0.95, 1.0), n)
 
-	# ── Annihilation beam: damage or THE CLASH ──
+	# ── Annihilation beam: shield BLOCKS it, full-speed running outruns it ──
 	var beam_like: bool = boss.state == BossController.ST_BEAM or boss.state == BossController.ST_CAGE
 	if beam_like and p_ok:
 		# The laser path is a chain of segments (wall ricochets / the four
@@ -348,93 +360,25 @@ func _process(delta: float) -> void:
 				in_corridor = true
 				hit_dir = sv.normalized()
 				break
-		if not _struggle:
-			if in_corridor:
-				var has_doom: bool = weapons.get_weapon("player") == "doom"
-				if not is_cage and (weapons.is_shielded("player") or has_doom):
-					_enter_struggle()
-				elif is_cage and weapons.is_shielded("player"):
-					# Cage beams GRIND on a raised shield — drain, no damage
-					weapons._actors["player"]["shield_energy"] = maxf(0.0, weapons._actors["player"]["shield_energy"] - delta * 0.9)
-				else:
-					_beam_tick -= delta
-					if _beam_tick <= 0.0:
-						_beam_tick = 0.32
-						_hurt_player(1, hit_dir)
-					player.physics._speedX += hit_dir.x * delta * 26.0
-					player.physics._speedY += (hit_dir.y - 0.2) * delta * 26.0
+		if in_corridor:
+			if weapons.is_shielded("player"):
+				# BLOCKED — the shield simply grinds against the ray: steady
+				# drain, zero damage, light pressure. No clash minigame.
+				var pa3: Dictionary = weapons._actors["player"]
+				pa3["shield_energy"] = maxf(0.0, pa3["shield_energy"] - delta * 0.85)
+				player.physics._speedX += hit_dir.x * delta * 8.0
+				if randf() < delta * 160.0:
+					weapons.spawn_trail_dot(pc - hit_dir * 12.0, hit_dir.orthogonal() * randf_range(-220.0, 220.0), Color(0.6, 0.95, 1.0))
+				_beam_tick = 0.32
 			else:
-				_beam_tick = 0.05
-	elif _struggle:
-		_exit_struggle()
-
-	# ── THE CLASH: mash LMB to shove the beam back into the Warden ──
-	if _struggle and p_ok:
-		boss.struggle_freeze = true
-		boss.struggle_active = true
-		_struggle_timer += delta
-		var has_doom2: bool = weapons.get_weapon("player") == "doom"
-		# Shield is pinned up (fists) and can't die mid-clash
-		if not has_doom2:
-			weapons.set_shield("player", true)
-			weapons._actors["player"]["shield_energy"] = maxf(weapons._actors["player"]["shield_energy"], 0.35)
-		# Planted stance — the clash IS the fight right now
-		player.physics._speedX *= pow(0.002, delta)
-		# BRUTAL: the Warden pushes at 10 clicks/second — mashing 10cps only
-		# HOLDS the clash. Surviving the 6s is the real goal; actually
-		# shoving it back into the Warden's face is god-tier (or DOOM-armed:
-		# counter-beam clicks count double).
-		var pull: float = [0.50, 0.56, 0.62, 0.68, 0.75][clampi(boss.phase - 1, 0, 4)]
-		_clash_t += pull * delta
-		var lmb_now: bool = Input.is_mouse_button_pressed(MOUSE_BUTTON_LEFT)
-		if lmb_now and not _lmb_was_down:
-			_clash_t -= 0.05 * (2.0 if has_doom2 else 1.0)
-			var clash: Vector2 = boss.beam_muzzle().lerp(pc, clampf(_clash_t, 0.0, 1.0))
-			weapons.spawn_hit(clash, Color(1, 1, 0.9), (boss.pos - pc).normalized())
-			weapons.play_sfx("hit", clash, 0.1, 1.6)
-			GameState.cam_shake += 1.5
-		_lmb_was_down = lmb_now
-		boss.clash_point = boss.beam_muzzle().lerp(pc, clampf(_clash_t, 0.0, 1.0))
-		if randf() < delta * 200.0:
-			var perp: Vector2 = boss.beam_dir.orthogonal()
-			weapons.spawn_trail_dot(boss.clash_point, perp * randf_range(-260.0, 260.0), Color(0.6, 1.0, 0.6) if randf() < 0.6 else Color(0.6, 0.95, 1.0))
-		GameState.cam_shake = maxf(GameState.cam_shake, lerpf(7.0, 2.5, _clash_t))
-		if _clash_t <= 0.06:
-			# WON THE CLASH — the beam backfires
-			var mz2: Vector2 = boss.beam_muzzle()
-			for k in range(4):
-				weapons.spawn_ring(mz2.lerp(pc, 0.25 * k), Color(1.0, 0.8, 0.4), 6.0, 40.0, 0.3)
-			weapons._actors["player"]["shield_energy"] = WeaponSystem.SHIELD_MAX
-			weapons._actors["player"]["shield_broken"] = false
-			boss.struggle_backfire()
-			_exit_struggle()
-		elif _clash_t >= 0.99:
-			# LOST THE CLASH — blasted down-beam
-			_exit_struggle()
-			boss.end_beam(0.15)
-			_player_invuln = 0.0
-			_hurt_player(3, boss.beam_dir)
-			player.physics._speedX += boss.beam_dir.x * 13.0
-			player.physics._speedY += boss.beam_dir.y * 13.0 - 5.0
-			weapons._actors["player"]["shield_energy"] = 0.0
-			weapons._actors["player"]["shield_broken"] = true
-			weapons.spawn_explosion(pc, Color(1.0, 0.5, 0.2))
-			GameState.cam_shake += 10.0
-		elif _struggle_timer > 6.0:
-			# STALEMATE — a successful defense. The beam dies INSTANTLY (it
-			# used to linger aimed at you and tick 1 damage right after the
-			# clash), both sides recoil, and you get a clean disengage window.
-			weapons.spawn_ring(boss.clash_point, Color(1, 1, 1), 8.0, 60.0, 0.35)
-			weapons.spawn_ring(boss.clash_point, Color(0.6, 0.95, 1.0), 4.0, 36.0, 0.25)
-			boss.end_beam(0.0)
-			boss.vel = -boss.beam_dir * 260.0
-			player.physics._speedX += -boss.beam_dir.x * 6.0
-			player.physics._speedY += -3.0
-			_player_invuln = maxf(_player_invuln, 0.7)
-			_exit_struggle()
-	_mash_label.visible = _struggle
-	if _struggle:
-		_mash_label.modulate.a = 0.6 + 0.4 * sin(Time.get_ticks_msec() * 0.02)
+				_beam_tick -= delta
+				if _beam_tick <= 0.0:
+					_beam_tick = 0.32
+					_hurt_player(1, hit_dir)
+				player.physics._speedX += hit_dir.x * delta * 26.0
+				player.physics._speedY += (hit_dir.y - 0.2) * delta * 26.0
+		else:
+			_beam_tick = 0.05
 
 	# ── Floor shockwaves vs the player (jump them!) ──
 	if p_ok:
@@ -529,9 +473,6 @@ func _layout_hud() -> void:
 				wtext += " %.1fs" % weapons._actors["player"].weapon_left
 		else:
 			wtext = "FISTS — dash punch, parry shield"
-		var s2: String = "DOOM %.0fs" % maxf(pa_hud.get("super_left", 0.0), 0.0) if pa_hud.get("super_left", 0.0) > 0.0 else ("blaster" if pa_hud.get("loadout", false) else "—")
-		var s3: String = "scatter" if pa_hud.get("loadout", false) else "—"
-		wtext += "   [1 fists · 2 %s · 3 %s]" % [s2, s3]
 		if pa_hud.get("abil_fly", 0.0) > 0.0:
 			wtext += "   ✦ ZERO-G %.0fs" % pa_hud.abil_fly
 		if pa_hud.get("abil_od", 0.0) > 0.0:

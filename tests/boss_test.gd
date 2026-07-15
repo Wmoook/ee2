@@ -19,8 +19,6 @@ func _ready() -> void:
 		return
 	bm.boss._beam_cd = 2.0
 	var seen: Dictionary = {}
-	var saw_struggle: bool = false
-	var clash_shot: bool = false
 	var doom_given: bool = false
 	var pl: Node = game._get_player(1)
 	for i in range(110):
@@ -55,16 +53,9 @@ func _ready() -> void:
 			bm.boss.hp = mini(bm.boss.hp, bm.boss.max_hp / 5 + 2)
 			while bm.boss.phase < 5 and bm.boss.alive():
 				bm.boss._apply_damage(1, Vector2.ZERO)
-		if bm._struggle:
-			saw_struggle = true
-			if not clash_shot:
-				clash_shot = true
-				var img: Image = get_viewport().get_texture().get_image()
-				img.save_png("user://boss_clash.png")
-				print("CLASH SHOT SAVED at t=%.1f" % (i * 0.2))
 		if i % 5 == 0:
-			print("t=%4.1f state=%-10s hp=%d/%d lives=%d struggle=%s" % [
-				i * 0.2, bm.boss.state_name(), bm.boss.hp, bm.boss.max_hp, bm.player_lives, bm._struggle])
+			print("t=%4.1f state=%-10s hp=%d/%d lives=%d" % [
+				i * 0.2, bm.boss.state_name(), bm.boss.hp, bm.boss.max_hp, bm.player_lives])
 	# The result panel must actually appear (it used to crash on mangled
 	# node paths, leaving the game input-dead with no DEFEATED screen)
 	bm._end(false)
@@ -125,8 +116,8 @@ func _ready() -> void:
 		if seen.has(ss):
 			saw_super = true
 			break
-	var ok: bool = seen.has("BEAM") and seen.has("HOVER") and saw_struggle and saw_super
-	print("BOSS SMOKE %s (struggle=%s super_phases=%s phase=%d)" % ["PASS" if ok else "FAIL", saw_struggle, saw_super, bm.boss.phase])
+	var ok: bool = seen.has("BEAM") and seen.has("HOVER") and saw_super
+	print("BOSS SMOKE %s (super_phases=%s phase=%d)" % ["PASS" if ok else "FAIL", saw_super, bm.boss.phase])
 	GameState.battle_mode = false
 	GameState.boss_fight = false
 	get_tree().quit(0)

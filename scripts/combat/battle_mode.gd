@@ -36,6 +36,7 @@ var _regen_tick: float = 0.0
 var _hud: CanvasLayer
 var _score_label: Label
 var _weapon_label: Label
+var _slot_bar: Control
 var _fight_label: Label
 var _result_panel: PanelContainer
 var _result_label: Label
@@ -158,6 +159,10 @@ func _build_hud() -> void:
 	_weapon_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	_weapon_label.add_theme_font_size_override("font_size", 11)
 	v.add_child(_weapon_label)
+	_slot_bar = Control.new()
+	_slot_bar.custom_minimum_size = Vector2(140, 38)
+	_slot_bar.draw.connect(_draw_slots)
+	v.add_child(_slot_bar)
 
 	_fight_label = Label.new()
 	_fight_label.text = "FIGHT!"
@@ -188,6 +193,11 @@ func _build_hud() -> void:
 	menu_btn.custom_minimum_size = Vector2(200, 34)
 	menu_btn.pressed.connect(_return_to_menu)
 	rv.add_child(menu_btn)
+
+
+func _draw_slots() -> void:
+	var total: float = 3.0 * 40.0 + 2.0 * 6.0
+	weapons.draw_player_slots(_slot_bar, Vector2(_slot_bar.size.x / 2.0 - total / 2.0, 3.0))
 
 
 func _hurt_player(dmg: int, dir: Vector2) -> void:
@@ -528,9 +538,6 @@ func _layout_hud() -> void:
 		else:
 			wtext = "FISTS — LMB dash punch, RMB parry shield"
 			_weapon_label.add_theme_color_override("font_color", Color(0.7, 0.7, 0.8))
-		var s2: String = "DOOM %.0fs" % maxf(pa_hud.get("super_left", 0.0), 0.0) if pa_hud.get("super_left", 0.0) > 0.0 else ("blaster" if pa_hud.get("loadout", false) else "—")
-		var s3: String = "scatter" if pa_hud.get("loadout", false) else "—"
-		wtext += "   [1 fists · 2 %s · 3 %s]" % [s2, s3]
 		if pa_hud.get("abil_fly", 0.0) > 0.0:
 			wtext += "   ✦ ZERO-G %.0fs" % pa_hud.abil_fly
 		if pa_hud.get("abil_od", 0.0) > 0.0:
@@ -542,6 +549,8 @@ func _layout_hud() -> void:
 		else:
 			_weapon_label.text = "%s  |  HP %d/%d" % [wtext, player_hp, MAX_HP]
 		top.position = Vector2(vps.x / 2.0 - top.size.x / 2.0, 8)
+	if _slot_bar:
+		_slot_bar.queue_redraw()
 	if _fight_label.visible:
 		_fight_label.position = Vector2(vps.x / 2.0 - _fight_label.size.x / 2.0, vps.y * 0.32)
 	if _result_panel.visible:
