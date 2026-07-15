@@ -24,20 +24,37 @@ var _sfx_pool: Array = []
 var _sfx_next: int = 0
 var _sfx_gate: float = 0.0
 
+# Every mob wears a REAL EE smiley (picked by eye from the sheet):
+# glooms are the pale dead, fangs the burning and bloodthirsty, wisps the
+# ghosts, bulwarks the armored, spikers the exploding freaks.
 const TYPES: Dictionary = {
-	"gloom":   {"hp": 3.0, "spd": 62.0, "acc": 230.0, "r": 8.0, "tint": Color(0.55, 0.62, 0.78), "coins": 1},
-	"fang":    {"hp": 2.0, "spd": 100.0, "acc": 330.0, "r": 7.5, "tint": Color(1.0, 0.42, 0.36), "coins": 1},
-	"bulwark": {"hp": 12.0, "spd": 40.0, "acc": 150.0, "r": 10.0, "tint": Color(0.58, 0.68, 0.8), "coins": 2},
-	"wisp":    {"hp": 2.0, "spd": 85.0, "acc": 300.0, "r": 7.0, "tint": Color(0.8, 0.55, 1.0), "coins": 3},
-	"spiker":  {"hp": 4.0, "spd": 68.0, "acc": 240.0, "r": 8.5, "tint": Color(1.0, 0.76, 0.36), "coins": 2},
-	"jr":      {"hp": 90.0, "spd": 52.0, "acc": 190.0, "r": 16.0, "tint": Color(1.0, 0.35, 0.4), "coins": 8},
-	"prime":   {"hp": 1200.0, "spd": 44.0, "acc": 170.0, "r": 30.0, "tint": Color(1.0, 0.85, 0.4), "coins": 40},
+	"gloom":   {"hp": 3.0, "spd": 62.0, "acc": 230.0, "r": 8.0, "tint": Color(0.55, 0.62, 0.78), "coins": 1,
+		"faces": [78, 39, 87, 119, 94, 12]},   # pale husk, shades, stone, mummy, cultist, ninja
+	"fang":    {"hp": 2.0, "spd": 100.0, "acc": 330.0, "r": 7.5, "tint": Color(1.0, 0.42, 0.36), "coins": 1,
+		"faces": [85, 110, 4, 109, 49, 147, 142]},  # fire head, red-eyes, rage, clown, vampire, devil, werewolf
+	"bulwark": {"hp": 12.0, "spd": 40.0, "acc": 150.0, "r": 10.0, "tint": Color(0.58, 0.68, 0.8), "coins": 2,
+		"faces": [35, 66, 90, 64, 156]},        # knight, helm, spartan, robot, dark visor
+	"wisp":    {"hp": 2.0, "spd": 85.0, "acc": 300.0, "r": 7.0, "tint": Color(0.8, 0.55, 1.0), "coins": 3,
+		"faces": [54, 141, 133]},               # pink ghost, white spirit, blue droplet
+	"spiker":  {"hp": 4.0, "spd": 68.0, "acc": 240.0, "r": 8.5, "tint": Color(1.0, 0.76, 0.36), "coins": 2,
+		"faces": [44, 45, 63, 118, 143, 10]},   # pumpkins, gasmask, zombie, fish freak, imp
+	"jr":      {"hp": 90.0, "spd": 52.0, "acc": 190.0, "r": 16.0, "tint": Color(1.0, 0.35, 0.4), "coins": 8, "faces": []},
+	"prime":   {"hp": 1200.0, "spd": 44.0, "acc": 170.0, "r": 30.0, "tint": Color(1.0, 0.85, 0.4), "coins": 40, "faces": []},
 }
+const SMILEY_SIZE: int = 26
+const SMILEYS_PER_CHUNK: int = 157
+
+
+var _smileys: Array = []
 
 
 func _ready() -> void:
 	z_index = 3
 	_ball_tex = load("res://assets/sprites/NEW_SPRITES_BALL/BALL_1_frame1.png") as Texture2D
+	for i in range(2):
+		var st: Texture2D = load("res://assets/sprites/smileys_%d.png" % i) as Texture2D
+		if st:
+			_smileys.append(st)
 	for n in ["hit", "explode", "pickup", "bonk", "shoot_scatter", "doom_spawn"]:
 		var stream: AudioStream = load("res://assets/sfx/%s.wav" % n) as AudioStream
 		if stream:
@@ -65,10 +82,12 @@ func spawn(type: String, pos: Vector2, hp_scale: float = 1.0, spd_scale: float =
 	if enemies.size() >= CAP and type != "jr" and type != "prime":
 		return
 	var t: Dictionary = TYPES[type]
+	var faces: Array = t.get("faces", [])
 	enemies.append({
 		"type": type, "pos": pos, "vel": Vector2.ZERO,
 		"hp": t.hp * hp_scale, "max_hp": t.hp * hp_scale,
 		"spd": t.spd * spd_scale, "acc": t.acc, "r": t.r, "tint": t.tint,
+		"face": faces[randi() % faces.size()] if faces.size() > 0 else -1,
 		"t": randf() * TAU, "flash": 0.0, "lunge": randf_range(1.0, 2.4),
 		"orbit": randf() * TAU, "shoot": randf_range(1.5, 2.5), "wob": randf() * TAU,
 	})
@@ -306,18 +325,27 @@ func _draw() -> void:
 			var bw: float = rr * 2.4
 			draw_rect(Rect2(e.pos.x - bw / 2.0, e.pos.y - rr - 9.0, bw, 3.0), Color(0.05, 0.05, 0.08, 0.8))
 			draw_rect(Rect2(e.pos.x - bw / 2.0, e.pos.y - rr - 9.0, bw * clampf(e.hp / e.max_hp, 0.0, 1.0), 3.0), col)
-		elif _ball_tex:
-			var sz: float = e.r * 2.0
+		else:
+			# A real EE smiley, lightly corrupted toward its type tint
+			var sz: float = e.r * 2.2
 			var flash_add: float = e.flash * 4.0
-			var tint: Color = Color(e.tint.r + flash_add, e.tint.g + flash_add, e.tint.b + flash_add)
-			draw_texture_rect(_ball_tex, Rect2(e.pos.x - e.r, e.pos.y - e.r, sz, sz), false, tint)
+			var base: Color = Color(1, 1, 1).lerp(e.tint, 0.22)
+			var tint: Color = Color(base.r + flash_add, base.g + flash_add, base.b + flash_add)
+			var rect: Rect2 = Rect2(e.pos.x - sz / 2.0, e.pos.y - sz / 2.0, sz, sz)
+			var face: int = e.get("face", -1)
+			var chunk: int = face / SMILEYS_PER_CHUNK
+			if face >= 0 and chunk < _smileys.size():
+				var lc: int = face % SMILEYS_PER_CHUNK
+				draw_texture_rect_region(_smileys[chunk], rect, Rect2(lc * SMILEY_SIZE, 0, SMILEY_SIZE, SMILEY_SIZE), tint)
+			elif _ball_tex:
+				draw_texture_rect(_ball_tex, rect, false, tint)
 			if e.type == "bulwark":
-				draw_arc(e.pos, e.r + 2.5, 0, TAU, 14, Color(0.75, 0.85, 0.95, 0.8), 2.0)
+				draw_arc(e.pos, e.r + 3.0, 0, TAU, 14, Color(0.75, 0.85, 0.95, 0.8), 2.0)
 			elif e.type == "spiker":
 				for k in range(4):
 					var spa: float = e.t * 2.0 + TAU * float(k) / 4.0
-					var tip: Vector2 = e.pos + Vector2.from_angle(spa) * (e.r + 4.0)
-					draw_line(e.pos + Vector2.from_angle(spa) * e.r, tip, Color(1.0, 0.8, 0.4), 2.0)
+					var tip: Vector2 = e.pos + Vector2.from_angle(spa) * (e.r + 5.0)
+					draw_line(e.pos + Vector2.from_angle(spa) * (e.r + 1.0), tip, Color(1.0, 0.8, 0.4), 2.0)
 	# Sparks
 	for f in _fx:
 		var a: float = clampf(f.life / f.max_life, 0.0, 1.0)
