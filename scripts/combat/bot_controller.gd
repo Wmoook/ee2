@@ -10,6 +10,14 @@ var weapon_system: WeaponSystem = null
 var get_player_center: Callable = Callable()
 var get_player_vel: Callable = Callable()
 var is_player_alive: Callable = Callable()
+var get_target_id: Callable = Callable()
+
+# Identity (multi-bot FFA: bot1/bot2/bot3 — every bot on its OWN team, so
+# they hunt each other exactly as hard as they hunt you)
+var actor_id: String = "bot"
+var team_id: int = 1
+var display_name: String = "BOT"
+var tint: Color = Color(1.0, 0.55, 0.55)
 
 var dead: bool = false
 var _sprite: Sprite2D
@@ -63,13 +71,13 @@ func _ready() -> void:
 		_sprite.texture = _anim_textures[0]
 		_sprite.scale = Vector2(ANIM_SCALE, ANIM_SCALE)
 	_sprite.position = Vector2(8, 8)
-	_sprite.modulate = Color(1.0, 0.55, 0.55)  # Crimson tint = enemy
+	_sprite.modulate = tint  # Per-bot enemy tint
 	add_child(_sprite)
 	_label = Label.new()
-	_label.text = "BOT"
+	_label.text = display_name
 	_label.position = Vector2(-4, -22)
 	_label.add_theme_font_size_override("font_size", 10)
-	_label.add_theme_color_override("font_color", Color(1.0, 0.45, 0.45))
+	_label.add_theme_color_override("font_color", tint)
 	_label.add_theme_color_override("font_shadow_color", Color(0, 0, 0, 0.9))
 	_label.add_theme_constant_override("shadow_offset_x", 1)
 	_label.add_theme_constant_override("shadow_offset_y", 1)
@@ -91,6 +99,11 @@ func set_dead(v: bool) -> void:
 	visible = not v
 	physics._speedX = 0.0
 	physics._speedY = 0.0
+
+
+func _target_id() -> String:
+	## Actor id of the current hunt target (nearest living enemy in the FFA).
+	return get_target_id.call() if not get_target_id.is_null() else "player"
 
 
 func get_center() -> Vector2:
@@ -237,10 +250,10 @@ func _process(delta: float) -> void:
 	# MAX-DIFFICULTY reflexes: react to the player's melee at the limit of
 	# human reaction time (~130-190ms) — shield the incoming dash, and punish
 	# a stunned player on the spot. Beatable, but only barely.
-	if weapon_system and not is_player_alive.is_null() and is_player_alive.call() and not weapon_system.is_stunned("bot"):
-		var pa: Dictionary = weapon_system._actors.get("player", {})
+	if weapon_system and not is_player_alive.is_null() and is_player_alive.call() and not weapon_system.is_stunned(actor_id):
+		var pa: Dictionary = weapon_system._actors.get(_target_id(), {})
 		var pd2: float = get_center().distance_to(get_player_center.call())
-		var unarmed_now: bool = weapon_system.get_weapon("bot") == ""
+		var unarmed_now: bool = weapon_system.get_weapon(actor_id) == ""
 		var threat: bool = false
 		_beam_threat = false
 		if not pa.is_empty():
@@ -266,37 +279,37 @@ func _process(delta: float) -> void:
 			if unarmed_now:
 				_shield_want = true
 		# Parry reward: a stunned player gets dashed immediately
-		if weapon_system.is_stunned("player") and unarmed_now and pd2 < 240.0 and pd2 > 20.0:
+		if weapon_system.is_stunned(_target_id()) and unarmed_now and pd2 < 240.0 and pd2 > 20.0:
 			var punish_aim: Vector2 = (get_player_center.call() - get_center()).normalized()
-			weapon_system.set_aim("bot", punish_aim)
-			if weapon_system.try_dash("bot"):
+			weapon_system.set_aim(actor_id, punish_aim)
+			if weapon_system.try_dash(actor_id):
 				physics._speedX += punish_aim.x * 7.0
 				physics._speedY += punish_aim.y * 7.0
 	# Combat: aim + shoot / melee
 	if weapon_system and not is_player_alive.is_null() and is_player_alive.call():
-		weapon_system.set_shield("bot", _shield_want)
+		weapon_system.set_shield(actor_id, _shield_want)
 		var aim: Vector2 = _combat_aim()
 		if aim != Vector2.ZERO:
-			weapon_system.set_aim("bot", aim)
-			var wname: String = weapon_system.get_weapon("bot")
+			weapon_system.set_aim(actor_id, aim)
+			var wname: String = weapon_system.get_weapon(actor_id)
 			var is_beam: bool = wname != "" and WeaponSystem.WEAPONS[wname].get("beam", false)
 			if wname == "":
 				# Unarmed melee: quick dash close up, or wind up a CHARGED
 				# heavy dash from mid range and release it at the player
 				var pdist: float = get_center().distance_to(get_player_center.call())
 				if _charge_hold > 0.0:
-					weapon_system.charge_dash("bot", delta)
+					weapon_system.charge_dash(actor_id, delta)
 					_charge_hold -= delta
 					if _charge_hold <= 0.0 or pdist < 70.0:
 						# NEVER release a dash whose trajectory dies — ghost
 						# the dash impulse first (spike slides at 2.4x speed
 						# were unstoppable and unjumpable)
-						var est: float = 7.0 + 10.0 * weapon_system._actors["bot"].charge
+						var est: float = 7.0 + 10.0 * weapon_system._actors[actor_id].charge
 						var dash_ghost: Dictionary = _simulate_jump(int(sign(aim.x)), 160, aim * est, false)
 						if dash_ghost.died and pdist > 60.0:
 							_charge_hold = 0.08  # Unsafe line — hold and re-aim
 						else:
-							var res: Dictionary = weapon_system.release_dash("bot")
+							var res: Dictionary = weapon_system.release_dash(actor_id)
 							if res.ok:
 								var imp: float = 7.0 + 10.0 * res.power
 								physics._speedX += aim.x * imp
@@ -304,15 +317,15 @@ func _process(delta: float) -> void:
 								_dash_dir = int(sign(aim.x))
 				elif pdist < 130.0 and _has_los(get_player_center.call()):
 					var quick_ghost: Dictionary = _simulate_jump(int(sign(aim.x)), 120, aim * 7.0, false)
-					if not quick_ghost.died and weapon_system.try_dash("bot"):
+					if not quick_ghost.died and weapon_system.try_dash(actor_id):
 						physics._speedX += aim.x * 7.0
 						physics._speedY += aim.y * 7.0
 						_dash_dir = int(sign(aim.x))
 				elif pdist > 150.0 and pdist < 340.0 and _has_los(get_player_center.call()) and randf() < delta * 0.5:
 					_charge_hold = randf_range(0.9, 2.6)  # Start winding up
 			elif (is_beam or _shoot_timer <= 0.0) and _has_los(get_player_center.call()):
-				if weapon_system.try_shoot("bot"):
-					apply_knockback(-aim, weapon_system.get_kick("bot") * (0.1 if is_beam else 1.0))
+				if weapon_system.try_shoot(actor_id):
+					apply_knockback(-aim, weapon_system.get_kick(actor_id) * (0.1 if is_beam else 1.0))
 					if not is_beam:
 						_shoot_timer = randf_range(0.04, 0.12)  # Max: relentless
 
@@ -323,7 +336,7 @@ func _combat_aim() -> Vector2:
 		return Vector2.ZERO
 	var target: Vector2 = get_player_center.call()
 	var my_c: Vector2 = get_center()
-	var wname: String = weapon_system.get_weapon("bot") if weapon_system else ""
+	var wname: String = weapon_system.get_weapon(actor_id) if weapon_system else ""
 	if wname != "" and not get_player_vel.is_null():
 		var proj_speed: float = WeaponSystem.WEAPONS[wname].speed
 		var t_flight: float = clampf(my_c.distance_to(target) / proj_speed, 0.0, 0.6)
@@ -352,7 +365,7 @@ func _think() -> void:
 	if get_player_center.is_null():
 		return
 	# Stunned (parried): drop all inputs until it wears off
-	if weapon_system and weapon_system.is_stunned("bot"):
+	if weapon_system and weapon_system.is_stunned(actor_id):
 		_in_h = 0
 		_shield_want = false
 		return
@@ -368,8 +381,13 @@ func _think() -> void:
 			_reroute_dir = 1 if randf() < 0.5 else -1
 		_stuck_anchor = my_c
 	var player_c: Vector2 = get_player_center.call()
-	var armed: bool = weapon_system != null and weapon_system.get_weapon("bot") != ""
+	var armed: bool = weapon_system != null and weapon_system.get_weapon(actor_id) != ""
 	var goal: Vector2 = player_c
+	# Navigation goals (pads, the super race, ladder waypoints, beam escapes)
+	# are LOCKED: the engage-strafe logic must never overwrite them. (It used
+	# to — on the left tower the next waypoint sits only 18px up, the strafe
+	# branch kicked in and marched the bot right back off the staircase.)
+	var goal_locked: bool = false
 	if weapon_system and not armed:
 		# Seek nearest active weapon pad
 		var best_d: float = 999999.0
@@ -384,18 +402,22 @@ func _think() -> void:
 				found = true
 		if not found:
 			goal = player_c  # Nothing up — chase anyway
+		else:
+			goal_locked = true
 	# The DOOM RAY outranks everything — race for it the moment the spawn
 	# animation starts, not just once it lands
-	if weapon_system and weapon_system.is_super_hot() and weapon_system.get_weapon("bot") != "doom":
+	if weapon_system and weapon_system.is_super_hot() and weapon_system.get_weapon(actor_id) != "doom":
 		goal = weapon_system.super_pos
+		goal_locked = true
 	# Under an enemy beam: survival outranks even the race — shield is up
 	# (reflex block) and we RUN laterally out of the column
-	if _beam_threat and weapon_system and weapon_system.get_weapon("bot") == "":
+	if _beam_threat and weapon_system and weapon_system.get_weapon(actor_id) == "":
 		goal = my_c + Vector2(signf(my_c.x - player_c.x) * 240.0, 0.0)
 		if goal.x < 64.0:
 			goal.x = my_c.x + 240.0
 		elif goal.x > 1472.0:
 			goal.x = my_c.x - 240.0
+		goal_locked = true
 	# High goals (pads on platforms, the lift entrance, campers): climb the
 	# tower on MY side of the arena, ladder waypoint by waypoint.
 	if goal.y < my_c.y - 56.0:
@@ -403,6 +425,7 @@ func _think() -> void:
 		for wp in route:
 			if wp.y < my_c.y - 10.0:
 				goal = wp
+				goal_locked = true
 				break
 	# MOUNTING: platforms must be jumped onto from BESIDE their lip. If a
 	# solid ceiling sits between me and my goal height at my column (I'm
@@ -444,7 +467,7 @@ func _think() -> void:
 				if clear_r:
 					goal.x = (my_col + off) * 16.0 + 18.0
 					break
-	else:
+	elif not goal_locked:
 		# Engage: keep a mid-range band, strafe inside it
 		var dist: float = my_c.distance_to(player_c)
 		_strafe_timer -= 0.033
@@ -571,7 +594,7 @@ func _think() -> void:
 		if weapon_system and not escaping and randf() < 0.95:
 			var incoming: bool = false
 			for pr in weapon_system._projectiles:
-				if pr.team != 1 and pr.pos.distance_to(my_c) < 130.0 and pr.vel.dot(my_c - pr.pos) > 0.0:
+				if pr.team != team_id and pr.pos.distance_to(my_c) < 130.0 and pr.vel.dot(my_c - pr.pos) > 0.0:
 					incoming = true
 					break
 			if incoming:
@@ -584,7 +607,7 @@ func _think() -> void:
 	if _shield_want and weapon_system and _shield_hold <= 0.0:
 		var still_threat: bool = false
 		for pr in weapon_system._projectiles:
-			if pr.team != 1 and pr.pos.distance_to(my_c) < 170.0:
+			if pr.team != team_id and pr.pos.distance_to(my_c) < 170.0:
 				still_threat = true
 				break
 		if not still_threat:
@@ -640,7 +663,7 @@ func _think() -> void:
 		_in_h = _committed_h
 	# Hold the ghosted direction through an active dash window (the safety
 	# wall and brake still override this if spikes come up)
-	if weapon_system and weapon_system._actors.has("bot") and weapon_system._actors["bot"].dash_time > 0.0 and _dash_dir != 0:
+	if weapon_system and weapon_system._actors.has(actor_id) and weapon_system._actors[actor_id].dash_time > 0.0 and _dash_dir != 0:
 		_in_h = _dash_dir
 
 

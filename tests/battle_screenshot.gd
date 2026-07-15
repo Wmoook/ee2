@@ -5,6 +5,7 @@ extends Node
 func _ready() -> void:
 	GameState.battle_mode = true
 	GameState.battle_guns_enabled = false  # FISTS soak: pure chase = max center crossings
+	GameState.battle_bot_count = 3  # Full 1v1v1v1 FFA stress
 	BattleMap.build()
 	var game: Node = (load("res://scenes/world/game.tscn") as PackedScene).instantiate()
 	add_child(game)
@@ -23,7 +24,11 @@ func _ready() -> void:
 	print("SHOT SAVED")
 	var battle: Node = game.get_node_or_null("BattleMode")
 	if battle:
-		print("FISTS CROSSING SOAK 28s -> bot lives: %d/10, player lives: %d/10" % [battle.bot_lives, battle.player_lives])
+		var bl: PackedStringArray = PackedStringArray()
+		for l in battle.bots_lives:
+			bl.append(str(l))
+		print("FFA CROSSING SOAK 28s -> bot lives: [%s]/10, player lives: %d/10" % [", ".join(bl), battle.player_lives])
 	GameState.battle_mode = false
 	GameState.battle_guns_enabled = true
+	GameState.battle_bot_count = 1
 	get_tree().quit(0)

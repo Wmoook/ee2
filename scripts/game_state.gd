@@ -148,6 +148,7 @@ var trails_enabled: bool = true  # Fire trail toggle
 var rotation_enabled: bool = true  # Ball roll visual toggle (HUD "Rotate" button)
 var battle_mode: bool = false  # 1v1 bot arena active — blocks world saves + editing
 var battle_guns_enabled: bool = true  # OFF = pure melee duel (dash + parry only)
+var battle_bot_count: int = 1  # Enemy bots in the arena: 1 = 1v1 ... 3 = 1v1v1v1 (FFA)
 var cam_shake: float = 0.0  # Screen shake impulse (added by combat, decays in player controller)
 var player_stunned: bool = false  # Set by battle mode: parried players lose control briefly
 
