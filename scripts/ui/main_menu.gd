@@ -46,6 +46,7 @@ func _on_battle() -> void:
 	_apply_settings()
 	GameState.battle_mode = true
 	GameState.set_edit_mode(false)
+	GameState.camera_offset = Vector2.ZERO  # No stale pan from the camera pad
 	BattleMap.build()
 	get_tree().change_scene_to_file("res://scenes/world/game.tscn")
 

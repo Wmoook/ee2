@@ -797,8 +797,10 @@ func _process(_delta: float) -> void:
 	if not palette_panel:
 		return
 
-	# Position cam pad on left, vertically centered
+	# Position cam pad on left, vertically centered (hidden in 1v1 battles —
+	# the camera stays locked on the fight)
 	if _cam_pad:
+		_cam_pad.visible = not GameState.battle_mode
 		var vp_size: Vector2 = get_viewport().get_visible_rect().size
 		_cam_pad.position = Vector2(12, vp_size.y / 2 - CAM_PAD_SIZE / 2)
 
