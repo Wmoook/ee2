@@ -554,6 +554,7 @@ func _process(delta: float) -> void:
 		var from: Vector2 = a.get_center.call() + a.aim * 16.0
 		var beam_end: Vector2 = from
 		var victim: Dictionary = {}
+		var shielded_victim: Dictionary = {}
 		var steps: int = int(w.range / 6.0)
 		for s in range(steps):
 			beam_end = from + a.aim * (s * 6.0)
@@ -563,11 +564,18 @@ func _process(delta: float) -> void:
 				var v: Dictionary = _actors[vid]
 				if v.team == a.team or not v.is_alive.call():
 					continue
-				if v.get_center.call().distance_squared_to(beam_end) < 144.0:
-					victim = v
+				# Fat beam: ~3 smiley widths — generous hit corridor
+				if v.get_center.call().distance_squared_to(beam_end) < 676.0:
+					if v.shield_on:
+						# The ray plows THROUGH a shielded target and keeps
+						# going to the wall — they get engulfed inside it
+						shielded_victim = v
+					else:
+						victim = v
 			if not victim.is_empty():
 				break
 		a.beam_end = beam_end
+		a["beam_pin"] = shielded_victim.get_center.call() if not shielded_victim.is_empty() else Vector2.ZERO
 		# Sparks along the beam + at the impact point
 		if randf() < delta * 240.0:
 			var bt: float = randf()
@@ -578,16 +586,29 @@ func _process(delta: float) -> void:
 			})
 		spawn_hit(beam_end, Color(1.0, 0.4, 0.2), a.aim)
 		GameState.cam_shake = maxf(GameState.cam_shake, 2.5)
+		# Shielded target under the beam: NO damage, NO stun — instead a
+		# continuous blast that plows them into the wall while the ray
+		# engulfs them, and their shield cooks off under the pressure
+		if not shielded_victim.is_empty():
+			if not shielded_victim.push.is_null():
+				shielded_victim.push.call(a.aim * delta * 30.0)
+			shielded_victim.shield_energy = maxf(0.0, shielded_victim.shield_energy - delta * 1.2)
+			var svc: Vector2 = shielded_victim.get_center.call()
+			if randf() < delta * 320.0:
+				var storm_ang: float = randf() * TAU
+				_fx.append({
+					"pos": svc + Vector2.from_angle(storm_ang) * randf_range(10.0, 16.0),
+					"vel": a.aim * randf_range(80.0, 200.0) + Vector2.from_angle(storm_ang) * 60.0,
+					"life": randf_range(0.06, 0.16), "max_life": 0.16,
+					"color": Color(0.7, 0.95, 1.0), "size": randf_range(1.2, 2.6),
+				})
+			GameState.cam_shake = maxf(GameState.cam_shake, 4.0)
 		a.beam_tick -= delta
 		if a.beam_tick <= 0.0:
 			a.beam_tick = w.tick
 			if not victim.is_empty():
-				if victim.shield_on:
-					# Even the DOOM RAY respects a parry
-					_stun_team(a.team, beam_end)
-				else:
-					victim.hurt.call(w.dmg, a.aim)
-					play_sfx("hit", beam_end)
+				victim.hurt.call(w.dmg, a.aim)
+				play_sfx("hit", beam_end)
 	if _beam_audio and _beam_audio.stream:
 		if any_beam and not _beam_audio.playing:
 			_beam_audio.play()
@@ -639,14 +660,23 @@ func _process(delta: float) -> void:
 					var hit_r: float = 14.0 if a.shield_on else ACTOR_RADIUS
 					if c.distance_squared_to(pr.pos) < hit_r * hit_r:
 						if a.shield_on:
-							# PARRY: shot blocked, shooter stunned for 1s
-							_stun_team(pr.team, pr.pos)
+							# DEFLECT: bullets ricochet off shields into the
+							# world — no stun (that's reserved for parried
+							# DASH attacks)
+							var nrm: Vector2 = (pr.pos - c).normalized()
+							if nrm.length() < 0.5:
+								nrm = -pr.vel.normalized()
+							pr.vel = pr.vel.bounce(nrm) * 0.9
+							pr.pos = c + nrm * 18.0
+							pr.life = minf(pr.life, 0.45)
+							spawn_hit(pr.pos, Color(0.7, 0.95, 1.0), nrm)
+							play_sfx("hit", pr.pos, 0.05, 1.35)
 						else:
 							a.hurt.call(pr.dmg, pr.vel.normalized())
 							spawn_hit(pr.pos, pr.color, pr.vel.normalized())
 							play_sfx("hit", pr.pos)
 							GameState.cam_shake += 2.0
-						alive = false
+							alive = false
 						break
 				if not alive:
 					break
@@ -715,7 +745,7 @@ func _draw() -> void:
 			var readiness: float = 1.0 - a.cooldown / WEAPONS[a.weapon].cooldown
 			var wcol: Color = WEAPONS[a.weapon].color
 			draw_arc(c, 13.0, -PI / 2.0, -PI / 2.0 + TAU * readiness, 20, Color(wcol.r, wcol.g, wcol.b, 0.5), 1.2)
-	# DOOM RAY beams: layered core + glow + impact flare
+	# DOOM RAY beams: a ~3-smiley-wide annihilation column
 	for id in _actors:
 		var a: Dictionary = _actors[id]
 		if not a.get("beam_draw", false):
@@ -723,11 +753,21 @@ func _draw() -> void:
 		var from: Vector2 = a.get_center.call() + a.aim * 16.0
 		var to: Vector2 = a.beam_end
 		var flicker: float = 0.85 + 0.15 * sin(_time * 60.0)
-		draw_line(from, to, Color(1.0, 0.2, 0.1, 0.35), 11.0 * flicker)
-		draw_line(from, to, Color(1.0, 0.45, 0.15, 0.8), 5.5 * flicker)
-		draw_line(from, to, Color(1, 1, 0.9), 2.2)
-		draw_circle(to, 5.0 + 3.0 * flicker, Color(1.0, 0.7, 0.4, 0.8))
-		draw_circle(from, 3.5, Color(1, 1, 0.9))
+		draw_line(from, to, Color(1.0, 0.15, 0.08, 0.28), 48.0 * flicker)
+		draw_line(from, to, Color(1.0, 0.4, 0.12, 0.6), 27.0 * flicker)
+		draw_line(from, to, Color(1.0, 0.75, 0.4, 0.9), 15.0 * flicker)
+		draw_line(from, to, Color(1, 1, 0.92), 7.0)
+		draw_circle(to, 13.0 + 6.0 * flicker, Color(1.0, 0.6, 0.3, 0.75))
+		draw_circle(to, 7.0, Color(1, 1, 0.9))
+		draw_circle(from, 8.0, Color(1, 1, 0.92))
+		# Shielded target engulfed in the ray: anime-style silhouette — you
+		# can see them holding on inside the column
+		var pin: Vector2 = a.get("beam_pin", Vector2.ZERO)
+		if pin != Vector2.ZERO:
+			draw_circle(pin, 12.0, Color(1.0, 0.5, 0.2, 0.55))
+			draw_arc(pin, 13.5, 0, TAU, 24, Color(1, 1, 1, 0.95), 2.5)
+			draw_arc(pin, 17.0 + 2.0 * sin(_time * 22.0), 0, TAU, 24, Color(0.7, 0.95, 1.0, 0.8), 1.8)
+			draw_circle(pin, 8.0, Color(0.08, 0.04, 0.06, 0.85))
 	# Shields and stun stars
 	for id in _actors:
 		var a: Dictionary = _actors[id]
@@ -752,6 +792,19 @@ func _draw() -> void:
 			draw_arc(c, 12.0 * wob, -PI / 2.0, -PI / 2.0 + TAU * a.charge, 22, Color(ccol.r, ccol.g, ccol.b, 0.75), 2.4)
 			if a.charge >= 1.0:
 				draw_arc(c, 16.0 * wob, 0, TAU, 24, Color(1.0, 0.92, 0.55, 0.35 + 0.25 * sin(_time * 12.0)), 1.6)
+	# Floating shield meters (thin cyan bar above the ball whenever the
+	# shield isn't full — red while broken/recharging)
+	for id in _actors:
+		var a: Dictionary = _actors[id]
+		if not a.is_alive.call() or a.weapon != "":
+			continue
+		if a.shield_energy >= SHIELD_MAX - 0.01 and not a.shield_broken:
+			continue
+		var sc: Vector2 = a.get_center.call()
+		var frac: float = a.shield_energy / SHIELD_MAX
+		var scol: Color = Color(1.0, 0.35, 0.3) if a.shield_broken else Color(0.45, 0.85, 1.0)
+		draw_rect(Rect2(sc.x - 10.0, sc.y - 23.0, 20.0, 2.5), Color(0.05, 0.05, 0.08, 0.75))
+		draw_rect(Rect2(sc.x - 10.0, sc.y - 23.0, 20.0 * frac, 2.5), scol)
 	# Floating HP bars (small, above each living actor)
 	for id in _actors:
 		var a: Dictionary = _actors[id]

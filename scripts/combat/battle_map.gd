@@ -36,6 +36,7 @@ const ARROW_UP: int = 2
 # the lift entrance, a player camping a platform).
 const CLIMB_LEFT: Array = [Vector2(568.0, 456.0), Vector2(624.0, 424.0), Vector2(680.0, 390.0)]
 const CLIMB_RIGHT: Array = [Vector2(952.0, 456.0), Vector2(912.0, 424.0), Vector2(840.0, 390.0)]
+const SUPER_POS: Vector2 = Vector2(768.0, 494.0)  # DOOM RAY drop point (center floor)
 
 
 static func build() -> void:
@@ -187,7 +188,7 @@ static func add_weapon_pads(ws: WeaponSystem) -> void:
 	ws.add_pad(Vector2(680, 382), "scatter")     # Left mid platform (contested)
 	ws.add_pad(Vector2(840, 382), "scatter")     # Right mid platform (contested)
 	ws.add_pad(Vector2(768, 126), "rail")        # Top of the lift
-	ws.super_pos = Vector2(768.0, 494.0)         # DOOM RAY materializes center floor
+	ws.super_pos = SUPER_POS                     # DOOM RAY materializes center floor
 
 
 static func _fg(x: int, y: int, id: int) -> void:

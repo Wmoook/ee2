@@ -46,8 +46,10 @@ func _ready() -> void:
 func _wire_up() -> void:
 	if GameState.battle_guns_enabled:
 		BattleMap.add_weapon_pads(weapons)
-	# Guns OFF: no pads and no super cycle (super_pos stays ZERO) — the duel
-	# is pure dash punches and parry shields.
+	else:
+		# Guns OFF: pure dash & parry — but the DOOM RAY still drops every
+		# 60s as the chaos prize
+		weapons.super_pos = BattleMap.SUPER_POS
 	bot.weapon_system = weapons
 	bot.get_player_center = func() -> Vector2: return Vector2(player.physics.x + 8.0, player.physics.y + 8.0)
 	bot.get_player_vel = func() -> Vector2: return Vector2(player.physics._speedX, player.physics._speedY) * EEPhysics.EE_TICK_FRAC * EEPhysics.TPS
@@ -360,7 +362,7 @@ func _layout_hud() -> void:
 		else:
 			wtext = "FISTS — LMB dash punch, RMB parry shield" if not GameState.battle_guns_enabled else "UNARMED — LMB dash punch, RMB parry shield"
 			_weapon_label.add_theme_color_override("font_color", Color(0.7, 0.7, 0.8))
-		if GameState.battle_guns_enabled:
+		if weapons.super_pos != Vector2.ZERO:
 			_weapon_label.text = "%s  |  HP %d/%d  |  %s" % [wtext, player_hp, MAX_HP, weapons.get_super_status()]
 		else:
 			_weapon_label.text = "%s  |  HP %d/%d" % [wtext, player_hp, MAX_HP]
