@@ -77,7 +77,11 @@ func _setup_scene() -> void:
 
 	# Combat modes (weapons, AI opponents, lives HUD)
 	if GameState.battle_mode:
-		if GameState.survivors_mode:
+		if GameState.zombies_mode:
+			var zomb: ZombiesMode = ZombiesMode.new()
+			zomb.name = "ZombiesMode"
+			add_child(zomb)
+		elif GameState.survivors_mode:
 			var surv: SurvivorsMode = SurvivorsMode.new()
 			surv.name = "SurvivorsMode"
 			add_child(surv)
@@ -210,6 +214,7 @@ func _input(event: InputEvent) -> void:
 			GameState.battle_mode = false
 			GameState.boss_fight = false
 			GameState.survivors_mode = false
+			GameState.zombies_mode = false
 			GameState.player_stunned = false
 			GameState.cam_shake = 0.0
 			get_tree().paused = false

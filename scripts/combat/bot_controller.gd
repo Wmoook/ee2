@@ -298,6 +298,11 @@ func _process(delta: float) -> void:
 				# heavy dash from mid range and release it at the player
 				var pdist: float = get_center().distance_to(get_player_center.call())
 				if _charge_hold > 0.0:
+					# NEVER feed a raised shield: since parries are timed now, a
+					# blocked dash is still a wasted dash (and a bounce). Hold
+					# the windup and BAIT the shield out — it drains in 2.4s.
+					if weapon_system.is_shielded(_target_id()) and pdist < 120.0:
+						_charge_hold = maxf(_charge_hold, 0.15)
 					weapon_system.charge_dash(actor_id, delta)
 					_charge_hold -= delta
 					if _charge_hold <= 0.0 or pdist < 70.0:
@@ -315,7 +320,7 @@ func _process(delta: float) -> void:
 								physics._speedX += aim.x * imp
 								physics._speedY += aim.y * imp
 								_dash_dir = int(sign(aim.x))
-				elif pdist < 130.0 and _has_los(get_player_center.call()):
+				elif pdist < 130.0 and _has_los(get_player_center.call()) and not weapon_system.is_shielded(_target_id()):
 					var quick_ghost: Dictionary = _simulate_jump(int(sign(aim.x)), 120, aim * 7.0, false)
 					if not quick_ghost.died and weapon_system.try_dash(actor_id):
 						physics._speedX += aim.x * 7.0

@@ -555,7 +555,7 @@ func _layout_hud() -> void:
 				wtext += " %.1fs" % weapons._actors["player"].weapon_left
 			_weapon_label.add_theme_color_override("font_color", weapons.get_weapon_color("player"))
 		else:
-			wtext = "FISTS — LMB dash punch, RMB parry shield"
+			wtext = "FISTS — LMB dash punch, RMB shield (raise it LATE to parry-stun!)"
 			_weapon_label.add_theme_color_override("font_color", Color(0.7, 0.7, 0.8))
 		if pa_hud.get("abil_fly", 0.0) > 0.0:
 			wtext += "   ✦ ZERO-G %.0fs" % pa_hud.abil_fly

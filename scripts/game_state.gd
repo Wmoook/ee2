@@ -24,6 +24,7 @@ var BLOCK_CATEGORIES: Array = [
 	{"name": "Blocks", "ids": [
 		5000, 5001, 5002, 5003, 5004, 5005, 5006, 5007, 5008, 5009, 5010,
 		5011, 5012, 5013, 5014, 5015,
+		5016, 5017, 5018, 5019, 5020, 5021, 5022, 5023, 5024, 5025,
 	]},
 	{"name": "Slopes", "ids": [
 		2000, 2001, 2002, 2003,
@@ -152,6 +153,7 @@ var battle_guns_enabled: bool = true  # OFF = pure melee duel (dash + parry only
 var battle_bot_count: int = 1  # Enemy bots in the arena: 1 = 1v1 ... 3 = 1v1v1v1 (FFA)
 var boss_fight: bool = false  # BOSS FIGHT mode (battle_mode is also set — same gating)
 var survivors_mode: bool = false  # DOT SURVIVORS mode (battle_mode also set — same gating)
+var zombies_mode: bool = false  # UNDEAD BUNKER round-based zombies (battle_mode also set)
 var cam_shake: float = 0.0  # Screen shake impulse (added by combat, decays in player controller)
 var player_stunned: bool = false  # Set by battle mode: parried players lose control briefly
 
@@ -193,6 +195,16 @@ func _register_custom_blocks() -> void:
 		{"id": 5013, "path": "res://assets/sprites/NEW_BLOCK_SPRITE/block_14.png", "path16": "res://assets/sprites/NEW_BLOCK_SPRITE/block_14_16.png"},
 		{"id": 5014, "path": "res://assets/sprites/NEW_BLOCK_SPRITE/block_15.png", "path16": "res://assets/sprites/NEW_BLOCK_SPRITE/block_15_16.png"},
 		{"id": 5015, "path": "res://assets/sprites/NEW_BLOCK_SPRITE/block_16.png", "path16": "res://assets/sprites/NEW_BLOCK_SPRITE/block_16_16.png"},
+		{"id": 5016, "path": "res://assets/sprites/NEW_BLOCK_SPRITE/block_17.png", "path16": "res://assets/sprites/NEW_BLOCK_SPRITE/block_17_16.png"},
+		{"id": 5017, "path": "res://assets/sprites/NEW_BLOCK_SPRITE/block_18.png", "path16": "res://assets/sprites/NEW_BLOCK_SPRITE/block_18_16.png"},
+		{"id": 5018, "path": "res://assets/sprites/NEW_BLOCK_SPRITE/block_19.png", "path16": "res://assets/sprites/NEW_BLOCK_SPRITE/block_19_16.png"},
+		{"id": 5019, "path": "res://assets/sprites/NEW_BLOCK_SPRITE/block_20.png", "path16": "res://assets/sprites/NEW_BLOCK_SPRITE/block_20_16.png"},
+		{"id": 5020, "path": "res://assets/sprites/NEW_BLOCK_SPRITE/block_21.png", "path16": "res://assets/sprites/NEW_BLOCK_SPRITE/block_21_16.png"},
+		{"id": 5021, "path": "res://assets/sprites/NEW_BLOCK_SPRITE/block_22.png", "path16": "res://assets/sprites/NEW_BLOCK_SPRITE/block_22_16.png"},
+		{"id": 5022, "path": "res://assets/sprites/NEW_BLOCK_SPRITE/block_23.png", "path16": "res://assets/sprites/NEW_BLOCK_SPRITE/block_23_16.png"},
+		{"id": 5023, "path": "res://assets/sprites/NEW_BLOCK_SPRITE/block_24.png", "path16": "res://assets/sprites/NEW_BLOCK_SPRITE/block_24_16.png"},
+		{"id": 5024, "path": "res://assets/sprites/NEW_BLOCK_SPRITE/block_25.png", "path16": "res://assets/sprites/NEW_BLOCK_SPRITE/block_25_16.png"},
+		{"id": 5025, "path": "res://assets/sprites/NEW_BLOCK_SPRITE/block_26.png", "path16": "res://assets/sprites/NEW_BLOCK_SPRITE/block_26_16.png"},
 	]
 	for cb in custom_blocks:
 		var tex: Texture2D = load(cb.path) as Texture2D
@@ -455,6 +467,10 @@ var _custom_block_warps: Dictionary = {
 	5105: Vector2(0.0, 0.35), 5106: Vector2(0.0, 0.35), 5107: Vector2(0.0, 0.35), 5108: Vector2(0.0, 0.35),
 	5109: Vector2(0.0, 0.35), 5110: Vector2(0.0, 0.35),
 	5111: Vector2(0.0, 0.35), 5112: Vector2(0.0, 0.35), 5113: Vector2(0.0, 0.35), 5114: Vector2(0.0, 0.35), 5115: Vector2(0.0, 0.35),
+	5016: Vector2(0.0, 0.35), 5017: Vector2(0.0, 0.35), 5018: Vector2(0.0, 0.35), 5019: Vector2(0.0, 0.35), 5020: Vector2(0.0, 0.35),
+	5021: Vector2(0.0, 0.35), 5022: Vector2(0.0, 0.35), 5023: Vector2(0.0, 0.35), 5024: Vector2(0.0, 0.35), 5025: Vector2(0.0, 0.35),
+	5116: Vector2(0.0, 0.35), 5117: Vector2(0.0, 0.35), 5118: Vector2(0.0, 0.35), 5119: Vector2(0.0, 0.35), 5120: Vector2(0.0, 0.35),
+	5121: Vector2(0.0, 0.35), 5122: Vector2(0.0, 0.35), 5123: Vector2(0.0, 0.35), 5124: Vector2(0.0, 0.35), 5125: Vector2(0.0, 0.35),
 }  # Baked warp for 40x40 blocks (FG + BG versions)
 
 func get_custom_block_warp(id: int) -> Vector2:

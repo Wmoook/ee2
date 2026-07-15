@@ -1433,6 +1433,98 @@ func remove_polyline_near(pos: Vector2, radius: float = 16.0) -> void:
 	_pending_net_poly_fullsync = true
 	polylines_changed.emit()
 
+func free_block_at_point(p: Vector2) -> int:
+	## Index of the free block whose rotated 16x16 body contains p, or -1.
+	## Used by beam terrain collision (weapon_system).
+	for i in range(free_blocks.size()):
+		var fb: Dictionary = free_blocks[i]
+		var c: Vector2 = (fb.pos as Vector2) + Vector2(8, 8)
+		if absf(p.x - c.x) > 14.0 or absf(p.y - c.y) > 14.0:
+			continue  # quick reject (14 > 8*sqrt(2))
+		var lp: Vector2 = (p - c).rotated(-deg_to_rad(float(fb.get("rotation", 0.0))))
+		if absf(lp.x) <= 8.0 and absf(lp.y) <= 8.0:
+			return i
+	return -1
+
+func curve_at_point(p: Vector2, half_width: float = 8.5) -> int:
+	## Index of the polyline whose body slab (centerline +- half_width)
+	## contains p, or -1. Beams use this so rays can't pass through curves.
+	for i in range(polylines.size()):
+		var poly: Dictionary = polylines[i]
+		if poly.get("render_only", false):
+			continue  # collision is carried by the split arms
+		var bmin: Vector2 = poly.get("bbox_min", Vector2.ZERO)
+		var bmax: Vector2 = poly.get("bbox_max", Vector2.ZERO)
+		if p.x < bmin.x - half_width or p.x > bmax.x + half_width or p.y < bmin.y - half_width or p.y > bmax.y + half_width:
+			continue
+		var pts: PackedVector2Array = poly.points
+		var shash: Dictionary = poly.get("spatial_hash", {})
+		var cs: int = int(shash.get("cell_size", 32))
+		var cgx: int = int(floor(p.x / cs))
+		var cgy: int = int(floor(p.y / cs))
+		for ox in range(-1, 2):
+			for oy in range(-1, 2):
+				var key: int = (cgx + ox) * 10000 + (cgy + oy)
+				if not shash.has(key):
+					continue
+				for si in shash[key]:
+					var q: Vector2 = Geometry2D.get_closest_point_to_segment(p, pts[si], pts[si + 1])
+					if q.distance_to(p) <= half_width:
+						return i
+	return -1
+
+func shatter_polyline(hit_idx: int) -> Dictionary:
+	## Combat terrain destruction: remove the polyline at hit_idx together
+	## with its split-pair arm and render_only parent (same grouping as
+	## remove_polyline_near) and return everything needed to rebuild it:
+	## {polys: [{points, side, block_id, uv_offset}], all_points: PackedVector2Array}
+	if hit_idx < 0 or hit_idx >= polylines.size():
+		return {}
+	var to_remove: Array = [hit_idx]
+	var hit_poly: Dictionary = polylines[hit_idx]
+	if hit_poly.get("collision_only", false):
+		var pair: int = hit_poly.get("split_pair", -1)
+		if pair >= 0 and pair < polylines.size() and not to_remove.has(pair):
+			to_remove.append(pair)
+		for j in range(polylines.size()):
+			if j != hit_idx and polylines[j].get("render_only", false):
+				var rpts: PackedVector2Array = polylines[j].points
+				var hpts: PackedVector2Array = hit_poly.points
+				if rpts.size() > 0 and hpts.size() > 0:
+					if rpts[0].distance_to(hpts[0]) < 2.0 or rpts[-1].distance_to(hpts[-1]) < 2.0 or rpts[0].distance_to(hpts[-1]) < 2.0 or rpts[-1].distance_to(hpts[0]) < 2.0:
+						if not to_remove.has(j):
+							to_remove.append(j)
+	# Respawn data: prefer the render_only FULL curve (re-adding it re-splits
+	# into arms automatically); otherwise the plain polylines themselves.
+	var rebuild: Array = []
+	var all_points: PackedVector2Array = PackedVector2Array()
+	var full: Dictionary = {}
+	for k in to_remove:
+		var pp: Dictionary = polylines[k]
+		all_points.append_array(pp.points)
+		if pp.get("render_only", false):
+			full = pp
+	if not full.is_empty():
+		rebuild.append({"points": full.points, "side": full.side, "block_id": full.block_id, "uv_offset": 0.0})
+	else:
+		for k2 in to_remove:
+			var p2: Dictionary = polylines[k2]
+			if p2.get("collision_only", false):
+				continue
+			rebuild.append({"points": p2.points, "side": p2.side, "block_id": p2.block_id, "uv_offset": p2.get("uv_offset", 0.0)})
+	to_remove.sort()
+	for k3 in range(to_remove.size() - 1, -1, -1):
+		polylines.remove_at(to_remove[k3])
+	for p3 in polylines:
+		p3.erase("_cached_mesh")
+		p3.erase("_cached_tex")
+	_regenerate_curve_collision_blocks()
+	build_curve_colliders()
+	_rebuild_wedge_pairs()
+	_pending_net_poly_fullsync = true
+	polylines_changed.emit()
+	return {"polys": rebuild, "all_points": all_points}
+
 func _ready() -> void:
 	pass
 
@@ -1839,6 +1931,13 @@ func net_clear_world() -> void:
 			set_fg_tile(x, y, 0)
 			set_bg_tile(x, y, 0)
 			set_rotation(x, y, 0)
+	# Ensure border grid tiles are set
+	for x in range(world_width):
+		set_fg_tile(x, 0, 9)
+		set_fg_tile(x, world_height - 1, 9)
+	for y in range(1, world_height - 1):
+		set_fg_tile(0, y, 9)
+		set_fg_tile(world_width - 1, y, 9)
 	spawn_points = [Vector2(3, world_height - 3), Vector2(5, world_height - 3)]
 	_rebuild_wedge_pairs()
 	_rebuild_global_render_hash()
@@ -1872,13 +1971,6 @@ func net_clear_gravity_zones() -> void:
 
 func build_sample_room() -> void:
 	init_empty_world(400, 200)
-	# Completely empty world — just a border so players don't fall into void
-	for x in range(world_width):
-		set_fg_tile(x, 0, 9)
-		set_fg_tile(x, world_height - 1, 9)
-	for y in range(world_height):
-		set_fg_tile(0, y, 9)
-		set_fg_tile(world_width - 1, y, 9)
 	# Spawn at top-left corner (on the border floor)
 	spawn_points = [Vector2(2, world_height - 2), Vector2(4, world_height - 2)]
 	world_loaded.emit()

@@ -29,6 +29,73 @@ const WEAPONS: Dictionary = {
 		"cooldown": 1.05, "speed": 2400.0, "count": 1, "spread": 0.0,
 		"life": 0.5, "size": 3.6, "sfx": "shoot_rail", "shake": 4.5, "kick": 2.4,
 	},
+	# ── ZOMBIES-mode arsenal (wall buys + mystery box) ──
+	"pistol": {
+		"label": "PISTOL", "color": Color(0.85, 0.85, 0.9), "dmg": 1,
+		"cooldown": 0.34, "speed": 900.0, "count": 1, "spread": 0.02,
+		"life": 0.9, "size": 2.6, "sfx": "shoot_blaster", "shake": 1.0, "kick": 0.4,
+	},
+	"smg": {
+		"label": "SMG", "color": Color(1.0, 0.9, 0.5), "dmg": 1,
+		"cooldown": 0.09, "speed": 1000.0, "count": 1, "spread": 0.055,
+		"life": 0.7, "size": 2.4, "sfx": "shoot_blaster", "shake": 1.2, "kick": 0.35,
+	},
+	"rifle": {
+		"label": "RIFLE", "color": Color(0.6, 1.0, 0.9), "dmg": 3,
+		"cooldown": 0.55, "speed": 1700.0, "count": 1, "spread": 0.004,
+		"life": 0.8, "size": 3.2, "sfx": "shoot_rail", "shake": 2.6, "kick": 1.4,
+	},
+	"minigun": {
+		"label": "MINIGUN", "color": Color(1.0, 0.55, 0.3), "dmg": 1,
+		"cooldown": 0.055, "speed": 1050.0, "count": 1, "spread": 0.1,
+		"life": 0.65, "size": 2.4, "sfx": "shoot_blaster", "shake": 1.8, "kick": 0.5,
+	},
+	"raygun": {
+		"label": "RAY GUN", "color": Color(0.35, 1.0, 0.45), "dmg": 4,
+		"cooldown": 0.28, "speed": 1100.0, "count": 1, "spread": 0.01,
+		"life": 0.9, "size": 4.2, "sfx": "shoot_rail", "shake": 3.0, "kick": 1.0,
+	},
+	# ── PACK-A-PUNCH forgings (zombies vault machine, $5000) ──
+	"pistol_pap": {
+		"label": "MUSTANG", "color": Color(1.0, 0.5, 0.9), "dmg": 3,
+		"cooldown": 0.22, "speed": 1100.0, "count": 1, "spread": 0.015,
+		"life": 0.9, "size": 3.4, "sfx": "shoot_blaster", "shake": 1.8, "kick": 0.6,
+	},
+	"smg_pap": {
+		"label": "SHREDDER", "color": Color(1.0, 0.6, 0.85), "dmg": 2,
+		"cooldown": 0.07, "speed": 1150.0, "count": 1, "spread": 0.05,
+		"life": 0.75, "size": 2.8, "sfx": "shoot_blaster", "shake": 1.5, "kick": 0.4,
+	},
+	"scatter_pap": {
+		"label": "HELLSPRAY", "color": Color(0.6, 0.75, 1.0), "dmg": 2,
+		"cooldown": 0.55, "speed": 850.0, "count": 8, "spread": 0.26,
+		"life": 0.42, "size": 2.8, "sfx": "shoot_scatter", "shake": 4.0, "kick": 2.0,
+	},
+	"rifle_pap": {
+		"label": "LONGSHOT PRIME", "color": Color(0.75, 1.0, 0.95), "dmg": 7,
+		"cooldown": 0.4, "speed": 2000.0, "count": 1, "spread": 0.002,
+		"life": 0.8, "size": 3.8, "sfx": "shoot_rail", "shake": 3.2, "kick": 1.7,
+	},
+	"blaster_pap": {
+		"label": "SUNLANCE", "color": Color(1.0, 0.85, 0.4), "dmg": 2,
+		"cooldown": 0.11, "speed": 1150.0, "count": 1, "spread": 0.012,
+		"life": 0.85, "size": 3.4, "sfx": "shoot_blaster", "shake": 2.0, "kick": 0.7,
+	},
+	"rail_pap": {
+		"label": "STARPIERCER", "color": Color(0.9, 0.6, 1.0), "dmg": 5,
+		"cooldown": 0.8, "speed": 2600.0, "count": 1, "spread": 0.0,
+		"life": 0.55, "size": 4.4, "sfx": "shoot_rail", "shake": 5.0, "kick": 2.6,
+	},
+	"minigun_pap": {
+		"label": "DOOMSPINNER", "color": Color(1.0, 0.4, 0.5), "dmg": 2,
+		"cooldown": 0.045, "speed": 1150.0, "count": 1, "spread": 0.09,
+		"life": 0.7, "size": 2.8, "sfx": "shoot_blaster", "shake": 2.2, "kick": 0.6,
+	},
+	"raygun_pap": {
+		"label": "RAY GUN MK2", "color": Color(0.2, 1.0, 0.7), "dmg": 8,
+		"cooldown": 0.22, "speed": 1250.0, "count": 1, "spread": 0.008,
+		"life": 0.95, "size": 5.0, "sfx": "shoot_rail", "shake": 3.8, "kick": 1.2,
+	},
 	"doom": {
 		"label": "DOOM RAY", "color": Color(1.0, 0.22, 0.15), "dmg": 1,
 		"cooldown": 0.0, "speed": 0.0, "count": 0, "spread": 0.0,
@@ -46,9 +113,14 @@ const DASH_WINDOW: float = 0.35      # Contact window after dashing
 const DASH_DMG: int = 1
 const SHIELD_MAX: float = 2.4        # Max shield hold (drains; regens when down)
 const STUN_TIME: float = 1.0         # Parry stun duration
+const PARRY_WINDOW: float = 0.28     # A dash is only PARRIED (stun) if the shield
+                                     # went up this recently — timed parry. A held
+                                     # shield still blocks, but stuns nobody
+                                     # (hold-and-ram was a free-stun cheese).
 
 const BLOCK_BREAK_TIME: float = 0.35  # Seconds of beam-cook to shatter a block
 const BLOCK_RESPAWN: float = 10.0     # Shattered terrain re-materializes after this
+const CURVE_BREAK_TIME: float = 0.9   # A whole curve is worth ~3 blocks of cooking
 
 # Random ability drops (player-only pickups; one orb on the field at a time)
 const ABILITIES: Dictionary = {
@@ -66,6 +138,10 @@ var _fx: Array = []               # {pos, vel, life, max_life, color, size}
 var _block_dmg: Dictionary = {}   # Vector2i tile -> accumulated break progress (0..BREAK_TIME)
 var _cooked_now: Dictionary = {}  # Tiles damaged this frame (skip their decay)
 var _broken: Array = []           # {x, y, id, respawn} — shattered tiles pending respawn
+var _curve_dmg: Dictionary = {}   # curve key (first point, quantized) -> cook progress
+var _curve_cooked_now: Dictionary = {}
+var _broken_free: Array = []      # {fb, respawn} — shattered free blocks pending respawn
+var _broken_curves: Array = []    # {polys, all_points, respawn} — shattered curves pending respawn
 var ability_spots: Array = []     # Set by the mode/map — where orbs may appear
 var _abil_orb: Dictionary = {}    # {pos, kind, life} — the orb on the field
 var _abil_timer: float = 12.0     # First drop comes fairly quickly
@@ -126,7 +202,7 @@ func register_actor(id: String, team: int, get_center: Callable, get_vel: Callab
 		"dash_cd": 0.0, "dash_time": 0.0, "dash_dmg": 1,
 		"charge": 0.0, "charging": false, "charge_fed": false,
 		"shield_req": false, "shield_on": false, "shield_energy": SHIELD_MAX,
-		"shield_broken": false, "shield_lock": 0.0,
+		"shield_broken": false, "shield_lock": 0.0, "shield_time": 999.0,
 		"stun_left": 0.0, "stun_pending": false,
 	}
 
@@ -172,16 +248,40 @@ func slot_weapon(id: String, slot: int) -> String:
 	## What a slot holds: 1 = fists, 2 = DOOM RAY if charged else blaster,
 	## 3 = scatter. Gun slots are empty without the permanent loadout
 	## (fists-only mode) — except the doom, which always answers to 2.
+	## Actors with a "slot_guns" dict (zombies mode: CoD two-gun limit)
+	## carry ARBITRARY guns per slot instead of the fixed arena kit.
 	if not _actors.has(id):
 		return ""
 	var a: Dictionary = _actors[id]
 	if slot == 2:
 		if a.get("super_left", 0.0) > 0.0:
 			return "doom"
+		if a.has("slot_guns"):
+			return a.slot_guns.get(2, "")
 		return "blaster" if a.get("loadout", false) else ""
 	if slot == 3:
+		if a.has("slot_guns"):
+			return a.slot_guns.get(3, "")
 		return "scatter" if a.get("loadout", false) else ""
 	return ""
+
+
+func set_slot_gun(id: String, slot: int, weapon: String) -> void:
+	## Zombies mode: put a bought/box gun into a carry slot (2 or 3) and
+	## draw it immediately. Creates the slot_guns dict on first use.
+	if not _actors.has(id) or (weapon != "" and not WEAPONS.has(weapon)):
+		return
+	var a: Dictionary = _actors[id]
+	if not a.has("slot_guns"):
+		a["slot_guns"] = {2: "", 3: ""}
+	a.slot_guns[slot] = weapon
+	a.cur_slot = slot
+	a.weapon = weapon
+	a.beam_on = false
+	a.cooldown = 0.25  # draw time
+	a.weapon_left = -1.0
+	if weapon != "":
+		play_sfx("pickup", a.get_center.call(), 0.05, 1.35)
 
 
 func select_slot(id: String, slot: int) -> void:
@@ -241,6 +341,16 @@ func try_shoot(id: String) -> bool:
 		# Beam weapons fire continuously: request the beam for this frame
 		a.beam_on = true
 		return true
+	# Finite ammo (zombies mode): actors with an "ammo" dict spend a round
+	# per trigger pull; an empty pool dry-clicks. Beams are time-fueled.
+	if a.has("ammo"):
+		var pool: int = int(a.ammo.get(a.weapon, -1))
+		if pool == 0:
+			a.cooldown = 0.22
+			play_sfx("bonk", a.get_center.call(), 0.02, 2.4)  # dry click
+			return false
+		if pool > 0:
+			a.ammo[a.weapon] = pool - 1
 	# OVERDRIVE: guns fire twice as fast while it lasts
 	a.cooldown = w.cooldown * (0.5 if a.get("abil_od", 0.0) > 0.0 else 1.0)
 	var center: Vector2 = a.get_center.call()
@@ -444,6 +554,90 @@ func damage_block(tx: int, ty: int, amount: float) -> bool:
 	return true
 
 
+func damage_free_block(idx: int, amount: float) -> bool:
+	## Beams cook free-placed blocks exactly like grid tiles: crack FX while
+	## damage builds, shatter with debris, respawn later. Damage lives inside
+	## the block dict itself (indices shift when others are removed).
+	if idx < 0 or idx >= WorldManager.free_blocks.size():
+		return false
+	var fb: Dictionary = WorldManager.free_blocks[idx]
+	fb["_dmg"] = float(fb.get("_dmg", 0.0)) + amount
+	fb["_cooked_now"] = true
+	var c: Vector2 = (fb.pos as Vector2) + Vector2(8, 8)
+	if randf() < amount * 30.0:
+		_fx.append({
+			"pos": c + Vector2(randf_range(-7.0, 7.0), randf_range(-7.0, 7.0)),
+			"vel": Vector2(randf_range(-30.0, 30.0), randf_range(-70.0, -20.0)),
+			"life": randf_range(0.12, 0.3), "max_life": 0.3,
+			"color": Color(1.0, randf_range(0.35, 0.6), 0.15), "size": randf_range(1.0, 2.2),
+		})
+	if float(fb["_dmg"]) < BLOCK_BREAK_TIME:
+		return false
+	var copy: Dictionary = fb.duplicate()
+	copy.erase("_dmg")
+	copy.erase("_cooked_now")
+	WorldManager.free_blocks.remove_at(idx)
+	WorldManager.free_blocks_changed.emit()
+	_broken_free.append({"fb": copy, "respawn": BLOCK_RESPAWN})
+	play_sfx("explode", c, 0.1, 1.5)
+	spawn_ring(c, Color(1.0, 0.55, 0.2), 3.0, 22.0, 0.22)
+	for _i in range(12):
+		var dang: float = randf() * TAU
+		_fx.append({
+			"pos": c, "vel": Vector2.from_angle(dang) * randf_range(40.0, 220.0),
+			"life": randf_range(0.15, 0.4), "max_life": 0.4,
+			"color": Color(0.25, 0.18, 0.2).lerp(Color(1.0, 0.5, 0.2), randf() * 0.7),
+			"size": randf_range(1.5, 3.2),
+		})
+	GameState.cam_shake += 1.5
+	return true
+
+
+func damage_curve(idx: int, at: Vector2, amount: float) -> bool:
+	## Beams cook CURVES too — they're terrain. A whole curve takes
+	## CURVE_BREAK_TIME of sustained fire, then shatters along its full
+	## length (debris down the spline) and re-materializes later.
+	if idx < 0 or idx >= WorldManager.polylines.size():
+		return false
+	var poly: Dictionary = WorldManager.polylines[idx]
+	var pts: PackedVector2Array = poly.points
+	if pts.size() < 2:
+		return false
+	var ckey: Vector2i = Vector2i(pts[0])  # stable identity across index shifts
+	var dmg: float = float(_curve_dmg.get(ckey, 0.0)) + amount
+	_curve_cooked_now[ckey] = true
+	if randf() < amount * 30.0:
+		_fx.append({
+			"pos": at + Vector2(randf_range(-6.0, 6.0), randf_range(-6.0, 6.0)),
+			"vel": Vector2(randf_range(-30.0, 30.0), randf_range(-70.0, -20.0)),
+			"life": randf_range(0.12, 0.3), "max_life": 0.3,
+			"color": Color(1.0, randf_range(0.35, 0.6), 0.15), "size": randf_range(1.0, 2.2),
+		})
+	if dmg < CURVE_BREAK_TIME:
+		_curve_dmg[ckey] = dmg
+		return false
+	_curve_dmg.erase(ckey)
+	var data: Dictionary = WorldManager.shatter_polyline(idx)
+	if data.is_empty():
+		return false
+	data["respawn"] = BLOCK_RESPAWN
+	_broken_curves.append(data)
+	# Debris storm down the whole spline
+	var ap: PackedVector2Array = data.get("all_points", PackedVector2Array())
+	for pi in range(0, ap.size(), 8):
+		var dp: Vector2 = ap[pi]
+		_fx.append({
+			"pos": dp, "vel": Vector2(randf_range(-120.0, 120.0), randf_range(-200.0, -30.0)),
+			"life": randf_range(0.2, 0.5), "max_life": 0.5,
+			"color": Color(0.25, 0.18, 0.2).lerp(Color(1.0, 0.5, 0.2), randf() * 0.7),
+			"size": randf_range(1.5, 3.4),
+		})
+	play_sfx("explode", at, 0.12, 1.1)
+	spawn_ring(at, Color(1.0, 0.55, 0.2), 4.0, 30.0, 0.3)
+	GameState.cam_shake += 4.0
+	return true
+
+
 func draw_player_slots(ci: CanvasItem, origin: Vector2) -> void:
 	## The 1-2-3 inventory bar: current slot highlighted, the DOOM RAY
 	## flashes slot 2 when it lands so you always KNOW what you're carrying.
@@ -599,6 +793,21 @@ func _process(delta: float) -> void:
 			if _block_dmg[key] <= 0.0:
 				_block_dmg.erase(key)
 	_cooked_now.clear()
+	# Cooked curves + free blocks heal the same way
+	for ck in _curve_dmg.keys():
+		if not _curve_cooked_now.has(ck):
+			_curve_dmg[ck] -= delta * 0.25
+			if _curve_dmg[ck] <= 0.0:
+				_curve_dmg.erase(ck)
+	_curve_cooked_now.clear()
+	for cfb in WorldManager.free_blocks:
+		if cfb is Dictionary and cfb.has("_dmg"):
+			if cfb.get("_cooked_now", false):
+				cfb.erase("_cooked_now")
+			else:
+				cfb["_dmg"] = float(cfb["_dmg"]) - delta * 0.25
+				if float(cfb["_dmg"]) <= 0.0:
+					cfb.erase("_dmg")
 	# Shattered terrain re-materializes — but never inside a ball
 	for bi in range(_broken.size() - 1, -1, -1):
 		var br: Dictionary = _broken[bi]
@@ -626,6 +835,56 @@ func _process(delta: float) -> void:
 					"life": 0.2, "max_life": 0.2, "color": Color(0.6, 0.9, 1.0), "size": 1.5,
 				})
 		_broken.remove_at(bi)
+	# Shattered free blocks re-materialize — same never-inside-a-ball rule
+	for fi in range(_broken_free.size() - 1, -1, -1):
+		var bf: Dictionary = _broken_free[fi]
+		bf.respawn -= delta
+		if bf.respawn > 0.0:
+			continue
+		var fc: Vector2 = (bf.fb.pos as Vector2) + Vector2(8, 8)
+		var fblocked: bool = false
+		for aid2 in _actors:
+			var ar2: Dictionary = _actors[aid2]
+			if ar2.is_alive.call() and ar2.get_center.call().distance_to(fc) < ar2.get("hit_radius", ACTOR_RADIUS) + 14.0:
+				fblocked = true
+				break
+		if fblocked:
+			bf.respawn = 0.4
+			continue
+		WorldManager.free_blocks.append(bf.fb)
+		WorldManager.free_blocks_changed.emit()
+		spawn_ring(fc, Color(0.6, 0.9, 1.0), 2.0, 15.0, 0.25)
+		_broken_free.remove_at(fi)
+	# Shattered curves re-materialize (never onto a ball anywhere along them)
+	for ci2 in range(_broken_curves.size() - 1, -1, -1):
+		var bc: Dictionary = _broken_curves[ci2]
+		bc.respawn -= delta
+		if bc.respawn > 0.0:
+			continue
+		var cblocked: bool = false
+		var capts: PackedVector2Array = bc.get("all_points", PackedVector2Array())
+		for aid3 in _actors:
+			var ar3: Dictionary = _actors[aid3]
+			if not ar3.is_alive.call():
+				continue
+			var acp: Vector2 = ar3.get_center.call()
+			var rad: float = ar3.get("hit_radius", ACTOR_RADIUS) + 14.0
+			for pi2 in range(0, capts.size(), 4):
+				if capts[pi2].distance_to(acp) < rad:
+					cblocked = true
+					break
+			if cblocked:
+				break
+		if cblocked:
+			bc.respawn = 0.4
+			continue
+		for pd in bc.polys:
+			WorldManager.add_polyline(pd.points, pd.side, pd.block_id, pd.uv_offset)
+		if capts.size() > 0:
+			var midp: Vector2 = capts[capts.size() >> 1]
+			spawn_ring(midp, Color(0.6, 0.9, 1.0), 4.0, 24.0, 0.3)
+			play_sfx("pickup", midp, 0.04, 0.9)
+		_broken_curves.remove_at(ci2)
 	# Random ability drops: spawn an orb, let the PLAYER claim it
 	if ability_spots.size() > 0:
 		if _abil_orb.is_empty():
@@ -730,9 +989,11 @@ func _process(delta: float) -> void:
 			a.shield_broken = false
 		a.shield_on = a.shield_req and not a.shield_broken and a.shield_lock <= 0.0 and a.stun_left <= 0.0 and not a.stun_pending and a.shield_energy > 0.0 and a.is_alive.call()
 		if a.shield_on and not was_shielded:
+			a.shield_time = 0.0  # Fresh raise — the timed-parry window starts now
 			play_sfx("pickup", a.get_center.call(), 0.03, 0.7)  # Shield hum-up
 			spawn_ring(a.get_center.call(), Color(0.5, 0.9, 1.0), 4.0, 15.0, 0.15)
 		if a.shield_on:
+			a.shield_time += delta
 			a.shield_energy = maxf(0.0, a.shield_energy - delta)
 			if a.shield_energy <= 0.0:
 				a.shield_broken = true
@@ -775,17 +1036,26 @@ func _process(delta: float) -> void:
 			if ac.distance_to(vc) < 20.0:
 				a.dash_time = 0.0
 				if v.shield_on:
-					# PARRIED mid-strike: the shield takes the WHOLE dash and
-					# throws it straight back — full momentum redirect off the
-					# shield face (with a lift), stunned on landing. Additive
-					# nudges couldn't cancel a charged dash; the attacker kept
-					# plowing forward through the parry.
+					# The shield ALWAYS takes the whole dash and throws it
+					# straight back — full momentum redirect off the shield
+					# face (with a lift). But only a TIMED parry (shield went
+					# up within PARRY_WINDOW) stuns the attacker. A pre-held
+					# shield is just a wall: the dash bounces off and the
+					# BLOCK costs the holder a big chunk of shield energy —
+					# holding shield and walking into people is defense now,
+					# not a free-stun button (that was pure cheese).
 					var away: Vector2 = (ac - vc).normalized()
 					if not a.push.is_null():
 						var vel_ee: Vector2 = a.get_vel.call() / (EEPhysics.EE_TICK_FRAC * EEPhysics.TPS)
 						var mag: float = maxf(vel_ee.length() * 1.2, 8.0)
 						a.push.call(away * mag + Vector2(0.0, -3.0) - vel_ee)
-					_stun_team(a.team, (ac + vc) * 0.5, true)
+					if v.get("shield_time", 999.0) <= PARRY_WINDOW:
+						_stun_team(a.team, (ac + vc) * 0.5, true)
+					else:
+						v.shield_energy = maxf(0.0, v.shield_energy - 1.0)
+						spawn_hit((ac + vc) * 0.5, Color(0.6, 0.95, 1.0), away)
+						spawn_ring((ac + vc) * 0.5, Color(0.6, 0.95, 1.0), 4.0, 14.0, 0.14)
+						play_sfx("bonk", (ac + vc) * 0.5, 0.08, 1.55)
 				else:
 					v.hurt.call(a.dash_dmg, (vc - ac).normalized())
 					spawn_hit((ac + vc) * 0.5, Color(0.7, 0.95, 1.0), (vc - ac).normalized())
@@ -887,6 +1157,17 @@ func _process(delta: float) -> void:
 			if WorldManager.is_solid_at(mtx, mty):
 				damage_block(mtx, mty, delta)  # The ray COOKS the wall it hits
 				break
+			# The ray is stopped by ALL terrain — free blocks and curves too
+			# (it used to sail straight through them), and cooks them the
+			# same way it cooks grid tiles.
+			var fbi: int = WorldManager.free_block_at_point(beam_end)
+			if fbi >= 0:
+				damage_free_block(fbi, delta)
+				break
+			var cvi: int = WorldManager.curve_at_point(beam_end)
+			if cvi >= 0:
+				damage_curve(cvi, beam_end, delta)
+				break
 			for vid in _actors:
 				var v: Dictionary = _actors[vid]
 				if v.team == a.team or not v.is_alive.call():
@@ -940,6 +1221,14 @@ func _process(delta: float) -> void:
 				var sty: int = int(floor(split_to.y / 16.0))
 				if WorldManager.is_solid_at(stx, sty):
 					damage_block(stx, sty, delta)  # The deflected column cooks too
+					break
+				var sfbi: int = WorldManager.free_block_at_point(split_to)
+				if sfbi >= 0:
+					damage_free_block(sfbi, delta)
+					break
+				var scvi: int = WorldManager.curve_at_point(split_to)
+				if scvi >= 0:
+					damage_curve(scvi, split_to, delta)
 					break
 		a.beam_end = beam_end
 		a["beam_pin"] = shielded_victim.get_center.call() if not shielded_victim.is_empty() else Vector2.ZERO
