@@ -33,6 +33,8 @@ var _fight_timer: float = 1.6
 var _lmb_was_down: bool = false
 var _player_was_stunned: bool = false
 var _regen_tick: float = 0.0
+var _bonk_gate: float = 0.0  # Rate-limits collision SFX/FX (sustained contact
+                             # fired bonk+sparks EVERY FRAME — audio device died)
 var _hud: CanvasLayer
 var _score_label: Label
 var _weapon_label: Label
@@ -335,6 +337,7 @@ func _return_to_menu() -> void:
 func _process(delta: float) -> void:
 	if _player_invuln > 0.0:
 		_player_invuln -= delta
+	_bonk_gate = maxf(0.0, _bonk_gate - delta)
 	for i in range(bots.size()):
 		if _bots_invuln[i] > 0.0:
 			_bots_invuln[i] -= delta
@@ -466,9 +469,10 @@ func _collide_pair(a: Dictionary, b: Dictionary) -> void:
 	var a_sh: bool = weapons.is_shielded(a.id)
 	var b_sh: bool = weapons.is_shielded(b.id)
 	# Separate — but NEVER push a ball inside solid tiles (that was the
-	# stuck-in-a-block bug); a blocked side just keeps its position. A shield
-	# holder is an ANCHOR: the rammer takes ALL of the push-out, the holder
-	# is never displaced by the hit (displacing them read as "swapping places").
+	# stuck-in-a-block bug). A shield holder is an ANCHOR: the rammer takes
+	# ALL of the push-out. If one side is wall-pinned, the OTHER side takes
+	# the full separation instead — contact must resolve decisively (a
+	# lingering grind fired per-frame FX until the audio device died).
 	var a_w: float = 0.5
 	var b_w: float = 0.5
 	if a_sh and not b_sh:
@@ -479,12 +483,16 @@ func _collide_pair(a: Dictionary, b: Dictionary) -> void:
 		b_w = 0.0
 	var a_sep: Vector2 = -n * overlap * a_w
 	var b_sep: Vector2 = n * overlap * b_w
-	if not ap._collides_px(ap.x + a_sep.x, ap.y + a_sep.y):
-		ap.x += a_sep.x
-		ap.y += a_sep.y
-	if not bp._collides_px(bp.x + b_sep.x, bp.y + b_sep.y):
-		bp.x += b_sep.x
-		bp.y += b_sep.y
+	var a_blocked: bool = ap._collides_px(ap.x + a_sep.x, ap.y + a_sep.y)
+	var b_blocked: bool = bp._collides_px(bp.x + b_sep.x, bp.y + b_sep.y)
+	if not a_blocked:
+		var a_mul: float = 2.0 if (b_blocked and a_w > 0.0) else 1.0
+		ap.x += a_sep.x * a_mul
+		ap.y += a_sep.y * a_mul
+	if not b_blocked:
+		var b_mul: float = 2.0 if (a_blocked and b_w > 0.0) else 1.0
+		bp.x += b_sep.x * b_mul
+		bp.y += b_sep.y * b_mul
 	var av: Vector2 = Vector2(ap._speedX, ap._speedY)
 	var bv: Vector2 = Vector2(bp._speedX, bp._speedY)
 	var a_n: float = av.dot(n)
@@ -516,7 +524,8 @@ func _collide_pair(a: Dictionary, b: Dictionary) -> void:
 	ap._speedY = av.y
 	bp._speedX = bv.x
 	bp._speedY = bv.y
-	if approach > 1.2 or a_sh or b_sh:
+	if (approach > 1.2 or a_sh or b_sh) and _bonk_gate <= 0.0:
+		_bonk_gate = 0.09
 		var mid: Vector2 = (ac + bc) * 0.5
 		var shield_bounce: bool = a_sh or b_sh
 		weapons.play_sfx("bonk", mid, 0.08, clampf((1.8 if shield_bounce else 1.5) - approach * 0.07, 0.7, 1.8))
