@@ -266,7 +266,7 @@ func _process(delta: float) -> void:
 				var bt: float = clampf((get_center() - bfrom).dot(bseg) / maxf(bseg.length_squared(), 1.0), 0.0, 1.0)
 				_beam_threat = get_center().distance_to(bfrom + bseg * bt) < 64.0
 				threat = threat or _beam_threat
-		if threat and _threat_react < 0.0 and unarmed_now:
+		if threat and _threat_react < 0.0:
 			_threat_react = randf_range(0.12, 0.19)  # The reaction window you can beat
 		if _threat_react >= 0.0:
 			_threat_react -= delta
@@ -276,8 +276,7 @@ func _process(delta: float) -> void:
 			_shield_hold = maxf(_shield_hold, 0.3)  # Keep it up while the ray is on us
 		if _shield_hold > 0.0:
 			_shield_hold -= delta
-			if unarmed_now:
-				_shield_want = true
+			_shield_want = true  # Shields work armed too now
 		# Parry reward: a stunned player gets dashed immediately
 		if weapon_system.is_stunned(_target_id()) and unarmed_now and pd2 < 240.0 and pd2 > 20.0:
 			var punish_aim: Vector2 = (get_player_center.call() - get_center()).normalized()
@@ -598,10 +597,9 @@ func _think() -> void:
 					incoming = true
 					break
 			if incoming:
-				if armed:
-					want_jump = true
-				else:
-					_shield_want = true
+				_shield_want = true  # Deflect it back (armed or not)
+				if armed and randf() < 0.4:
+					want_jump = true  # Mix in hops so it isn't pure turtling
 	# Drop the shield once nothing threatening is inbound (but keep it up
 	# through an active parry-hold window)
 	if _shield_want and weapon_system and _shield_hold <= 0.0:

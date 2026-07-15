@@ -102,6 +102,7 @@ func register_actor(id: String, team: int, get_center: Callable, get_vel: Callab
 		"hit_radius": ACTOR_RADIUS, "no_pickup": false,
 		"weapon": "", "cooldown": 0.0, "aim": Vector2.RIGHT,
 		"weapon_left": -1.0, "beam_on": false, "beam_end": Vector2.ZERO, "beam_tick": 0.0,
+		"stowed_weapon": "", "stowed_left": -1.0,
 		"dash_cd": 0.0, "dash_time": 0.0, "dash_dmg": 1,
 		"charge": 0.0, "charging": false, "charge_fed": false,
 		"shield_req": false, "shield_on": false, "shield_energy": SHIELD_MAX,
@@ -120,12 +121,34 @@ func give_weapon(id: String, weapon: String) -> void:
 		_actors[id].weapon = weapon
 		_actors[id].cooldown = 0.15
 		_actors[id].weapon_left = WEAPONS[weapon].get("duration", -1.0)
+		_actors[id].stowed_weapon = ""  # A fresh pickup replaces the arsenal
 
 
 func strip_weapon(id: String) -> void:
 	if _actors.has(id):
 		_actors[id].weapon = ""
 		_actors[id].beam_on = false
+		_actors[id]["stowed_weapon"] = ""
+
+
+func select_slot(id: String, slot: int) -> void:
+	## Weapon slots: 1 = fists (stow the gun), 2 = draw the stowed gun.
+	## Idempotent — safe to call every frame while the key is held.
+	if not _actors.has(id):
+		return
+	var a: Dictionary = _actors[id]
+	if slot == 1 and a.weapon != "":
+		a.stowed_weapon = a.weapon
+		a.stowed_left = a.weapon_left
+		a.weapon = ""
+		a.beam_on = false
+		play_sfx("pickup", a.get_center.call(), 0.04, 0.65)
+	elif slot == 2 and a.weapon == "" and a.get("stowed_weapon", "") != "":
+		a.weapon = a.stowed_weapon
+		a.weapon_left = a.stowed_left
+		a.stowed_weapon = ""
+		a.cooldown = 0.18  # Draw time
+		play_sfx("pickup", a.get_center.call(), 0.04, 1.25)
 
 
 func is_super_available() -> bool:
@@ -161,6 +184,10 @@ func try_shoot(id: String) -> bool:
 		return false
 	if a.stun_left > 0.0 or a.stun_pending:
 		return false  # Parried — no shooting while stunned
+	# Attacking drops the shield — no turtling behind it while firing
+	# (same rule as the melee kit; stop shooting to guard)
+	a.shield_on = false
+	a.shield_lock = 0.45
 	var w: Dictionary = WEAPONS[a.weapon]
 	if w.get("beam", false):
 		# Beam weapons fire continuously: request the beam for this frame
@@ -391,6 +418,11 @@ func _process(delta: float) -> void:
 		# (This block previously sat inside the dash-contact loop, whose
 		# early `continue` skipped it for anyone not mid-dash — the doom
 		# never expired at all.)
+		# Stowed timed weapons keep burning down too — no pocket-pausing the doom
+		if a.get("stowed_weapon", "") != "" and a.stowed_left > 0.0:
+			a.stowed_left -= delta
+			if a.stowed_left <= 0.0:
+				a.stowed_weapon = ""
 		if a.weapon != "" and a.weapon_left > 0.0:
 			a.weapon_left -= delta
 			if a.weapon_left <= 0.0:
@@ -430,7 +462,7 @@ func _process(delta: float) -> void:
 		var was_shielded: bool = a.shield_on
 		if a.shield_broken and a.shield_energy >= SHIELD_MAX:
 			a.shield_broken = false
-		a.shield_on = a.shield_req and not a.shield_broken and a.shield_lock <= 0.0 and a.weapon == "" and a.stun_left <= 0.0 and not a.stun_pending and a.shield_energy > 0.0 and a.is_alive.call()
+		a.shield_on = a.shield_req and not a.shield_broken and a.shield_lock <= 0.0 and a.stun_left <= 0.0 and not a.stun_pending and a.shield_energy > 0.0 and a.is_alive.call()
 		if a.shield_on and not was_shielded:
 			play_sfx("pickup", a.get_center.call(), 0.03, 0.7)  # Shield hum-up
 			spawn_ring(a.get_center.call(), Color(0.5, 0.9, 1.0), 4.0, 15.0, 0.15)
@@ -928,10 +960,11 @@ func _draw() -> void:
 			if a.charge >= 1.0:
 				draw_arc(c, 16.0 * wob, 0, TAU, 24, Color(1.0, 0.92, 0.55, 0.35 + 0.25 * sin(_time * 12.0)), 1.6)
 	# Floating shield meters (thin cyan bar above the ball whenever the
-	# shield isn't full — red while broken/recharging)
+	# shield isn't full — red while broken/recharging). Armed actors have
+	# shields too now, so the meter shows for everyone.
 	for id in _actors:
 		var a: Dictionary = _actors[id]
-		if not a.is_alive.call() or a.weapon != "":
+		if not a.is_alive.call():
 			continue
 		if a.shield_energy >= SHIELD_MAX - 0.01 and not a.shield_broken:
 			continue

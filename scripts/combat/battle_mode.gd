@@ -372,9 +372,14 @@ func _process(delta: float) -> void:
 		var pc2: Vector2 = Vector2(player.physics.x + 8.0, player.physics.y + 8.0)
 		var aim: Vector2 = weapons.get_global_mouse_position() - pc2
 		weapons.set_aim("player", aim)
+		# Weapon slots: 1 = fists (full melee kit), 2 = draw the stowed gun
+		if Input.is_physical_key_pressed(KEY_1):
+			weapons.select_slot("player", 1)
+		elif Input.is_physical_key_pressed(KEY_2):
+			weapons.select_slot("player", 2)
 		var unarmed: bool = weapons.get_weapon("player") == ""
-		# RMB: parry shield (unarmed kit)
-		weapons.set_shield("player", unarmed and Input.is_mouse_button_pressed(MOUSE_BUTTON_RIGHT) and not GameState.is_edit_mode)
+		# RMB: parry shield — works armed too (firing drops it briefly)
+		weapons.set_shield("player", Input.is_mouse_button_pressed(MOUSE_BUTTON_RIGHT) and not GameState.is_edit_mode)
 		var lmb: bool = Input.is_mouse_button_pressed(MOUSE_BUTTON_LEFT) and not GameState.is_edit_mode
 		if unarmed:
 			# LMB: hold to CHARGE (3s = full power), release to dash.
@@ -493,9 +498,13 @@ func _layout_hud() -> void:
 			wtext = WeaponSystem.WEAPONS[wname].label
 			if weapons._actors["player"].weapon_left > 0.0:
 				wtext += " %.1fs" % weapons._actors["player"].weapon_left
+			wtext += "  [1: fists]"
 			_weapon_label.add_theme_color_override("font_color", weapons.get_weapon_color("player"))
 		else:
 			wtext = "FISTS — LMB dash punch, RMB parry shield" if not GameState.battle_guns_enabled else "UNARMED — LMB dash punch, RMB parry shield"
+			var stowed: String = weapons._actors["player"].get("stowed_weapon", "")
+			if stowed != "":
+				wtext = "FISTS — dash & parry  [2: %s]" % WeaponSystem.WEAPONS[stowed].label
 			_weapon_label.add_theme_color_override("font_color", Color(0.7, 0.7, 0.8))
 		if weapons.super_pos != Vector2.ZERO:
 			_weapon_label.text = "%s  |  HP %d/%d  |  %s" % [wtext, player_hp, MAX_HP, weapons.get_super_status()]

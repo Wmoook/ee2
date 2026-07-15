@@ -54,6 +54,24 @@ func _ready() -> void:
 	print("END PANEL %s (visible=%s text=%s)" % [
 		"PASS" if (bm._result_panel.visible and bm._result_label.text != "") else "FAIL",
 		bm._result_panel.visible, bm._result_label.text])
+	# Weapon slots (1 = fists / 2 = gun) + shields-while-armed
+	# (_over is set by _end above, so mode input can't override these)
+	bm.weapons.give_weapon("player", "blaster")
+	bm.weapons.select_slot("player", 1)
+	var slot1_ok: bool = bm.weapons.get_weapon("player") == "" and bm.weapons._actors["player"].stowed_weapon == "blaster"
+	bm.weapons.select_slot("player", 2)
+	var slot2_ok: bool = bm.weapons.get_weapon("player") == "blaster"
+	bm.weapons.set_shield("player", true)
+	await get_tree().process_frame
+	await get_tree().process_frame
+	var armed_shield: bool = bm.weapons.is_shielded("player")
+	bm.weapons._actors["player"]["cooldown"] = 0.0
+	bm.weapons.try_shoot("player")
+	var shot_drops: bool = not bm.weapons._actors["player"].shield_on and bm.weapons._actors["player"].shield_lock > 0.0
+	print("SLOTS %s | ARMED_SHIELD %s | SHOT_DROPS_SHIELD %s" % [
+		"PASS" if (slot1_ok and slot2_ok) else "FAIL",
+		"PASS" if armed_shield else "FAIL",
+		"PASS" if shot_drops else "FAIL"])
 	var img2: Image = get_viewport().get_texture().get_image()
 	img2.save_png("user://boss_check.png")
 	print("STATES SEEN: %s" % [seen.keys()])

@@ -416,8 +416,14 @@ func _process(delta: float) -> void:
 	if p_ok and not _struggle:
 		var aim: Vector2 = weapons.get_global_mouse_position() - pc
 		weapons.set_aim("player", aim)
+		# Weapon slots: 1 = fists (full melee kit), 2 = draw the stowed gun
+		if Input.is_physical_key_pressed(KEY_1):
+			weapons.select_slot("player", 1)
+		elif Input.is_physical_key_pressed(KEY_2):
+			weapons.select_slot("player", 2)
 		var unarmed: bool = weapons.get_weapon("player") == ""
-		weapons.set_shield("player", unarmed and Input.is_mouse_button_pressed(MOUSE_BUTTON_RIGHT) and not GameState.is_edit_mode)
+		# RMB: parry shield — works armed too (firing drops it briefly)
+		weapons.set_shield("player", Input.is_mouse_button_pressed(MOUSE_BUTTON_RIGHT) and not GameState.is_edit_mode)
 		var lmb: bool = Input.is_mouse_button_pressed(MOUSE_BUTTON_LEFT) and not GameState.is_edit_mode
 		if unarmed:
 			if lmb:
@@ -474,8 +480,12 @@ func _layout_hud() -> void:
 			wtext = WeaponSystem.WEAPONS[wname].label
 			if weapons._actors["player"].weapon_left > 0.0:
 				wtext += " %.1fs" % weapons._actors["player"].weapon_left
+			wtext += "  [1: fists]"
 		else:
 			wtext = "FISTS — dash punch, parry shield"
+			var stowed: String = weapons._actors["player"].get("stowed_weapon", "")
+			if stowed != "":
+				wtext = "FISTS — dash & parry  [2: %s]" % WeaponSystem.WEAPONS[stowed].label
 		if weapons.super_pos != Vector2.ZERO:
 			_player_label.text = "%s  |  HP %d/%d  |  %s  |  %s" % [hearts.strip_edges(), player_hp, MAX_HP, wtext, weapons.get_super_status()]
 		else:
