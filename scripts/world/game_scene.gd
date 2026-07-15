@@ -77,7 +77,11 @@ func _setup_scene() -> void:
 
 	# Combat modes (weapons, AI opponents, lives HUD)
 	if GameState.battle_mode:
-		if GameState.boss_fight:
+		if GameState.survivors_mode:
+			var surv: SurvivorsMode = SurvivorsMode.new()
+			surv.name = "SurvivorsMode"
+			add_child(surv)
+		elif GameState.boss_fight:
 			var boss: BossMode = BossMode.new()
 			boss.name = "BossMode"
 			add_child(boss)
@@ -205,8 +209,10 @@ func _input(event: InputEvent) -> void:
 				WorldManager.save_to_file("user://world_save.json")
 			GameState.battle_mode = false
 			GameState.boss_fight = false
+			GameState.survivors_mode = false
 			GameState.player_stunned = false
 			GameState.cam_shake = 0.0
+			get_tree().paused = false
 			NetworkManager.disconnect_game()
 			get_tree().change_scene_to_file("res://scenes/ui/main_menu.tscn")
 	if event.is_action_pressed("save_world") and not GameState.battle_mode:

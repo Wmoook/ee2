@@ -151,6 +151,7 @@ var battle_mode: bool = false  # 1v1 bot arena active — blocks world saves + e
 var battle_guns_enabled: bool = true  # OFF = pure melee duel (dash + parry only)
 var battle_bot_count: int = 1  # Enemy bots in the arena: 1 = 1v1 ... 3 = 1v1v1v1 (FFA)
 var boss_fight: bool = false  # BOSS FIGHT mode (battle_mode is also set — same gating)
+var survivors_mode: bool = false  # DOT SURVIVORS mode (battle_mode also set — same gating)
 var cam_shake: float = 0.0  # Screen shake impulse (added by combat, decays in player controller)
 var player_stunned: bool = false  # Set by battle mode: parried players lose control briefly
 

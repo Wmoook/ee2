@@ -88,6 +88,13 @@ func _ready() -> void:
 	boss_btn.tooltip_text = "THE WARDEN: 3 lives vs a giant. Parry its slam, jump its shockwaves, MASH LMB to win the beam clash. Guns toggle applies!"
 	boss_btn.pressed.connect(_on_boss)
 	bv.add_child(boss_btn)
+	# 🩸 DOT SURVIVORS — Vampire Survivors, but it's EE
+	var surv_btn: Button = EditorToolsDock.make_button("🩸  DOT SURVIVORS", Color(0.55, 0.12, 0.2))
+	surv_btn.custom_minimum_size = Vector2(0, 40)
+	surv_btn.add_theme_font_size_override("font_size", 15)
+	surv_btn.tooltip_text = "15 minutes. A dot cave, free flight, the corrupted smiley horde. Auto-weapons, coins, chests, level-ups. Minute 14: THE WARDEN PRIME."
+	surv_btn.pressed.connect(_on_survivors)
+	bv.add_child(surv_btn)
 	var refresh_battle_ui: Callable = func() -> void:
 		var n: int = clampi(GameState.battle_bot_count, 1, 3)
 		GameState.battle_bot_count = n
@@ -112,6 +119,7 @@ func _on_battle() -> void:
 	_apply_settings()
 	GameState.battle_mode = true
 	GameState.boss_fight = false
+	GameState.survivors_mode = false
 	GameState.set_edit_mode(false)
 	GameState.camera_offset = Vector2.ZERO  # No stale pan from the camera pad
 	BattleMap.build()
@@ -121,9 +129,20 @@ func _on_boss() -> void:
 	_apply_settings()
 	GameState.battle_mode = true
 	GameState.boss_fight = true
+	GameState.survivors_mode = false
 	GameState.set_edit_mode(false)
 	GameState.camera_offset = Vector2.ZERO
 	BossMap.build()
+	get_tree().change_scene_to_file("res://scenes/world/game.tscn")
+
+func _on_survivors() -> void:
+	_apply_settings()
+	GameState.battle_mode = true
+	GameState.boss_fight = false
+	GameState.survivors_mode = true
+	GameState.set_edit_mode(false)
+	GameState.camera_offset = Vector2.ZERO
+	SurvivorsMap.build()
 	get_tree().change_scene_to_file("res://scenes/world/game.tscn")
 
 func _on_host() -> void:
