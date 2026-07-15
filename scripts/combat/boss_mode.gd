@@ -23,6 +23,7 @@ var _intro_timer: float = 2.6
 var _lmb_was_down: bool = false
 var _player_was_stunned: bool = false
 var _beam_tick: float = 0.0
+var _regen_tick: float = 0.0
 
 # Beam struggle
 var _struggle: bool = false
@@ -56,6 +57,8 @@ func _wire_up() -> void:
 	# Only the DOOM RAY appears in the world; guns are the permanent
 	# slots 2/3 loadout when the toggle is ON
 	weapons.super_pos = BossMap.SUPER_POS
+	weapons.ability_spots = BossMap.ABILITY_SPOTS.duplicate()
+	weapons.ability_picked.connect(_on_ability)
 	boss.max_hp = 130 if GameState.battle_guns_enabled else 60
 	boss.hp = boss.max_hp
 	boss.ws = weapons
@@ -277,6 +280,20 @@ func _process(delta: float) -> void:
 	var p_ok: bool = is_instance_valid(player) and not player._is_dead
 	var pc: Vector2 = Vector2(player.physics.x + 8.0, player.physics.y + 8.0) if p_ok else Vector2.ZERO
 
+	# ── Active abilities: ZERO-G flight + NANO-MEND regen ──
+	if p_ok:
+		var pab: Dictionary = weapons._actors["player"]
+		player.physics.force_dot = pab.get("abil_fly", 0.0) > 0.0
+		if pab.get("abil_regen", 0.0) > 0.0:
+			_regen_tick -= delta
+			if _regen_tick <= 0.0:
+				_regen_tick = 2.5
+				if player_hp < MAX_HP:
+					player_hp += 1
+					weapons.spawn_ring(pc, Color(0.4, 1.0, 0.5), 4.0, 20.0, 0.25)
+		else:
+			_regen_tick = 0.6
+
 	# ── Body contact vs the Warden: ram bounces, dash punches land ──
 	# (not while it's rifted away — the void has no hull)
 	if p_ok and boss.alive() and boss.state != BossController.ST_RIFT_GONE:
@@ -480,6 +497,12 @@ func _enter_struggle() -> void:
 	GameState.cam_shake += 6.0
 
 
+func _on_ability(kind: String) -> void:
+	if kind == "mend":
+		player_hp = mini(MAX_HP, player_hp + 2)
+	GameState.cam_shake += 2.0
+
+
 func _exit_struggle() -> void:
 	_struggle = false
 	boss.struggle_freeze = false
@@ -509,6 +532,12 @@ func _layout_hud() -> void:
 		var s2: String = "DOOM %.0fs" % maxf(pa_hud.get("super_left", 0.0), 0.0) if pa_hud.get("super_left", 0.0) > 0.0 else ("blaster" if pa_hud.get("loadout", false) else "—")
 		var s3: String = "scatter" if pa_hud.get("loadout", false) else "—"
 		wtext += "   [1 fists · 2 %s · 3 %s]" % [s2, s3]
+		if pa_hud.get("abil_fly", 0.0) > 0.0:
+			wtext += "   ✦ ZERO-G %.0fs" % pa_hud.abil_fly
+		if pa_hud.get("abil_od", 0.0) > 0.0:
+			wtext += "   ⚡ OVERDRIVE %.0fs" % pa_hud.abil_od
+		if pa_hud.get("abil_regen", 0.0) > 0.0:
+			wtext += "   ✚ MEND %.0fs" % pa_hud.abil_regen
 		if weapons.super_pos != Vector2.ZERO:
 			_player_label.text = "%s  |  HP %d/%d  |  %s  |  %s" % [hearts.strip_edges(), player_hp, MAX_HP, wtext, weapons.get_super_status()]
 		else:

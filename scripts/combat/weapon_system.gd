@@ -50,6 +50,15 @@ const STUN_TIME: float = 1.0         # Parry stun duration
 const BLOCK_BREAK_TIME: float = 0.35  # Seconds of beam-cook to shatter a block
 const BLOCK_RESPAWN: float = 10.0     # Shattered terrain re-materializes after this
 
+# Random ability drops (player-only pickups; one orb on the field at a time)
+const ABILITIES: Dictionary = {
+	"zerog": {"label": "ZERO-G FLIGHT", "color": Color(0.4, 0.9, 1.0), "dur": 8.0},
+	"overdrive": {"label": "OVERDRIVE", "color": Color(1.0, 0.85, 0.3), "dur": 8.0},
+	"mend": {"label": "NANO-MEND", "color": Color(0.4, 1.0, 0.5), "dur": 8.0},
+}
+
+signal ability_picked(kind: String)
+
 var _actors: Dictionary = {}      # id -> actor dict
 var _pads: Array = []             # {pos, weapon, respawn_left, phase, super}
 var _projectiles: Array = []      # {pos, vel, team, dmg, life, color, size}
@@ -57,6 +66,9 @@ var _fx: Array = []               # {pos, vel, life, max_life, color, size}
 var _block_dmg: Dictionary = {}   # Vector2i tile -> accumulated break progress (0..BREAK_TIME)
 var _cooked_now: Dictionary = {}  # Tiles damaged this frame (skip their decay)
 var _broken: Array = []           # {x, y, id, respawn} — shattered tiles pending respawn
+var ability_spots: Array = []     # Set by the mode/map — where orbs may appear
+var _abil_orb: Dictionary = {}    # {pos, kind, life} — the orb on the field
+var _abil_timer: float = 12.0     # First drop comes fairly quickly
 var _sfx: Dictionary = {}         # name -> AudioStream
 var _sfx_pool: Array = []
 var _sfx_next: int = 0
@@ -109,6 +121,7 @@ func register_actor(id: String, team: int, get_center: Callable, get_vel: Callab
 		"weapon": "", "cooldown": 0.0, "aim": Vector2.RIGHT,
 		"weapon_left": -1.0, "beam_on": false, "beam_end": Vector2.ZERO, "beam_tick": 0.0,
 		"cur_slot": 1, "super_left": -1.0, "loadout": false, "auto_equip": true,
+		"abil_fly": 0.0, "abil_od": 0.0, "abil_regen": 0.0,
 		"dash_cd": 0.0, "dash_time": 0.0, "dash_dmg": 1,
 		"charge": 0.0, "charging": false, "charge_fed": false,
 		"shield_req": false, "shield_on": false, "shield_energy": SHIELD_MAX,
@@ -307,7 +320,8 @@ func release_dash(id: String) -> Dictionary:
 	a.charge = 0.0
 	if a.weapon != "" or a.dash_cd > 0.0 or a.stun_left > 0.0 or a.stun_pending or not a.is_alive.call():
 		return out
-	a.dash_cd = DASH_CD + 0.5 * power
+	# OVERDRIVE: dash cooldown nearly gone while it lasts
+	a.dash_cd = (0.3 if a.get("abil_od", 0.0) > 0.0 else DASH_CD) + 0.5 * power
 	a.dash_time = DASH_WINDOW + 0.15 * power
 	a.dash_dmg = 2 if power > 0.65 else 1
 	# Attacking drops the shield — no turtling while punching
@@ -552,6 +566,40 @@ func _process(delta: float) -> void:
 					"life": 0.2, "max_life": 0.2, "color": Color(0.6, 0.9, 1.0), "size": 1.5,
 				})
 		_broken.remove_at(bi)
+	# Random ability drops: spawn an orb, let the PLAYER claim it
+	if ability_spots.size() > 0:
+		if _abil_orb.is_empty():
+			_abil_timer -= delta
+			if _abil_timer <= 0.0:
+				_abil_timer = randf_range(16.0, 24.0)
+				var kinds: Array = ABILITIES.keys()
+				_abil_orb = {
+					"pos": ability_spots[randi() % ability_spots.size()],
+					"kind": kinds[randi() % kinds.size()], "life": 12.0,
+				}
+				spawn_ring(_abil_orb.pos, ABILITIES[_abil_orb.kind].color, 4.0, 30.0, 0.35)
+				play_sfx("pickup", _abil_orb.pos, 0.05, 1.6)
+		else:
+			_abil_orb.life -= delta
+			if _abil_orb.life <= 0.0:
+				spawn_ring(_abil_orb.pos, Color(0.5, 0.5, 0.6), 12.0, 2.0, 0.3)
+				_abil_orb = {}
+			elif _actors.has("player"):
+				var pab: Dictionary = _actors["player"]
+				if pab.is_alive.call() and pab.get_center.call().distance_to(_abil_orb.pos) < 20.0:
+					var kind: String = _abil_orb.kind
+					var dur: float = ABILITIES[kind].dur
+					if kind == "zerog":
+						pab.abil_fly = dur
+					elif kind == "overdrive":
+						pab.abil_od = dur
+					else:
+						pab.abil_regen = dur
+					spawn_explosion(_abil_orb.pos, ABILITIES[kind].color)
+					spawn_ring(_abil_orb.pos, ABILITIES[kind].color, 6.0, 44.0, 0.35)
+					play_sfx("pickup", _abil_orb.pos, 0.03, 1.3)
+					ability_picked.emit(kind)
+					_abil_orb = {}
 	# Cooldowns + timed weapons (the DOOM RAY expires)
 	for id in _actors:
 		var a: Dictionary = _actors[id]
@@ -583,6 +631,13 @@ func _process(delta: float) -> void:
 					a.weapon_left = -1.0
 					if a.weapon == "":
 						a.cur_slot = 1
+		# Ability timers
+		if a.get("abil_fly", 0.0) > 0.0:
+			a.abil_fly = maxf(0.0, a.abil_fly - delta)
+		if a.get("abil_od", 0.0) > 0.0:
+			a.abil_od = maxf(0.0, a.abil_od - delta)
+		if a.get("abil_regen", 0.0) > 0.0:
+			a.abil_regen = maxf(0.0, a.abil_regen - delta)
 		# Melee kit timers
 		if a.dash_cd > 0.0:
 			a.dash_cd = maxf(0.0, a.dash_cd - delta)
@@ -628,7 +683,7 @@ func _process(delta: float) -> void:
 						"color": Color(0.5, 0.8, 1.0), "size": randf_range(1.2, 2.4),
 					})
 		else:
-			a.shield_energy = minf(SHIELD_MAX, a.shield_energy + delta * 0.6)
+			a.shield_energy = minf(SHIELD_MAX, a.shield_energy + delta * (1.8 if a.get("abil_od", 0.0) > 0.0 else 0.6))
 		# Dash afterimages: a bright motion trail while the punch window is live
 		if a.dash_time > 0.0 and a.is_alive.call():
 			var dc: Vector2 = a.get_center.call()
@@ -1011,6 +1066,26 @@ func _process(delta: float) -> void:
 func _draw() -> void:
 	# Terrain damage overlay first — everything else layers above it
 	_draw_block_cracks()
+	# Ability orb: pulsing pickup with a kind-glyph
+	if not _abil_orb.is_empty():
+		var ap: Vector2 = _abil_orb.pos + Vector2(0.0, 3.0 * sin(_time * 3.2))
+		var acol: Color = ABILITIES[_abil_orb.kind].color
+		var apulse: float = 0.6 + 0.4 * sin(_time * 6.0)
+		var fade: float = clampf(_abil_orb.life / 2.0, 0.25, 1.0)
+		draw_circle(ap, 14.0 + 3.0 * apulse, Color(acol.r, acol.g, acol.b, 0.14 * fade))
+		draw_arc(ap, 11.0, _time * 3.0, _time * 3.0 + TAU * 0.75, 20, Color(acol.r, acol.g, acol.b, 0.9 * fade), 2.0)
+		draw_circle(ap, 7.0, Color(acol.r * 0.4, acol.g * 0.4, acol.b * 0.4, 0.9 * fade))
+		if _abil_orb.kind == "zerog":
+			for k in range(3):
+				var da: float = _time * 2.0 + TAU * float(k) / 3.0
+				draw_circle(ap + Vector2.from_angle(da) * 3.5, 1.6, Color(1, 1, 1, fade))
+		elif _abil_orb.kind == "overdrive":
+			draw_line(ap + Vector2(-3, -4), ap + Vector2(1, 0), Color(1, 1, 1, fade), 1.6)
+			draw_line(ap + Vector2(1, 0), ap + Vector2(-1, 0), Color(1, 1, 1, fade), 1.6)
+			draw_line(ap + Vector2(-1, 0), ap + Vector2(3, 4), Color(1, 1, 1, fade), 1.6)
+		else:
+			draw_line(ap + Vector2(-3.5, 0), ap + Vector2(3.5, 0), Color(1, 1, 1, fade), 2.0)
+			draw_line(ap + Vector2(0, -3.5), ap + Vector2(0, 3.5), Color(1, 1, 1, fade), 2.0)
 	# Super weapon materialization: growing ring + light pillar
 	if _super_state == 1 and super_pos != Vector2.ZERO:
 		var prog: float = 1.0 - _super_anim / SUPER_ANIM_TIME

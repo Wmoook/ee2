@@ -37,6 +37,12 @@ const ARROW_UP: int = 2
 const CLIMB_LEFT: Array = [Vector2(568.0, 456.0), Vector2(624.0, 408.0), Vector2(680.0, 390.0)]
 const CLIMB_RIGHT: Array = [Vector2(952.0, 456.0), Vector2(912.0, 408.0), Vector2(840.0, 390.0)]
 const SUPER_POS: Vector2 = Vector2(768.0, 104.0)  # DOOM RAY drop: crown of the arrow lift — ride up to claim it
+# Ability orbs appear at these open-air spots
+const ABILITY_SPOTS: Array = [
+	Vector2(300.0, 440.0), Vector2(1236.0, 440.0), Vector2(768.0, 300.0),
+	Vector2(560.0, 360.0), Vector2(976.0, 360.0), Vector2(200.0, 260.0),
+	Vector2(1336.0, 260.0),
+]
 
 # Curated respawn spots (tile coords, all in open air above solid ground) on
 # both sides of the map — respawns pick randomly among these, never inside a

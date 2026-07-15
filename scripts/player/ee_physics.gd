@@ -76,6 +76,7 @@ var _stuck_ticks: int = 0
 var _was_on_rotated: bool = false
 var on_dot: bool = false
 var slow_dot: bool = false
+var force_dot: bool = false  # ZERO-G ability: whole arena acts like dot tiles (free flight)
 var _active_arrow_dir: int = -1  # -1 = no arrow, 0-3 = nearest cardinal
 # EE delayed action queue (sized ACTION_DELAY_TICKS in _init) — same ~20ms
 # grace period the original 2-tick queue gave at 100Hz.
@@ -1102,6 +1103,10 @@ func apply_action_tile(block_id: int, rotation_deg: int = 0) -> void:
 		var dot_type: int = GameState.get_dot_type(_current_action_id)
 		if dot_type == 1:
 			slow_dot = true
+	# ZERO-G ability: every tile behaves like a dot — free flight
+	if force_dot:
+		on_dot = true
+		slow_dot = false
 
 	# Boost blocks: set speed directly (scaled for tick rate)
 	if GameState.is_boost(_current_action_id):

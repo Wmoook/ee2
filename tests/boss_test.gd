@@ -43,6 +43,13 @@ func _ready() -> void:
 			bm.boss.vel = Vector2.ZERO
 			bm.boss.state = bm.boss.ST_TG_BEAM
 			bm.boss.st_t = 0.6
+		if i == 12:
+			# Drop a ZERO-G orb right on the player — pickup + flight check
+			bm.weapons._abil_orb = {"pos": Vector2(496.0, 536.0), "kind": "zerog", "life": 6.0}
+		if i == 16:
+			var fly: float = bm.weapons._actors["player"].abil_fly
+			print("ABILITY %s (fly=%.1f force_dot=%s)" % [
+				"PASS" if fly > 0.0 else "FAIL", fly, pl.physics.force_dot])
 		if i == 70:
 			# Force the endgame: drive the Warden into PHASE 5 (OMEGA)
 			bm.boss.hp = mini(bm.boss.hp, bm.boss.max_hp / 5 + 2)

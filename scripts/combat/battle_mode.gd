@@ -32,6 +32,7 @@ var _fight_timer: float = 1.6
 
 var _lmb_was_down: bool = false
 var _player_was_stunned: bool = false
+var _regen_tick: float = 0.0
 var _hud: CanvasLayer
 var _score_label: Label
 var _weapon_label: Label
@@ -74,6 +75,8 @@ func _wire_up() -> void:
 	# permanent loadout — slots 1/2/3 (fists/blaster/scatter) — when the
 	# guns toggle is ON; fists-only otherwise.
 	weapons.super_pos = BattleMap.SUPER_POS
+	weapons.ability_spots = BattleMap.ABILITY_SPOTS.duplicate()
+	weapons.ability_picked.connect(_on_ability)
 	weapons.register_actor("player", 0,
 		func() -> Vector2: return Vector2(player.physics.x + 8.0, player.physics.y + 8.0),
 		func() -> Vector2: return Vector2(player.physics._speedX, player.physics._speedY) * EEPhysics.EE_TICK_FRAC * EEPhysics.TPS,
@@ -236,6 +239,12 @@ func _kill_bot(i: int) -> void:
 		_bots_respawn[i] = 1.5
 
 
+func _on_ability(kind: String) -> void:
+	if kind == "mend":
+		player_hp = mini(MAX_HP, player_hp + 2)
+	GameState.cam_shake += 2.0
+
+
 func _pick_spawn(avoid_px: Vector2) -> Vector2:
 	## Random curated spot, preferring ones far from the opponent — no more
 	## camping a fixed respawn with the DOOM RAY.
@@ -367,6 +376,19 @@ func _process(delta: float) -> void:
 				var avoid: Vector2 = _nearest_enemy(i).get("center", Vector2(768.0, 300.0))
 				bots[i].spawn_at(_pick_spawn(avoid))
 				_bots_invuln[i] = INVULN_TIME
+	# Active abilities: ZERO-G flight + NANO-MEND regen
+	if is_instance_valid(player) and not player._is_dead:
+		var pab: Dictionary = weapons._actors["player"]
+		player.physics.force_dot = pab.get("abil_fly", 0.0) > 0.0
+		if pab.get("abil_regen", 0.0) > 0.0:
+			_regen_tick -= delta
+			if _regen_tick <= 0.0:
+				_regen_tick = 2.5
+				if player_hp < MAX_HP:
+					player_hp += 1
+					weapons.spawn_ring(Vector2(player.physics.x + 8.0, player.physics.y + 8.0), Color(0.4, 1.0, 0.5), 4.0, 20.0, 0.25)
+		else:
+			_regen_tick = 0.6
 	# Player aiming + shooting (LMB), blocked while editing (editing is
 	# disabled in battle mode anyway) or over UI
 	if is_instance_valid(player) and not player._is_dead:
@@ -509,6 +531,12 @@ func _layout_hud() -> void:
 		var s2: String = "DOOM %.0fs" % maxf(pa_hud.get("super_left", 0.0), 0.0) if pa_hud.get("super_left", 0.0) > 0.0 else ("blaster" if pa_hud.get("loadout", false) else "—")
 		var s3: String = "scatter" if pa_hud.get("loadout", false) else "—"
 		wtext += "   [1 fists · 2 %s · 3 %s]" % [s2, s3]
+		if pa_hud.get("abil_fly", 0.0) > 0.0:
+			wtext += "   ✦ ZERO-G %.0fs" % pa_hud.abil_fly
+		if pa_hud.get("abil_od", 0.0) > 0.0:
+			wtext += "   ⚡ OVERDRIVE %.0fs" % pa_hud.abil_od
+		if pa_hud.get("abil_regen", 0.0) > 0.0:
+			wtext += "   ✚ MEND %.0fs" % pa_hud.abil_regen
 		if weapons.super_pos != Vector2.ZERO:
 			_weapon_label.text = "%s  |  HP %d/%d  |  %s" % [wtext, player_hp, MAX_HP, weapons.get_super_status()]
 		else:

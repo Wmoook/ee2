@@ -23,6 +23,12 @@ const BOUNDS_MAX_X: float = 1088.0
 const BOUNDS_MIN_Y: float = 96.0
 const FLOOR_Y: float = 544.0
 const SUPER_POS: Vector2 = Vector2(576.0, 462.0)  # Above the rune altar
+# Ability orbs appear at these open-air spots (reachable by jumps/platforms)
+const ABILITY_SPOTS: Array = [
+	Vector2(200.0, 380.0), Vector2(952.0, 380.0), Vector2(576.0, 300.0),
+	Vector2(360.0, 500.0), Vector2(792.0, 500.0), Vector2(576.0, 180.0),
+	Vector2(128.0, 360.0), Vector2(1024.0, 360.0),
+]
 
 
 static func build() -> void:
