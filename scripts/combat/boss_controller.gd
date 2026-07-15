@@ -64,6 +64,8 @@ var _ring_b: float = 0.0
 var _eye: Vector2 = Vector2.ZERO
 var _die_fx_t: float = 0.0
 var _beam_sfx_t: float = 0.0
+var _jink_t: float = 0.0
+var _jink_target: Vector2 = Vector2(512.0, 240.0)
 
 # Flight envelope (set from BossMap by BossMode)
 var min_x: float = 64.0
@@ -102,6 +104,11 @@ func vulnerable() -> bool:
 
 func beam_muzzle() -> Vector2:
 	return pos + beam_dir * (BODY_R + 4.0)
+
+
+func _panic() -> bool:
+	## The player is holding the DOOM RAY — the Warden is AFRAID of it.
+	return ws != null and ws.get_weapon("player") == "doom"
 
 
 func apply_push(v: Vector2) -> void:
@@ -199,8 +206,8 @@ func _process(delta: float) -> void:
 	_eye = _eye.lerp((pc - pos).normalized() * 6.5, 1.0 - pow(0.001, delta))
 	if state != ST_BEAM and state != ST_TG_BEAM:
 		_beam_cd -= delta
-	# Ambient embers drifting off the hull
-	if ws and alive() and randf() < delta * 26.0:
+	# Ambient embers drifting off the hull (a storm of them while panicking)
+	if ws and alive() and randf() < delta * (80.0 if _panic() else 26.0):
 		var ea: float = randf() * TAU
 		ws.spawn_trail_dot(pos + Vector2.from_angle(ea) * randf_range(30.0, 44.0), Vector2(randf_range(-15, 15), randf_range(-40, -14)), phase_color())
 
@@ -221,14 +228,51 @@ func _process(delta: float) -> void:
 				GameState.cam_shake = maxf(GameState.cam_shake, 6.0)
 		ST_HOVER:
 			var anchor: Vector2 = Vector2(clampf(pc.x, min_x + 190.0, max_x - 190.0), 215.0 + 24.0 * sin(_time * 1.15))
-			vel = vel.lerp((anchor - pos) * 2.1, 1.0 - pow(0.02, delta))
 			var vmax: float = 240.0 + 70.0 * phase
+			if _panic():
+				# The player holds the DOOM RAY: SCATTER! Fast erratic jinks
+				# biased away from the player, plus a hard perpendicular juke
+				# whenever the live beam ray sweeps close.
+				_jink_t -= delta
+				if _jink_t <= 0.0:
+					_jink_t = randf_range(0.2, 0.45)
+					_jink_target = Vector2(randf_range(min_x + 110.0, max_x - 110.0), randf_range(min_y + 50.0, 340.0))
+					if absf(_jink_target.x - pc.x) < 240.0:
+						var flee: float = signf(pos.x - pc.x)
+						if flee == 0.0:
+							flee = 1.0
+						_jink_target.x = clampf(pc.x + flee * randf_range(300.0, 480.0), min_x + 100.0, max_x - 100.0)
+				anchor = _jink_target
+				vmax = 430.0 + 60.0 * phase
+				var pa2: Dictionary = ws._actors.get("player", {})
+				if not pa2.is_empty() and pa2.get("beam_draw", false):
+					var bd: Vector2 = pa2.aim
+					var along: float = (pos - pc).dot(bd)
+					if along > 0.0:
+						var offv: Vector2 = pos - (pc + bd * along)
+						if offv.length() < 160.0:
+							var side: Vector2 = bd.orthogonal()
+							if offv.dot(side) < 0.0:
+								side = -side
+							vel += side * 2400.0 * delta
+				vel = vel.lerp((anchor - pos) * 3.0, 1.0 - pow(0.004, delta))
+			else:
+				vel = vel.lerp((anchor - pos) * 2.1, 1.0 - pow(0.02, delta))
 			if vel.length() > vmax:
 				vel = vel.normalized() * vmax
 			pos += vel * delta
 			st_t -= delta
 			if st_t <= 0.0 and p_alive:
-				_pick_attack()
+				if _panic():
+					# Never slam or pound INTO the doom — snipe from range
+					if _beam_cd <= 0.0:
+						state = ST_TG_BEAM
+						st_t = 1.15
+					else:
+						state = ST_TG_BURST
+						st_t = 0.45
+				else:
+					_pick_attack()
 			elif st_t <= 0.0:
 				st_t = 1.0
 		ST_TG_SLAM:
@@ -258,7 +302,13 @@ func _process(delta: float) -> void:
 				state = ST_HOVER
 				st_t = _hover_time() * 0.6
 		ST_TG_BURST:
-			vel = vel.lerp(Vector2.ZERO, 1.0 - pow(0.01, delta))
+			if _panic():
+				# Keep fleeing while winding up — never a sitting duck
+				vel = vel.lerp((_jink_target - pos) * 2.2, 1.0 - pow(0.01, delta))
+				if vel.length() > 380.0:
+					vel = vel.normalized() * 380.0
+			else:
+				vel = vel.lerp(Vector2.ZERO, 1.0 - pow(0.01, delta))
 			pos += vel * delta
 			st_t -= delta
 			if st_t <= 0.0:
@@ -290,7 +340,12 @@ func _process(delta: float) -> void:
 				state = ST_HOVER
 				st_t = _hover_time()
 		ST_TG_BEAM:
-			vel = vel.lerp(Vector2.ZERO, 1.0 - pow(0.01, delta))
+			if _panic():
+				vel = vel.lerp((_jink_target - pos) * 2.2, 1.0 - pow(0.01, delta))
+				if vel.length() > 340.0:
+					vel = vel.normalized() * 340.0
+			else:
+				vel = vel.lerp(Vector2.ZERO, 1.0 - pow(0.01, delta))
 			pos += vel * delta
 			beam_dir = (pc - pos).normalized()
 			st_t -= delta
@@ -542,6 +597,9 @@ func _draw() -> void:
 	# ── Aura ──
 	draw_circle(c, BODY_R + 18.0 + 5.0 * pulse, Color(col.r, col.g, col.b, 0.06 * mat))
 	draw_circle(c, BODY_R + 9.0 + 3.0 * pulse, Color(col.r, col.g, col.b, 0.1 * mat))
+	if _panic() and alive():
+		# Fear halo: the Warden KNOWS what you're holding
+		draw_arc(c, BODY_R + 24.0, 0, TAU, 32, Color(1.0, 0.3, 0.2, 0.22 + 0.2 * sin(_time * 18.0)), 2.2)
 
 	# ── Armor rings: counter-rotating segmented halos ──
 	for k in range(8):
