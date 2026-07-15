@@ -455,6 +455,13 @@ func _collide_pair(a: Dictionary, b: Dictionary) -> void:
 	if d >= 16.0 or d <= 0.01:
 		return
 	var n: Vector2 = dvec / d
+	# High-speed dashes can travel PAST the victim's center in one frame;
+	# resolving with the raw position normal then ejects the victim
+	# BACKWARD out of the hit (the "purple went up" bug). If the relative
+	# motion says the centers already crossed, flip to the true contact side.
+	var rel: Vector2 = Vector2(ap._speedX - bp._speedX, ap._speedY - bp._speedY)
+	if rel.length_squared() > 4.0 and n.dot(rel) < 0.0:
+		n = -n
 	var overlap: float = 16.0 - d
 	var a_sh: bool = weapons.is_shielded(a.id)
 	var b_sh: bool = weapons.is_shielded(b.id)
@@ -498,11 +505,13 @@ func _collide_pair(a: Dictionary, b: Dictionary) -> void:
 		av = -n * maxf(av.length() * 1.1, 3.0)
 		bv = n * maxf(bv.length() * 1.1, 3.0)
 	else:
-		# Equal-mass elastic swap along the contact normal
-		var a_new: float = b_n * 1.05
-		var b_new: float = a_n * 1.05
-		av += n * (a_new - a_n)
-		bv += n * (b_new - b_n)
+		# MOMENTUM PLOWS THROUGH: the aggressor keeps ~half its drive and
+		# the victim gets BLASTED ahead of it. (The old equal-mass elastic
+		# swap stopped the rammer dead in the victim's spot — at charged-dash
+		# speed that read as the two balls teleport-swapping places.)
+		var a_aggressor: bool = a_n > -b_n
+		av += n * (-approach * (0.45 if a_aggressor else 1.05))
+		bv += n * (approach * (1.05 if a_aggressor else 0.45))
 	ap._speedX = av.x
 	ap._speedY = av.y
 	bp._speedX = bv.x
