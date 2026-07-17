@@ -23,6 +23,9 @@ function startGodot() {
     fs.mkdirSync(DATA_DIR, { recursive: true });
   } catch (e) {}
   const bin = path.join(__dirname, "server", "ee2_server.x86_64");
+  try {
+    fs.chmodSync(bin, 0o755); // tarballs from Windows lose the exec bit; no RUN steps in the Dockerfile
+  } catch (e) {}
   godot = spawn(bin, ["--headless", "--", "--server", "--port", String(GODOT_PORT)], {
     cwd: path.join(__dirname, "server"),
     stdio: ["ignore", "inherit", "inherit"],
