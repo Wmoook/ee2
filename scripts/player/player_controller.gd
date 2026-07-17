@@ -102,7 +102,9 @@ func _ready() -> void:
 			_anim_textures.append(tex)
 	# smiley_id -1 = DREAMER ball (animated art); 0..375 = an original EE smiley
 	_use_anim_sprite = _anim_textures.size() == 3 and (smiley_id < 0 or _smiley_textures.is_empty())
-	_sprite_scale = ANIM_SCALE if _use_anim_sprite else 0.5
+	# Ball art: 38px visible in a 40px canvas × 0.4 = 15.2px on screen.
+	# Smiley face: 32px in its cell — 0.475 lands it at the exact same 15.2px.
+	_sprite_scale = ANIM_SCALE if _use_anim_sprite else 0.475
 
 	_smiley_sprite = Sprite2D.new()
 	_smiley_sprite.centered = true
@@ -212,12 +214,10 @@ func _setup_camera() -> void:
 func _set_smiley(id: int) -> void:
 	if _smiley_textures.is_empty():
 		return
-	var sid: int = clampi(id, 0, 375)
-	var col: int = sid % 188
-	var row: int = 1 if sid >= 188 else 0  # row 1 = gold variants
 	var atlas_tex: AtlasTexture = AtlasTexture.new()
 	atlas_tex.atlas = _smiley_textures[0]
-	atlas_tex.region = Rect2(col * 52, row * 52, 52, 52)
+	# Cropped to the 32px face (cells carry 10px transparent padding)
+	atlas_tex.region = GameState.smiley_face_region(id)
 	_smiley_sprite.texture = atlas_tex
 
 func _tick_update(delta: float) -> void:
@@ -266,6 +266,9 @@ func _tick_update(delta: float) -> void:
 				_respawn()
 		elif _death_timer > 0.7:
 			_respawn()
+		# Keep broadcasting while dead — everyone must SEE the death (frozen
+		# ghost balls otherwise) and the respawn teleport
+		_pump_net_state(delta)
 		return
 	if not is_local:
 		# Remote player: interpolate position from network state
@@ -432,67 +435,7 @@ func _tick_update(delta: float) -> void:
 	_space_just = false
 	_cbf_consumed_jump = false  # Reset for next frame
 
-	# Broadcast position to other players (~33Hz, time-based so FPS doesn't matter)
-	_sync_accum += delta
-	if _sync_accum >= 0.03 and NetworkManager._peer != null:
-		_sync_accum = 0.0
-		var af: int = _anim_frame
-		var fh: bool = _smiley_sprite.flip_h if _smiley_sprite else false
-		var rot: float = fmod(_smiley_sprite.rotation, TAU) if _smiley_sprite else 0.0
-		var _bdata: Dictionary = {
-			"x": physics.get_pixel_x(), "y": physics.get_pixel_y(),
-			"sx": physics._speedX, "sy": physics._speedY,
-			"af": af, "fh": fh, "r": rot,
-			"g": physics.is_god_mode, "gr": physics.is_grounded,
-			"dead": _is_dead, "gzd": _gz_death
-		}
-		if _gz_death:
-			_bdata["gzc_x"] = _gz_death_center.x
-			_bdata["gzc_y"] = _gz_death_center.y
-		if not _pending_speech.is_empty():
-			_bdata["sp"] = _pending_speech
-			_pending_speech = ""
-		if NetPlay.online:
-			NetPlay.send_pstate(_bdata)
-		else:
-			_broadcast_state.rpc(_bdata)
-		# Send tiles via RELIABLE RPC
-		if WorldManager._pending_net_tiles.size() > 0:
-			var _tls: Array = WorldManager._pending_net_tiles.duplicate()
-			if NetPlay.online:
-				NetPlay.send_tiles(_tls)
-			else:
-				_broadcast_tiles.rpc(_tls)
-			WorldManager._pending_net_tiles.clear()
-		# All world edits go through NetworkManager (autoload, stable RPC path)
-		if WorldManager._pending_net_clear_world:
-			NetworkManager.send_clear_world()
-			WorldManager._pending_net_clear_world = false
-			WorldManager._pending_net_tiles.clear()
-			WorldManager._pending_net_freeblocks.clear()
-			WorldManager._pending_net_polylines.clear()
-			WorldManager._pending_net_deletions.clear()
-			WorldManager._pending_net_fb_replace = {}
-			WorldManager._pending_net_gz.clear()
-		if not WorldManager._pending_net_fb_replace.is_empty():
-			var rep: Dictionary = WorldManager._pending_net_fb_replace
-			NetworkManager.send_fb_replace(rep.remove, rep.blocks)
-			WorldManager._pending_net_fb_replace = {}
-		if WorldManager._pending_net_freeblocks.size() > 0:
-			NetworkManager.send_freeblocks(WorldManager._pending_net_freeblocks.duplicate())
-			WorldManager._pending_net_freeblocks.clear()
-		if WorldManager._pending_net_polylines.size() > 0:
-			NetworkManager.send_polylines(WorldManager._pending_net_polylines.duplicate())
-			WorldManager._pending_net_polylines.clear()
-		if WorldManager._pending_net_deletions.size() > 0:
-			NetworkManager.send_deletions(WorldManager._pending_net_deletions.duplicate())
-			WorldManager._pending_net_deletions.clear()
-		if WorldManager._pending_net_poly_fullsync:
-			NetworkManager.send_poly_fullsync()
-			WorldManager._pending_net_poly_fullsync = false
-		if WorldManager._pending_net_gz.size() > 0:
-			NetworkManager.send_gz_changes(WorldManager._pending_net_gz.duplicate())
-			WorldManager._pending_net_gz.clear()
+	_pump_net_state(delta)
 
 	_phys_pos = Vector2(physics.get_pixel_x(), physics.get_pixel_y())
 	_visual_pos = _phys_pos
@@ -563,7 +506,8 @@ func _tick_update(delta: float) -> void:
 	_last_roll_x = physics.x
 	if absf(_roll_dx) > 32.0:
 		_roll_dx = 0.0  # Teleport/respawn — no spin burst
-	if _use_anim_sprite and _smiley_sprite:
+	# EE smileys gear-roll exactly like the DREAMER ball
+	if _smiley_sprite:
 		if physics.is_wedged:
 			# Wedged between curves: perfectly upright, no rolling
 			_smiley_sprite.rotation = lerp_angle(_smiley_sprite.rotation, 0.0, _rc(0.5, delta))
@@ -720,52 +664,6 @@ func _tick_update(delta: float) -> void:
 			if _fire_layer:
 				_fire_layer.queue_redraw()
 		queue_redraw()
-	elif _smiley_sprite:
-		# Legacy smiley rotation for non-animated sprites
-		if physics.is_god_mode:
-			_smiley_sprite.rotation = lerp_angle(_smiley_sprite.rotation, 0.0, _rc(0.3, delta))
-		elif physics.in_valley:
-			_smiley_sprite.rotation = 0.0
-			_valley_smiley_ticks = 10
-		elif not physics.on_rotated_block or not physics.is_grounded:
-			# In air or on grid: clear flip state and lerp back to upright
-			_last_normal = Vector2(0, -1)
-			_valley_smiley_ticks = 0
-			_smiley_sprite.rotation = lerp_angle(_smiley_sprite.rotation, 0.0, _rc(0.3, delta))
-		elif physics.on_rotated_block and physics.is_grounded:
-			var n: Vector2 = physics._surface_normal
-			# Smooth the normal to prevent flicker
-			_smooth_normal = _smooth_normal.lerp(n, _rc(0.15, delta))
-			if _smooth_normal.length() > 0.01:
-				_smooth_normal = _smooth_normal.normalized()
-			# Flip detection: normal X flips = V-shape, smiley stays upright
-			if _last_normal.x * n.x < -0.1 and absf(n.x) > 0.3:
-				_valley_smiley_ticks = 10
-			_last_normal = n
-			# At rest: force upright (normal averaging at V bottom = ~straight up)
-			var spd_total: float = absf(physics._speedX) + absf(physics._speedY)
-			if _valley_smiley_ticks > 0:
-				_valley_smiley_ticks -= 1
-				_smiley_sprite.rotation = lerp_angle(_smiley_sprite.rotation, 0.0, _rc(0.3, delta))
-			elif spd_total < 0.3:
-				_smiley_sprite.rotation = lerp_angle(_smiley_sprite.rotation, 0.0, _rc(0.1, delta))
-			else:
-				# Use velocity direction for rotation when moving (feels natural on curves)
-				var vel: Vector2 = Vector2(physics._speedX, physics._speedY)
-				var target_angle: float
-				if vel.length() > 0.5:
-					# Perpendicular to velocity = smiley "up" direction
-					var vel_n: Vector2 = vel.normalized()
-					var vel_up: Vector2 = Vector2(-vel_n.y, vel_n.x)
-					# Pick the "up" that's closer to the surface normal
-					if vel_up.dot(_smooth_normal) < 0:
-						vel_up = -vel_up
-					target_angle = atan2(vel_up.x, -vel_up.y)
-				else:
-					target_angle = atan2(_smooth_normal.x, -_smooth_normal.y)
-				_smiley_sprite.rotation = lerp_angle(_smiley_sprite.rotation, target_angle, _rc(0.15, delta))
-		elif physics.is_grounded:
-			_smiley_sprite.rotation = lerp_angle(_smiley_sprite.rotation, 0.0, _rc(0.2, delta))
 
 	# Camera updated inside tick loop above
 
@@ -1166,3 +1064,68 @@ func _respawn() -> void:
 	position = _phys_pos
 	if _camera:
 		_camera.global_position = _phys_pos + Vector2(8, 8)
+
+func _pump_net_state(delta: float) -> void:
+	## Broadcast position/state to other players (~33Hz, time-based so FPS
+	## doesn't matter). Runs while ALIVE and while DEAD — death and respawn
+	## must be visible to everyone (frozen ghost balls otherwise).
+	_sync_accum += delta
+	if _sync_accum >= 0.03 and NetworkManager._peer != null:
+		_sync_accum = 0.0
+		var af: int = _anim_frame
+		var fh: bool = _smiley_sprite.flip_h if _smiley_sprite else false
+		var rot: float = fmod(_smiley_sprite.rotation, TAU) if _smiley_sprite else 0.0
+		var _bdata: Dictionary = {
+			"x": physics.get_pixel_x(), "y": physics.get_pixel_y(),
+			"sx": physics._speedX, "sy": physics._speedY,
+			"af": af, "fh": fh, "r": rot,
+			"g": physics.is_god_mode, "gr": physics.is_grounded,
+			"dead": _is_dead, "gzd": _gz_death
+		}
+		if _gz_death:
+			_bdata["gzc_x"] = _gz_death_center.x
+			_bdata["gzc_y"] = _gz_death_center.y
+		if not _pending_speech.is_empty():
+			_bdata["sp"] = _pending_speech
+			_pending_speech = ""
+		if NetPlay.online:
+			NetPlay.send_pstate(_bdata)
+		else:
+			_broadcast_state.rpc(_bdata)
+		# Send tiles via RELIABLE RPC
+		if WorldManager._pending_net_tiles.size() > 0:
+			var _tls: Array = WorldManager._pending_net_tiles.duplicate()
+			if NetPlay.online:
+				NetPlay.send_tiles(_tls)
+			else:
+				_broadcast_tiles.rpc(_tls)
+			WorldManager._pending_net_tiles.clear()
+		# All world edits go through NetworkManager (autoload, stable RPC path)
+		if WorldManager._pending_net_clear_world:
+			NetworkManager.send_clear_world()
+			WorldManager._pending_net_clear_world = false
+			WorldManager._pending_net_tiles.clear()
+			WorldManager._pending_net_freeblocks.clear()
+			WorldManager._pending_net_polylines.clear()
+			WorldManager._pending_net_deletions.clear()
+			WorldManager._pending_net_fb_replace = {}
+			WorldManager._pending_net_gz.clear()
+		if not WorldManager._pending_net_fb_replace.is_empty():
+			var rep: Dictionary = WorldManager._pending_net_fb_replace
+			NetworkManager.send_fb_replace(rep.remove, rep.blocks)
+			WorldManager._pending_net_fb_replace = {}
+		if WorldManager._pending_net_freeblocks.size() > 0:
+			NetworkManager.send_freeblocks(WorldManager._pending_net_freeblocks.duplicate())
+			WorldManager._pending_net_freeblocks.clear()
+		if WorldManager._pending_net_polylines.size() > 0:
+			NetworkManager.send_polylines(WorldManager._pending_net_polylines.duplicate())
+			WorldManager._pending_net_polylines.clear()
+		if WorldManager._pending_net_deletions.size() > 0:
+			NetworkManager.send_deletions(WorldManager._pending_net_deletions.duplicate())
+			WorldManager._pending_net_deletions.clear()
+		if WorldManager._pending_net_poly_fullsync:
+			NetworkManager.send_poly_fullsync()
+			WorldManager._pending_net_poly_fullsync = false
+		if WorldManager._pending_net_gz.size() > 0:
+			NetworkManager.send_gz_changes(WorldManager._pending_net_gz.duplicate())
+			WorldManager._pending_net_gz.clear()

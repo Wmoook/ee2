@@ -150,6 +150,21 @@ func _rid(pid: int) -> String:
 	return "p%d" % pid
 
 
+func _mirror_weapon(ra: Dictionary, wpn: String) -> void:
+	## Direct remote weapon mirror — give_weapon() honors auto_equip and
+	## durations, which hid doom + expired guns on teammates' screens.
+	if ra.weapon == wpn:
+		if wpn != "":
+			ra.weapon_left = 999.0
+		return
+	ra.weapon = wpn
+	ra.beam_on = false
+	ra.weapon_left = 999.0 if wpn != "" else -1.0
+	ra.cur_slot = 2 if wpn != "" else 1
+	if wpn == "doom":
+		ra.super_left = 10.0
+
+
 func _net_setup() -> void:
 	NetPlay.mode_msg.connect(_on_mode_msg)
 	NetworkManager.player_disconnected.connect(_on_net_player_left)
@@ -170,6 +185,7 @@ func _net_setup() -> void:
 		weapons._actors[rid]["loadout"] = GameState.battle_guns_enabled
 		weapons._actors[rid]["auto_equip"] = false
 		weapons._actors[rid]["no_pickup"] = true
+		weapons._actors[rid]["net_mirror"] = true
 
 
 func _remote_node(pid: int) -> Node:
@@ -281,12 +297,9 @@ func _on_mode_msg(from_id: int, data: Dictionary) -> void:
 				var ra: Dictionary = weapons._actors[rid]
 				weapons.set_aim(rid, Vector2(float(data.get("ax", 1.0)), float(data.get("ay", 0.0))))
 				weapons.set_shield(rid, bool(data.get("sh", false)))
-				var wpn: String = str(data.get("wpn", ""))
-				if ra.weapon != wpn:
-					if wpn == "":
-						weapons.strip_weapon(rid)
-					else:
-						weapons.give_weapon(rid, wpn)
+				_mirror_weapon(ra, str(data.get("wpn", "")))
+				ra.charging = bool(data.get("chgon", false))
+				ra.charge = float(data.get("chg", 0.0))
 				if bool(data.get("fire", false)) and ra.weapon != "" \
 						and WeaponSystem.WEAPONS.get(ra.weapon, {}).get("beam", false):
 					ra.cooldown = 0.0
@@ -297,13 +310,16 @@ func _on_mode_msg(from_id: int, data: Dictionary) -> void:
 		"shot":
 			if weapons._actors.has(rid):
 				var ra2: Dictionary = weapons._actors[rid]
-				var w: String = str(data.get("w", "pistol"))
-				if ra2.weapon != w:
-					weapons.give_weapon(rid, w)
+				_mirror_weapon(ra2, str(data.get("w", "pistol")))
 				ra2.cooldown = 0.0
 				ra2.stun_left = 0.0
 				weapons.set_aim(rid, Vector2(float(data.get("ax", 1.0)), float(data.get("ay", 0.0))))
 				weapons.try_shoot(rid)
+		"die":
+			weapons.spawn_explosion(Vector2(float(data.get("x", 0.0)), float(data.get("y", 0.0))), Color(0.4, 0.8, 1.0))
+			if weapons._actors.has(rid):
+				weapons._actors[rid].weapon = ""
+				weapons._actors[rid].beam_on = false
 		"dash":
 			if weapons._actors.has(rid):
 				var ra3: Dictionary = weapons._actors[rid]
@@ -442,6 +458,7 @@ func _net_pump(delta: float) -> void:
 			"m": "bs", "sh": pa.shield_on,
 			"ax": pa.aim.x, "ay": pa.aim.y,
 			"wpn": pa.weapon, "fire": beam_firing,
+			"chgon": pa.charging, "chg": pa.charge,
 			"hp": player_hp, "lives": player_lives,
 		})
 	if _is_host:
@@ -595,6 +612,8 @@ func _on_player_died() -> void:
 		return
 	weapons.spawn_explosion(Vector2(player.physics.x + 8.0, player.physics.y + 8.0), Color(0.4, 0.8, 1.0))
 	weapons.strip_weapon("player")
+	if net:
+		NetPlay.send_mode({"m": "die", "x": player.physics.x + 8.0, "y": player.physics.y + 8.0})
 	if _struggle:
 		_exit_struggle()
 		boss.end_beam(0.1)

@@ -977,8 +977,9 @@ func _process(delta: float) -> void:
 			a.stun_left = maxf(0.0, a.stun_left - delta)
 		if a.shield_lock > 0.0:
 			a.shield_lock = maxf(0.0, a.shield_lock - delta)
-		# Charge decays instantly if not held this frame
-		if a.charging and not a.charge_fed:
+		# Charge decays instantly if not held this frame — except on online
+		# mirror actors, whose charge is replicated at 20Hz (not per-frame)
+		if a.charging and not a.charge_fed and not a.get("net_mirror", false):
 			a.charging = false
 			a.charge = 0.0
 		a.charge_fed = false

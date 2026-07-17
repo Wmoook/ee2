@@ -321,10 +321,11 @@ func _on_mode_msg(from_id: int, data: Dictionary) -> void:
 				weapons.set_shield(rid, bool(data.get("sh", false)))
 				var wpn: String = str(data.get("wpn", ""))
 				if ra.weapon != wpn:
-					if wpn == "":
-						weapons.strip_weapon(rid)
-					else:
-						weapons.give_weapon(rid, wpn)
+					ra.weapon = wpn
+					ra.beam_on = false
+					ra.cur_slot = 2 if wpn != "" else 1
+				if wpn != "":
+					ra.weapon_left = 999.0
 			_net_hp[from_id] = int(data.get("hp", MAX_HP))
 		"shot":
 			# Visual-only replay: ghost projectiles pop but never damage —
@@ -333,7 +334,10 @@ func _on_mode_msg(from_id: int, data: Dictionary) -> void:
 				var ra2: Dictionary = weapons._actors[rid]
 				var w: String = str(data.get("w", "pistol"))
 				if ra2.weapon != w:
-					weapons.give_weapon(rid, w)
+					ra2.weapon = w
+					ra2.beam_on = false
+					ra2.cur_slot = 2
+				ra2.weapon_left = 999.0
 				ra2.cooldown = 0.0
 				ra2.stun_left = 0.0
 				if ra2.has("ammo"):
@@ -371,6 +375,9 @@ func _on_mode_msg(from_id: int, data: Dictionary) -> void:
 				_apply_break(str(data.get("k", "tile")), float(data.get("a", 0.0)), float(data.get("b", 0.0)))
 		"down":
 			_net_down[from_id] = true
+			var dn: Node = _remote_node(from_id)
+			if dn != null:
+				weapons.spawn_explosion(dn.position + Vector2(8, 8), Color(0.9, 0.2, 0.2))
 			if _is_host:
 				_check_all_down()
 		"revive":

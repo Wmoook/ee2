@@ -380,7 +380,7 @@ func _draw() -> void:
 			var rect: Rect2 = Rect2(e.pos.x - sz / 2.0, e.pos.y - sz / 2.0, sz, sz)
 			var face: int = e.get("face", -1)
 			if face >= 0 and _smileys.size() > 0:
-				draw_texture_rect_region(_smileys[0], rect, Rect2(float(face % 188) * 52.0, 0, 52, 52), tint)
+				draw_texture_rect_region(_smileys[0], rect, GameState.smiley_face_region(face), tint)
 			elif _ball_tex:
 				draw_texture_rect(_ball_tex, rect, false, tint)
 			if e.type == "bulwark":

@@ -258,6 +258,10 @@ func _lobby_of(id: int) -> Dictionary:
 		return {}
 	return _lobbies.get(int(room.trim_prefix("lob_")), {})
 
+func _rpc_ok(pid: int) -> bool:
+	## Peer still connected? (cleanup paths can race a disconnect)
+	return pid in multiplayer.get_peers()
+
 func _push_room(room: String) -> void:
 	## Send fresh room info to everyone in `room`.
 	var members: Dictionary = _room_members_dict(room)
@@ -270,13 +274,14 @@ func _push_room(room: String) -> void:
 			info.opts = lob.opts
 			info.started = lob.started
 	for pid in members:
-		sv_room.rpc_id(pid, info)
+		if _rpc_ok(pid):
+			sv_room.rpc_id(pid, info)
 
 func _push_lobby_list() -> void:
 	## Lobby list to everyone still in the menu (room "").
 	var list: Array = _public_lobbies()
 	for pid in _rooms:
-		if _rooms[pid] == "":
+		if _rooms[pid] == "" and _rpc_ok(pid):
 			sv_lobbies.rpc_id(pid, list)
 
 func _public_lobbies() -> Array:
@@ -300,7 +305,7 @@ func _server_leave_room(id: int, disconnected: bool) -> void:
 	_rooms[id] = ""
 	if room == "world":
 		for pid in _rooms:
-			if _rooms[pid] == "world":
+			if _rooms[pid] == "world" and _rpc_ok(pid):
 				sv_peer_left.rpc_id(pid, id)
 		return
 	# Lobby leave
@@ -317,7 +322,8 @@ func _server_leave_room(id: int, disconnected: bool) -> void:
 	if was_host:
 		lob.host = lob.members[0]
 	for pid in lob.members:
-		sv_peer_left.rpc_id(pid, id)
+		if _rpc_ok(pid):
+			sv_peer_left.rpc_id(pid, id)
 	if lob.started and was_host:
 		# Mid-match host loss: tell survivors so modes can end gracefully
 		for pid in lob.members:

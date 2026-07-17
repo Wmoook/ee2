@@ -4,3 +4,6 @@ build/
 build.zip
 deploy/web/
 deploy/server/
+tools/templates.tpz
+tools/cloudflared.exe
+tools/commit_msg.txt

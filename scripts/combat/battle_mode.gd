@@ -166,10 +166,13 @@ func _net_setup() -> void:
 			func(_dmg: int, _dir: Vector2) -> void: pass,  # victim-authoritative: their client decides
 			func() -> int: return int(_net_hp.get(pid, MAX_HP)), MAX_HP,
 			func() -> bool: return true,
-			func(_v: Vector2) -> void: pass)
+			func(v: Vector2) -> void:
+				# Melee/dash knockback on a remote ball: deliver it to them
+				NetPlay.send_mode({"m": "kb", "tgt": pid, "x": v.x, "y": v.y}))
 		weapons._actors[rid]["loadout"] = GameState.battle_guns_enabled
 		weapons._actors[rid]["auto_equip"] = false
 		weapons._actors[rid]["no_pickup"] = true
+		weapons._actors[rid]["net_mirror"] = true
 
 
 func _remote_node(pid: int) -> Node:
@@ -215,17 +218,15 @@ func _on_mode_msg(from_id: int, data: Dictionary) -> void:
 	var rid: String = _rid(from_id)
 	match kind:
 		"bs":
-			# 20Hz battle state: shield, aim, weapon, beam-fire, hp, lives
+			# 20Hz battle state: shield, aim, weapon, charge, beam-fire, hp, lives
 			if weapons._actors.has(rid):
 				var ra: Dictionary = weapons._actors[rid]
 				weapons.set_aim(rid, Vector2(float(data.get("ax", 1.0)), float(data.get("ay", 0.0))))
 				weapons.set_shield(rid, bool(data.get("sh", false)))
-				var wpn: String = str(data.get("wpn", ""))
-				if ra.weapon != wpn:
-					if wpn == "":
-						weapons.strip_weapon(rid)
-					else:
-						weapons.give_weapon(rid, wpn)
+				_mirror_weapon(ra, str(data.get("wpn", "")))
+				# Charge-up glow: everyone SEES a dash winding up
+				ra.charging = bool(data.get("chgon", false))
+				ra.charge = float(data.get("chg", 0.0))
 				if bool(data.get("fire", false)) and ra.weapon != "" \
 						and WeaponSystem.WEAPONS.get(ra.weapon, {}).get("beam", false):
 					ra.cooldown = 0.0
@@ -241,13 +242,23 @@ func _on_mode_msg(from_id: int, data: Dictionary) -> void:
 			# live on MY sim (they can hit me; hits on others are cosmetic)
 			if weapons._actors.has(rid):
 				var ra2: Dictionary = weapons._actors[rid]
-				var w: String = str(data.get("w", "pistol"))
-				if ra2.weapon != w:
-					weapons.give_weapon(rid, w)
+				_mirror_weapon(ra2, str(data.get("w", "pistol")))
 				ra2.cooldown = 0.0
 				ra2.stun_left = 0.0
 				weapons.set_aim(rid, Vector2(float(data.get("ax", 1.0)), float(data.get("ay", 0.0))))
 				weapons.try_shoot(rid)
+		"die":
+			# Their ball popped — show the explosion where it happened
+			weapons.spawn_explosion(Vector2(float(data.get("x", 0.0)), float(data.get("y", 0.0))), Color(0.4, 0.8, 1.0))
+			if weapons._actors.has(rid):
+				weapons._actors[rid].weapon = ""
+				weapons._actors[rid].beam_on = false
+		"kb":
+			# Knockback delivered by whoever hit/shoved me — apply for real
+			if int(data.get("tgt", -1)) == NetPlay.my_id() and is_instance_valid(player) and not player._is_dead:
+				player.physics._speedX += float(data.get("x", 0.0))
+				player.physics._speedY += float(data.get("y", 0.0))
+				GameState.cam_shake += 2.0
 		"dash":
 			# Remote dash punch: arm the melee state on my sim — the shared
 			# dash-contact rules (damage, shield redirect, timed parry) run here
@@ -286,6 +297,8 @@ func _net_pump(delta: float) -> void:
 		"ax": pa.aim.x, "ay": pa.aim.y,
 		"wpn": pa.weapon,
 		"fire": beam_firing,
+		"chgon": pa.charging,
+		"chg": pa.charge,
 		"hp": player_hp,
 		"lives": player_lives,
 	})
@@ -327,8 +340,10 @@ func _net_check_win() -> void:
 
 
 func _collide_online(pid: int) -> void:
-	## My ball vs a remote ball. I only resolve MY side — their client
-	## resolves theirs with the mirrored data. Shield holders are anchors.
+	## My ball vs a remote ball. The AGGRESSOR is authoritative for the
+	## victim's knockback (delivered via a kb message) — resolving against
+	## the laggy remote ghost made rams feel like dragging someone behind
+	## you. Shields anchor only when DEFENDING; shield-shoving costs energy.
 	var p: Node = _remote_node(pid)
 	if p == null or p._is_dead or player._is_dead:
 		return
@@ -348,25 +363,37 @@ func _collide_online(pid: int) -> void:
 	var a_n: float = av.dot(n)
 	var b_n: float = bv.dot(n)
 	var approach: float = a_n - b_n
-	# Separation: my share (shield holder never budges)
+	var i_aggress: bool = a_n > -b_n
+	# Anchors: a shield only plants you while DEFENDING, never while shoving
+	var my_anchor: bool = my_sh and not i_aggress
+	var their_anchor: bool = their_sh and not i_aggress
+	# Separation: defenders hold ground; aggressors keep their momentum and
+	# push via kb instead of grinding against the lagged ghost
 	var sep_w: float = 0.5
-	if my_sh and not their_sh:
-		sep_w = 0.0
-	elif their_sh and not my_sh:
-		sep_w = 1.0
+	if my_anchor or i_aggress:
+		sep_w = 0.15
+	if their_sh and i_aggress:
+		sep_w = 1.0  # shoved off a defending shield for real
 	var sep: Vector2 = -n * overlap * sep_w
 	if not ap._collides_px(ap.x + sep.x, ap.y + sep.y):
 		ap.x += sep.x
 		ap.y += sep.y
 	if approach <= 0.0:
 		return
-	if their_sh and not my_sh:
+	if their_anchor or (their_sh and i_aggress):
+		# I rammed a raised shield: full-momentum rejection off its face
 		av = -n * maxf(av.length() * 1.2, 4.5)
-	elif my_sh and not their_sh:
-		pass  # anchor: their client hurls them, I stay planted
-	else:
-		var i_am_aggressor: bool = a_n > -b_n
-		av += n * (-approach * (0.45 if i_am_aggressor else 1.05))
+	elif i_aggress:
+		# I plow through and DELIVER their blast — instant on their sim
+		av += n * (-approach * 0.45)
+		var blast: Vector2 = n * approach * 1.05
+		NetPlay.send_mode({"m": "kb", "tgt": pid, "x": blast.x, "y": blast.y})
+		if my_sh:
+			# Shield-shoving drains the shield fast — no infinite bulldozer
+			var pa_sh: Dictionary = weapons._actors.get("player", {})
+			if not pa_sh.is_empty():
+				pa_sh.shield_energy = maxf(0.0, pa_sh.shield_energy - 0.55)
+	# Passive side: no self-blast — the aggressor's kb message delivers it
 	ap._speedX = av.x
 	ap._speedY = av.y
 	if (approach > 1.2 or my_sh or their_sh) and _bonk_gate <= 0.0:
@@ -376,6 +403,22 @@ func _collide_online(pid: int) -> void:
 		weapons.play_sfx("bonk", mid, 0.08, clampf((1.8 if shield_bounce else 1.5) - approach * 0.07, 0.7, 1.8))
 		weapons.spawn_hit(mid, Color(0.6, 0.95, 1.0) if shield_bounce else Color(0.9, 0.95, 1.0), n)
 		GameState.cam_shake += clampf(approach * 0.35, 0.5, 4.0)
+
+
+func _mirror_weapon(ra: Dictionary, wpn: String) -> void:
+	## Remote actors mirror weapon state directly — give_weapon() respects
+	## auto_equip/durations, which silently DROPPED doom + expired guns on
+	## other screens. The 20Hz state is the truth; nothing expires locally.
+	if ra.weapon == wpn:
+		if wpn != "":
+			ra.weapon_left = 999.0
+		return
+	ra.weapon = wpn
+	ra.beam_on = false
+	ra.weapon_left = 999.0 if wpn != "" else -1.0
+	ra.cur_slot = 2 if wpn != "" else 1
+	if wpn == "doom":
+		ra.super_left = 10.0
 
 
 func _nearest_enemy(idx: int) -> Dictionary:
@@ -566,6 +609,8 @@ func _on_player_died() -> void:
 	var pc: Vector2 = Vector2(player.physics.x + 8.0, player.physics.y + 8.0)
 	weapons.spawn_explosion(pc, Color(0.4, 0.8, 1.0))
 	weapons.strip_weapon("player")
+	if net:
+		NetPlay.send_mode({"m": "die", "x": pc.x, "y": pc.y})
 	# Random respawn away from the nearest bot (the controller respawns at index 0)
 	WorldManager.spawn_points[0] = _pick_spawn(_nearest_threat_to(pc))
 	player_lives -= 1
@@ -763,8 +808,19 @@ func _collide_pair(a: Dictionary, b: Dictionary) -> void:
 	if rel.length_squared() > 4.0 and n.dot(rel) < 0.0:
 		n = -n
 	var overlap: float = 16.0 - d
-	var a_sh: bool = weapons.is_shielded(a.id)
-	var b_sh: bool = weapons.is_shielded(b.id)
+	var a_sh_raw: bool = weapons.is_shielded(a.id)
+	var b_sh_raw: bool = weapons.is_shielded(b.id)
+	# Shields anchor only while DEFENDING — a shield-walker shoving people
+	# around gets no anchor privilege (and drains energy below)
+	var pre_an: float = Vector2(ap._speedX, ap._speedY).dot(n)
+	var pre_bn: float = Vector2(bp._speedX, bp._speedY).dot(n)
+	var a_aggressing: bool = pre_an > -pre_bn
+	var a_sh: bool = a_sh_raw and not a_aggressing
+	var b_sh: bool = b_sh_raw and a_aggressing
+	if a_sh_raw and a_aggressing and pre_an - pre_bn > 0.5:
+		weapons._actors[a.id]["shield_energy"] = maxf(0.0, weapons._actors[a.id].shield_energy - 0.5)
+	if b_sh_raw and not a_aggressing and pre_bn - pre_an > 0.5:
+		weapons._actors[b.id]["shield_energy"] = maxf(0.0, weapons._actors[b.id].shield_energy - 0.5)
 	# Separate — but NEVER push a ball inside solid tiles (that was the
 	# stuck-in-a-block bug). A shield holder is an ANCHOR: the rammer takes
 	# ALL of the push-out. If one side is wall-pinned, the OTHER side takes

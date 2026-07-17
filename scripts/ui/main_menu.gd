@@ -468,7 +468,8 @@ func _smiley_tex(id: int) -> Texture2D:
 		return null
 	var at: AtlasTexture = AtlasTexture.new()
 	at.atlas = _smiley_sheet
-	at.region = Rect2((id % 188) * 52, (1 if id >= 188 else 0) * 52, 52, 52)
+	# Face crop — icons fill their buttons just like the ball does
+	at.region = GameState.smiley_face_region(id)
 	return at
 
 func _make_smiley_btn(id: int) -> Button:

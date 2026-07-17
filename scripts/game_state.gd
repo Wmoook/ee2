@@ -18,6 +18,13 @@ func save_profile() -> void:
 		f.store_string(JSON.stringify({"name": player_name, "smiley_id": player_smiley_id}))
 		f.close()
 
+## Face crop inside the HD smiley sheet: every 52px cell holds a 32px face
+## with 10px transparent padding. id 0..187 classic, 188..375 gold.
+func smiley_face_region(id: int) -> Rect2:
+	var sid: int = clampi(id, 0, 375)
+	var row_y: float = 52.0 if sid >= 188 else 0.0
+	return Rect2(float(sid % 188) * 52.0 + 10.0, row_y + 10.0, 32.0, 32.0)
+
 func load_profile() -> void:
 	if not FileAccess.file_exists("user://profile.json"):
 		return
@@ -45,6 +52,12 @@ var BLOCK_CATEGORIES: Array = [
 		5011, 5012, 5013, 5014, 5015,
 		5016, 5017, 5018, 5019, 5020, 5021, 5022, 5023, 5024, 5025,
 	]},
+	{"name": "Candy", "ids": [5030, 5031, 5032, 5033, 5034, 5035]},
+	{"name": "Neon", "ids": [5036, 5037, 5038, 5039, 5040, 5041]},
+	{"name": "Castle", "ids": [5042, 5043, 5044, 5045, 5046, 5047]},
+	{"name": "Frost", "ids": [5048, 5049, 5050, 5051, 5052]},
+	{"name": "Magma", "ids": [5053, 5054, 5055, 5056, 5057]},
+	{"name": "Curves", "ids": [5058, 5059, 5060, 5061, 5062, 5063, 5064, 5065, 5066, 5067]},
 	{"name": "Slopes", "ids": [
 		2000, 2001, 2002, 2003,
 		2004, 2005, 2006, 2007,
@@ -228,6 +241,15 @@ func _register_custom_blocks() -> void:
 		{"id": 5024, "path": "res://assets/sprites/NEW_BLOCK_SPRITE/block_25.png", "path16": "res://assets/sprites/NEW_BLOCK_SPRITE/block_25_16.png"},
 		{"id": 5025, "path": "res://assets/sprites/NEW_BLOCK_SPRITE/block_26.png", "path16": "res://assets/sprites/NEW_BLOCK_SPRITE/block_26_16.png"},
 	]
+	# Block packs (Candy/Neon/Castle/Frost/Magma) + the Curves tab ribbons:
+	# ids 5030..5067 map to block_31.png..block_68.png (id - 4999)
+	for pk_id in range(5030, 5068):
+		var pk_n: int = pk_id - 4999
+		custom_blocks.append({"id": pk_id,
+			"path": "res://assets/sprites/NEW_BLOCK_SPRITE/block_%d.png" % pk_n,
+			"path16": "res://assets/sprites/NEW_BLOCK_SPRITE/block_%d_16.png" % pk_n})
+		_custom_block_warps[pk_id] = Vector2(0.0, 0.35)
+		_custom_block_warps[pk_id + 100] = Vector2(0.0, 0.35)
 	for cb in custom_blocks:
 		var tex: Texture2D = load(cb.path) as Texture2D
 		var tex16: Texture2D = load(cb.path16) as Texture2D
