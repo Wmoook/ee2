@@ -11,7 +11,9 @@ const SMILEY_SIZE: int = 26
 const SMILEY_OFFSET: int = 5
 const SMILEYS_PER_CHUNK: int = 157
 const ANIM_SPRITE_SIZE: int = 40
-const ANIM_SCALE: float = 16.0 / 40.0  # 0.4 to fit 40px into one 16x16 block
+# The ball art's visible circle is 38px inside its 40px canvas — scale so the
+# VISIBLE ball is exactly 16px (flush on floors and walls, zero pixel gap).
+const ANIM_SCALE: float = 16.0 / 38.0
 
 var physics: EEPhysics = EEPhysics.new()
 var _tick_accumulator: float = 0.0
@@ -102,9 +104,8 @@ func _ready() -> void:
 			_anim_textures.append(tex)
 	# smiley_id -1 = DREAMER ball (animated art); 0..375 = an original EE smiley
 	_use_anim_sprite = _anim_textures.size() == 3 and (smiley_id < 0 or _smiley_textures.is_empty())
-	# Ball art: 38px visible in a 40px canvas × 0.4 = 15.2px on screen.
-	# Smiley face: 32px in its cell — 0.475 lands it at the exact same 15.2px.
-	_sprite_scale = ANIM_SCALE if _use_anim_sprite else 0.475
+	# EE smiley face: 32px in its cell × 0.5 = exactly 16px, same as the ball.
+	_sprite_scale = ANIM_SCALE if _use_anim_sprite else 0.5
 
 	_smiley_sprite = Sprite2D.new()
 	_smiley_sprite.centered = true
@@ -995,7 +996,7 @@ func _get_free_block_action() -> Dictionary:
 	var pcy: float = physics.y + 8.0
 	var best_dist: float = 999999.0
 	var best_fb: Dictionary = {}
-	for fb in WorldManager.free_blocks:
+	for fb in WorldManager.fb_near(physics.x, physics.y):
 		if GameState.is_solid(fb.id):
 			continue
 		var bpos: Vector2 = fb.pos

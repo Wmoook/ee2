@@ -1892,6 +1892,45 @@ func net_remove_polyline_near(pos: Vector2, radius: float) -> void:
 func net_set_bg_tile(x: int, y: int, block_id: int) -> void:
 	net_set_tile(x, y, block_id, "bg")
 
+# ---- Free-block spatial grid (physics broadphase) ----
+# Every physics query used to scan the ENTIRE free_blocks array multiple
+# times per 240Hz tick — worlds with hundreds of placed blocks lagged hard.
+# The grid rebuilds lazily once per frame and queries return only the
+# neighborhood; collision RESULTS are identical (same checks, fewer candidates).
+const FB_CELL: float = 64.0
+var _fb_grid: Dictionary = {}
+var _fb_grid_frame: int = -1
+var _fb_scratch: Array = []
+
+func _fb_grid_rebuild() -> void:
+	_fb_grid.clear()
+	for fb in free_blocks:
+		var key: Vector2i = Vector2i(int(floor((fb.pos.x + 8.0) / FB_CELL)), int(floor((fb.pos.y + 8.0) / FB_CELL)))
+		if _fb_grid.has(key):
+			_fb_grid[key].append(fb)
+		else:
+			_fb_grid[key] = [fb]
+
+func fb_near(px: float, py: float, reach: float = 36.0) -> Array:
+	## Free blocks near a 16px box at top-left (px,py). NOTE: returns a shared
+	## scratch array — iterate immediately, never store, never nest two calls.
+	var frame: int = Engine.get_process_frames()
+	if frame != _fb_grid_frame:
+		_fb_grid_frame = frame
+		_fb_grid_rebuild()
+	_fb_scratch.clear()
+	var cx0: int = int(floor((px + 8.0 - reach) / FB_CELL))
+	var cx1: int = int(floor((px + 8.0 + reach) / FB_CELL))
+	var cy0: int = int(floor((py + 8.0 - reach) / FB_CELL))
+	var cy1: int = int(floor((py + 8.0 + reach) / FB_CELL))
+	for cy in range(cy0, cy1 + 1):
+		for cx in range(cx0, cx1 + 1):
+			var arr = _fb_grid.get(Vector2i(cx, cy))
+			if arr != null:
+				for fb in arr:
+					_fb_scratch.append(fb)
+	return _fb_scratch
+
 ## Network-aware free block add
 func net_add_free_block(fb: Dictionary) -> void:
 	free_blocks.append(fb)

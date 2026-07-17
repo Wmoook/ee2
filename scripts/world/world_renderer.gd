@@ -18,13 +18,203 @@ var single_info: Dictionary = {
 	"team": "res://assets/sprites/blocks_team.png",
 }
 
+## Redraw governor: the world layer is STATIC almost every frame — rebuilding
+## the whole canvas item 60+ times a second made dense builds lag. We only
+## redraw when something that can change pixels changes: world content, the
+## camera view, key-door state, the group filter, or edit mode. Spinning free
+## blocks keep continuous redraws while they exist (they animate every frame).
+var _content_dirty: bool = true
+var _fb_anim: bool = false
+var _last_ct: Transform2D = Transform2D(1.0, Vector2(1e9, 1e9))
+var _last_vp: Vector2 = Vector2.ZERO
+var _last_keys: int = -1
+var _last_filter: int = -1
+var _last_edit: bool = false
+
+func _mark_dirty() -> void:
+	_content_dirty = true
+
+# ---- TileMap grid pipeline ----
+# Grid tiles live in engine TileMapLayers (chunked + retained natively): pans
+# and zoom-outs rebuild NOTHING, and an edit touches one cell. Every block id
+# is GPU-baked ONCE into a strip atlas using the very same draw routine the
+# old immediate path used — the pixels are identical by construction. The old
+# immediate grid loops remain as the pre-bake fallback (and for --headless).
+const BAKE_COLS: int = 64
+var _grid_ready: bool = false
+var _ts: TileSet = null
+var _id_coords: Dictionary = {}    # block_id -> Vector2i strip coords
+var _bg_layer: TileMapLayer = null
+var _fg_layer: TileMapLayer = null
+var _ov_layer: TileMapLayer = null  # solid-on-top overlay (z=2, fg_overlay's job)
+var _door_cells: Dictionary = {}    # Vector2i -> door/gate fg id (23..28)
+var _grid_keys: int = 0
+
 func _ready() -> void:
 	texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
 	z_index = -2  # BG behind player
 	_load_textures()
-	WorldManager.tile_changed.connect(func(_a, _b, _c): queue_redraw())
-	WorldManager.bg_tile_changed.connect(func(_a, _b, _c): queue_redraw())
-	WorldManager.world_loaded.connect(func(): queue_redraw())
+	WorldManager.tile_changed.connect(_on_tile_changed)
+	WorldManager.bg_tile_changed.connect(_on_bg_tile_changed)
+	WorldManager.world_loaded.connect(_on_world_loaded_grid)
+	WorldManager.free_blocks_changed.connect(_mark_dirty)
+	WorldManager.polylines_changed.connect(_mark_dirty)
+	WorldManager.lines_changed.connect(_mark_dirty)
+	GameState.edit_mode_changed.connect(func(_e: bool): _mark_dirty())
+	if DisplayServer.get_name() != "headless":
+		_start_grid_bake.call_deferred()
+
+func _on_tile_changed(x: int, y: int, _id: int) -> void:
+	_mark_dirty()
+	if _grid_ready:
+		if x == 0 and y == 0:
+			_full_grid_sync()  # bulk ops signal with (0,0,0)
+		else:
+			_sync_fg_cell(x, y)
+
+func _on_bg_tile_changed(x: int, y: int, _id: int) -> void:
+	_mark_dirty()
+	if _grid_ready:
+		if x == 0 and y == 0:
+			_full_grid_sync()
+		else:
+			_sync_bg_cell(x, y)
+
+func _on_world_loaded_grid() -> void:
+	_mark_dirty()
+	if _grid_ready:
+		_full_grid_sync()
+
+func _start_grid_bake() -> void:
+	# Every id that can appear in a cell: the palette + every registered
+	# custom texture (maps place BG ids that aren't in the palette) + slopes
+	var ids: Dictionary = {}
+	for pid in GameState.BLOCK_PALETTE:
+		if pid > 0:
+			ids[pid] = true
+	for cid in GameState._custom_block_textures:
+		if cid is int and cid > 0:
+			ids[cid] = true
+	for sid in GameState._slope_textures:
+		if sid > 0:
+			ids[sid] = true
+	var id_list: Array = ids.keys()
+	id_list.sort()
+	var rows: int = int(ceil(float(id_list.size()) / float(BAKE_COLS)))
+	for i in range(id_list.size()):
+		_id_coords[id_list[i]] = Vector2i(i % BAKE_COLS, i / BAKE_COLS)
+	var vp: SubViewport = SubViewport.new()
+	vp.size = Vector2i(BAKE_COLS * TILE_SIZE, rows * TILE_SIZE)
+	vp.transparent_bg = true
+	vp.disable_3d = true
+	vp.render_target_update_mode = SubViewport.UPDATE_ONCE
+	vp.canvas_item_default_texture_filter = Viewport.DEFAULT_CANVAS_ITEM_TEXTURE_FILTER_NEAREST
+	add_child(vp)
+	var canvas: Node2D = Node2D.new()
+	canvas.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
+	vp.add_child(canvas)
+	canvas.draw.connect(func() -> void:
+		for bid in _id_coords:
+			var c: Vector2i = _id_coords[bid]
+			draw_block_at(canvas, Rect2(c.x * TILE_SIZE, c.y * TILE_SIZE, TILE_SIZE, TILE_SIZE), bid))
+	canvas.queue_redraw()
+	await RenderingServer.frame_post_draw
+	var img: Image = vp.get_texture().get_image()
+	vp.queue_free()
+	if img == null:
+		return  # no render target (safety) — fallback path keeps drawing
+	var strip: ImageTexture = ImageTexture.create_from_image(img)
+	_ts = TileSet.new()
+	_ts.tile_size = Vector2i(TILE_SIZE, TILE_SIZE)
+	var src: TileSetAtlasSource = TileSetAtlasSource.new()
+	src.texture = strip
+	src.texture_region_size = Vector2i(TILE_SIZE, TILE_SIZE)
+	for bid in _id_coords:
+		var c: Vector2i = _id_coords[bid]
+		src.create_tile(c)
+		# Alternatives 1/2/3 = 90/180/270 degree grid rotations
+		src.create_alternative_tile(c, 1)
+		src.get_tile_data(c, 1).transpose = true
+		src.get_tile_data(c, 1).flip_h = true
+		src.create_alternative_tile(c, 2)
+		src.get_tile_data(c, 2).flip_h = true
+		src.get_tile_data(c, 2).flip_v = true
+		src.create_alternative_tile(c, 3)
+		src.get_tile_data(c, 3).transpose = true
+		src.get_tile_data(c, 3).flip_v = true
+	_ts.add_source(src, 0)
+	_bg_layer = TileMapLayer.new()
+	_bg_layer.tile_set = _ts
+	_bg_layer.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
+	_bg_layer.modulate = Color(0.36, 0.37, 0.5)
+	_bg_layer.z_as_relative = false
+	_bg_layer.z_index = -2
+	add_child(_bg_layer)
+	_fg_layer = TileMapLayer.new()
+	_fg_layer.tile_set = _ts
+	_fg_layer.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
+	_fg_layer.z_as_relative = false
+	_fg_layer.z_index = -2
+	add_child(_fg_layer)
+	_ov_layer = TileMapLayer.new()
+	_ov_layer.tile_set = _ts
+	_ov_layer.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
+	_ov_layer.z_as_relative = false
+	_ov_layer.z_index = 2  # ABOVE the player, like fg_overlay always was
+	add_child(_ov_layer)
+	_grid_ready = true
+	_full_grid_sync()
+	_mark_dirty()  # immediate-path grid loops stop; repaint the rest
+
+func _rot_alt(x: int, y: int) -> int:
+	var deg: int = WorldManager.get_rotation(x, y)
+	var q: int = int(round(float(deg) / 90.0)) % 4
+	if q < 0:
+		q += 4
+	return q
+
+func _sync_fg_cell(x: int, y: int) -> void:
+	var cell: Vector2i = Vector2i(x, y)
+	var fg: int = WorldManager.get_tile(x, y)
+	if fg >= 23 and fg <= 28:
+		_door_cells[cell] = fg
+	else:
+		_door_cells.erase(cell)
+	if fg == 0 or not _id_coords.has(_get_visual_id(fg)):
+		_fg_layer.erase_cell(cell)
+		_ov_layer.erase_cell(cell)
+		return
+	var vid: int = _get_visual_id(fg)
+	var alt: int = _rot_alt(x, y)
+	_fg_layer.set_cell(cell, 0, _id_coords[vid], alt)
+	if GameState.is_solid(fg):
+		_ov_layer.set_cell(cell, 0, _id_coords[vid], alt)
+	else:
+		_ov_layer.erase_cell(cell)
+
+func _sync_bg_cell(x: int, y: int) -> void:
+	var cell: Vector2i = Vector2i(x, y)
+	var bg: int = WorldManager.get_bg_tile(x, y)
+	if bg == 0 or not _id_coords.has(bg):
+		_bg_layer.erase_cell(cell)
+		return
+	_bg_layer.set_cell(cell, 0, _id_coords[bg], 0)
+
+func _full_grid_sync() -> void:
+	_bg_layer.clear()
+	_fg_layer.clear()
+	_ov_layer.clear()
+	_door_cells.clear()
+	for y in range(WorldManager.world_height):
+		for x in range(WorldManager.world_width):
+			if WorldManager.get_tile(x, y) != 0:
+				_sync_fg_cell(x, y)
+			if WorldManager.get_bg_tile(x, y) != 0:
+				_sync_bg_cell(x, y)
+
+func _refresh_door_cells() -> void:
+	for cell in _door_cells:
+		_sync_fg_cell(cell.x, cell.y)
 
 func _load_textures() -> void:
 	for atlas_name in split_info:
@@ -41,7 +231,40 @@ func _load_textures() -> void:
 			textures["%s_0" % atlas_name] = tex
 
 func _process(_delta: float) -> void:
-	queue_redraw()
+	var ct: Transform2D = get_viewport().get_canvas_transform()
+	var vp: Vector2 = get_viewport_rect().size
+	var now: int = Time.get_ticks_msec()
+	var keys: int = 0
+	if WorldManager.key_timers.get("red", 0) > now:
+		keys |= 1
+	if WorldManager.key_timers.get("green", 0) > now:
+		keys |= 2
+	if WorldManager.key_timers.get("blue", 0) > now:
+		keys |= 4
+	# View "changed" = zoom/basis change, or ≥0.2px of accumulated camera
+	# travel since the last draw (the follow-lerp drifts by sub-pixel amounts
+	# forever — exact compares forced a full redraw every single frame)
+	var view_moved: bool = ct.x != _last_ct.x or ct.y != _last_ct.y \
+			or ct.origin.distance_squared_to(_last_ct.origin) > 0.04
+	if _grid_ready and keys != _grid_keys:
+		_grid_keys = keys
+		_refresh_door_cells()  # door<->gate visuals flip on key transitions
+	if _content_dirty or _fb_anim or view_moved or vp != _last_vp \
+			or keys != _last_keys or WorldManager.active_group_filter != _last_filter \
+			or GameState.is_edit_mode != _last_edit:
+		_last_ct = ct
+		_last_vp = vp
+		_last_keys = keys
+		_last_filter = WorldManager.active_group_filter
+		_last_edit = GameState.is_edit_mode
+		_content_dirty = false
+		queue_redraw()
+
+func _view_world_rect() -> Rect2:
+	var inv: Transform2D = get_viewport().get_canvas_transform().affine_inverse()
+	var tl: Vector2 = inv * Vector2.ZERO
+	var br: Vector2 = inv * get_viewport_rect().size
+	return Rect2(tl, br - tl)
 
 func get_visible_range() -> Array:
 	# Use canvas transform to get the ACTUAL rendered viewport area
@@ -59,32 +282,45 @@ func get_visible_range() -> Array:
 		mini(WorldManager.world_height, int(ceil(bot_right.y / TILE_SIZE)) + 1),
 	]
 
+var perf_redraws: int = 0  # perf introspection (stress test reads this)
+
 func _draw() -> void:
+	perf_redraws += 1
 	var r: Array = get_visible_range()
-	# BG tiles: drawn OPAQUE but heavily darkened and cooled so the back
-	# layer is unmistakable at a glance (translucent-white BG read almost
-	# identical to foreground blocks)
-	for y in range(r[1], r[3]):
-		for x in range(r[0], r[2]):
-			var bg_id: int = WorldManager.get_bg_tile(x, y)
-			if bg_id != 0:
-				draw_block(x, y, bg_id, 1.0, Color(0.36, 0.37, 0.5))
-	# FG tiles also drawn here (behind player) for the base layer
-	for y in range(r[1], r[3]):
-		for x in range(r[0], r[2]):
-			var fg_id: int = WorldManager.get_tile(x, y)
-			if fg_id != 0:
-				var rot: int = WorldManager.get_rotation(x, y)
-				if rot != 0:
-					_draw_block_rotated(x, y, fg_id, 1.0, rot)
-				else:
-					draw_block(x, y, fg_id, 1.0)
+	var vr: Rect2 = _view_world_rect().grow(32.0)  # cull margin: rotation/warp/caps
+	_fb_anim = false
+	# Grid tiles live in TileMapLayers once the bake lands; this immediate
+	# path only covers the first pre-bake frames (and headless runs).
+	if not _grid_ready:
+		# BG tiles: drawn OPAQUE but heavily darkened and cooled so the back
+		# layer is unmistakable at a glance
+		for y in range(r[1], r[3]):
+			for x in range(r[0], r[2]):
+				var bg_id: int = WorldManager.get_bg_tile(x, y)
+				if bg_id != 0:
+					draw_block(x, y, bg_id, 1.0, Color(0.36, 0.37, 0.5))
+		# FG tiles also drawn here (behind player) for the base layer
+		for y in range(r[1], r[3]):
+			for x in range(r[0], r[2]):
+				var fg_id: int = WorldManager.get_tile(x, y)
+				if fg_id != 0:
+					var rot: int = WorldManager.get_rotation(x, y)
+					if rot != 0:
+						_draw_block_rotated(x, y, fg_id, 1.0, rot)
+					else:
+						draw_block(x, y, fg_id, 1.0)
 
 	# Draw polyline curves FIRST (so end cap blocks render on top)
 	# Draw polyline curves: textured quads every 16px (no triangulation artifacts)
 	for poly in WorldManager.polylines:
 		if poly.get("collision_only", false):
 			continue  # Skip collision-only polylines (no visual)
+		# Off-screen curves cost nothing (bbox vs camera view)
+		if poly.has("bbox_min"):
+			var pbmin: Vector2 = poly.bbox_min
+			var pbmax: Vector2 = poly.bbox_max
+			if not vr.intersects(Rect2(pbmin, pbmax - pbmin).grow(14.0)):
+				continue
 		var poly_pts: PackedVector2Array = poly.points
 		var poly_norms: Array = poly.normals
 		if poly_pts.size() >= 2:
@@ -216,21 +452,64 @@ func _draw() -> void:
 			if GameState.is_edit_mode:
 				draw_polyline(poly_pts, Color(0.2, 0.8, 1.0, 0.4), 1.0, true)
 
-	# Draw free blocks: BG layer first (behind), then FG layer on top
+	# Draw free blocks: BG layer first (behind), then FG layer on top.
+	# Off-screen free blocks are skipped; spinning ones keep redraws alive.
 	for fb in WorldManager.free_blocks:
 		if fb.get("curve_visual", false) or fb.get("curve_collision", false):
+			continue
+		if fb.get("spin", 0.0) != 0.0:
+			_fb_anim = true
+		if not vr.has_point(fb.pos):
 			continue
 		if fb.get("bg", false):
 			_draw_free_block(fb, 0.55)  # BG at reduced opacity
 	for fb in WorldManager.free_blocks:
 		if fb.get("curve_visual", false) or fb.get("curve_collision", false):
 			continue
+		if not vr.has_point(fb.pos):
+			continue
 		if not fb.get("bg", false):
 			_draw_free_block(fb)
 
-	# Draw freeform lines
+	# Draw freeform lines (only the ones crossing the view)
 	for line in WorldManager.lines:
+		var lmin: Vector2 = Vector2(minf(line.start.x, line.end.x), minf(line.start.y, line.end.y))
+		var lmax: Vector2 = Vector2(maxf(line.start.x, line.end.x), maxf(line.start.y, line.end.y))
+		if not vr.intersects(Rect2(lmin, lmax - lmin).grow(line.width)):
+			continue
 		draw_line(line.start, line.end, line.color, line.width, true)
+
+func draw_block_at(ci: CanvasItem, dest: Rect2, block_id: int) -> void:
+	## EXACT single-tile visual (same routine as the immediate grid path) at
+	## an arbitrary dest rect — the strip bake uses this so TileMap cells are
+	## pixel-identical to what draw_block produced.
+	if GameState.is_custom_block(block_id):
+		var ctex: Texture2D = GameState.get_custom_block_texture(block_id)
+		if ctex:
+			ci.draw_texture_rect(ctex, dest, false)
+		return
+	if GameState.is_slope(block_id):
+		var slope_tex = GameState.get_slope_texture(block_id)
+		if slope_tex:
+			ci.draw_texture_rect(slope_tex, dest, false)
+		return
+	var info: Dictionary = GameState.get_block_info(block_id)
+	if info.is_empty():
+		return
+	var atlas_name: String = info.get("atlas", "blocks")
+	var artoffset: int = info.get("artoffset", 0)
+	var chunk: int = 0
+	var local_off: int = artoffset
+	if split_info.has(atlas_name):
+		chunk = local_off / TILES_PER_CHUNK
+		local_off = local_off % TILES_PER_CHUNK
+	var tex_key: String = "%s_%d" % [atlas_name, chunk]
+	if not textures.has(tex_key):
+		return
+	var tex: Texture2D = textures[tex_key]
+	var cols: int = tex.get_width() / TILE_SIZE
+	var src: Rect2 = Rect2((local_off % cols) * TILE_SIZE, (local_off / cols) * TILE_SIZE, TILE_SIZE, TILE_SIZE)
+	ci.draw_texture_rect_region(tex, dest, src)
 
 func _curve_uv(dist: float, cap_frac: float, uv0: float, uv1: float) -> float:
 	## Tiling UV: repeat the block texture every 16px along the curve

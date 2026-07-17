@@ -326,7 +326,7 @@ func tick(input_h: int, input_v: int, space_just: bool, space_held: bool) -> voi
 			var pass_push: Vector2 = Vector2.ZERO
 			var pass_depth: float = 0.0
 			var pass_alt_push: Vector2 = Vector2.ZERO  # Alternative axis push
-			for fb in WorldManager.free_blocks:
+			for fb in WorldManager.fb_near(x, y):
 				if not GameState.is_solid(fb.id):
 					continue
 				if fb.get("curve_visual", false):
@@ -839,10 +839,11 @@ func _step_position(frac: float = 1.0) -> void:
 
 func _refresh_aa_fb_cache() -> void:
 	## Collect axis-aligned (0/90/180/270) solid free block centers once per tick.
+	## Local neighborhood only — the tick moves the ball a few px at most.
 	_aa_fb_cache.clear()
 	if is_god_mode:
 		return
-	for fb in WorldManager.free_blocks:
+	for fb in WorldManager.fb_near(x, y, 64.0):
 		if not GameState.is_solid(fb.id): continue
 		if fb.get("curve_visual", false): continue
 		var rot_mod: int = int(round(fb.rotation)) % 360
@@ -1030,7 +1031,7 @@ func _check_grounded() -> bool:
 	# Also check axis-aligned free blocks
 	var _gcx: float = _gx + 8.0
 	var _gcy: float = _gy + 8.0
-	for fb in WorldManager.free_blocks:
+	for fb in WorldManager.fb_near(_gx, _gy):
 		if not GameState.is_solid(fb.id): continue
 		if fb.get("curve_visual", false): continue
 		var rot_mod: int = int(round(fb.rotation)) % 360
@@ -1120,7 +1121,7 @@ func _collides_free_blocks(px: float, py: float, shrink: float = 0.0) -> bool:
 	# Check player AABB against rotated free blocks using SAT-lite
 	# shrink: reduce collision box by this amount on each side (for gap-assist tolerance)
 	var half: float = 16.0 - shrink
-	for fb in WorldManager.free_blocks:
+	for fb in WorldManager.fb_near(px, py):
 		if not GameState.is_solid(fb.id):
 			continue
 		if fb.get("curve_visual", false):
@@ -1140,7 +1141,7 @@ func _collides_free_blocks(px: float, py: float, shrink: float = 0.0) -> bool:
 func _count_free_block_overlaps(px: float, py: float) -> int:
 	# Count how many free blocks the player overlaps at (px, py)
 	var count: int = 0
-	for fb in WorldManager.free_blocks:
+	for fb in WorldManager.fb_near(px, py):
 		if not GameState.is_solid(fb.id):
 			continue
 		if fb.get("curve_visual", false):
@@ -1157,7 +1158,7 @@ func _count_free_block_overlaps(px: float, py: float) -> int:
 
 func _collides_free_blocks_axis(px: float, py: float) -> bool:
 	# Like _collides_free_blocks but ONLY checks axis-aligned blocks (0/90/180/270)
-	for fb in WorldManager.free_blocks:
+	for fb in WorldManager.fb_near(px, py):
 		if not GameState.is_solid(fb.id):
 			continue
 		if fb.get("curve_visual", false):
@@ -1181,9 +1182,10 @@ func _find_gap_y_between_free_blocks(px: float, py: float, dir_x: float) -> floa
 	var test_x: float = px + dir_x * 4.0
 	var pcx: float = test_x + 8.0
 	var pcy: float = py + 8.0
-	# Collect all blocking free blocks at the test position
+	# Collect all blocking free blocks at the test position (tall window —
+	# gap-assist looks a couple of blocks up/down the column)
 	var block_centers_y: Array = []
-	for fb in WorldManager.free_blocks:
+	for fb in WorldManager.fb_near(test_x, py, 96.0):
 		if not GameState.is_solid(fb.id):
 			continue
 		if fb.get("curve_visual", false):
@@ -1221,7 +1223,7 @@ func _find_gap_y_between_free_blocks(px: float, py: float, dir_x: float) -> floa
 
 func _check_free_block_collision() -> void:
 	# Push player out of free blocks (only solid ones)
-	for fb in WorldManager.free_blocks:
+	for fb in WorldManager.fb_near(x, y):
 		if not GameState.is_solid(fb.id):
 			continue
 		if fb.get("curve_visual", false):

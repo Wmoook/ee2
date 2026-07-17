@@ -262,6 +262,8 @@ func _ready() -> void:
 	if not OS.has_feature("web"):
 		Engine.max_fps = 0
 		DisplayServer.window_set_vsync_mode(DisplayServer.VSYNC_DISABLED)
+	if "--cap-fps" in OS.get_cmdline_user_args():
+		Engine.max_fps = 240  # test harnesses: pre-optimization frame pacing
 	# Load items_map.json
 	_load_items_map()
 	# Register custom blocks (40x40 textures scaled to 16x16)
@@ -309,8 +311,6 @@ func _register_custom_blocks() -> void:
 		custom_blocks.append({"id": pk_id,
 			"path": "res://assets/sprites/NEW_BLOCK_SPRITE/block_%d.png" % pk_n,
 			"path16": "res://assets/sprites/NEW_BLOCK_SPRITE/block_%d_16.png" % pk_n})
-		_custom_block_warps[pk_id] = Vector2(0.0, 0.35)
-		_custom_block_warps[pk_id + 100] = Vector2(0.0, 0.35)
 	# MEGA PACKS (Jungle/Ocean/Space/Factory/Desert/Dream/Arcade/Gems/Spooky
 	# 6000-6071) + CURVES II ribbons (6080-6089). The classic +100 BG scheme
 	# is full past id 5099, so these BG twins live at id + 1000 (7000s).
@@ -324,8 +324,6 @@ func _register_custom_blocks() -> void:
 			"path": "res://assets/sprites/BLOCK_PACKS/%d.png" % mp_id,
 			"path16": "res://assets/sprites/BLOCK_PACKS/%d_16.png" % mp_id,
 			"bg_off": 1000})
-		_custom_block_warps[mp_id] = Vector2(0.0, 0.35)
-		_custom_block_warps[mp_id + 1000] = Vector2(0.0, 0.35)
 	for cb in custom_blocks:
 		var tex: Texture2D = load(cb.path) as Texture2D
 		var tex16: Texture2D = load(cb.path16) as Texture2D
@@ -579,20 +577,10 @@ func get_custom_block_texture(id: int) -> Texture2D:
 func is_custom_block(id: int) -> bool:
 	return _custom_block_textures.has(id)
 
-var _custom_block_warps: Dictionary = {
-	5000: Vector2(0.0, 0.35), 5001: Vector2(0.0, 0.35), 5002: Vector2(0.0, 0.35), 5003: Vector2(0.0, 0.35), 5004: Vector2(0.0, 0.35),
-	5005: Vector2(0.0, 0.35), 5006: Vector2(0.0, 0.35), 5007: Vector2(0.0, 0.35), 5008: Vector2(0.0, 0.35),
-	5009: Vector2(0.0, 0.35), 5010: Vector2(0.0, 0.35),
-	5011: Vector2(0.0, 0.35), 5012: Vector2(0.0, 0.35), 5013: Vector2(0.0, 0.35), 5014: Vector2(0.0, 0.35), 5015: Vector2(0.0, 0.35),
-	5100: Vector2(0.0, 0.35), 5101: Vector2(0.0, 0.35), 5102: Vector2(0.0, 0.35), 5103: Vector2(0.0, 0.35), 5104: Vector2(0.0, 0.35),
-	5105: Vector2(0.0, 0.35), 5106: Vector2(0.0, 0.35), 5107: Vector2(0.0, 0.35), 5108: Vector2(0.0, 0.35),
-	5109: Vector2(0.0, 0.35), 5110: Vector2(0.0, 0.35),
-	5111: Vector2(0.0, 0.35), 5112: Vector2(0.0, 0.35), 5113: Vector2(0.0, 0.35), 5114: Vector2(0.0, 0.35), 5115: Vector2(0.0, 0.35),
-	5016: Vector2(0.0, 0.35), 5017: Vector2(0.0, 0.35), 5018: Vector2(0.0, 0.35), 5019: Vector2(0.0, 0.35), 5020: Vector2(0.0, 0.35),
-	5021: Vector2(0.0, 0.35), 5022: Vector2(0.0, 0.35), 5023: Vector2(0.0, 0.35), 5024: Vector2(0.0, 0.35), 5025: Vector2(0.0, 0.35),
-	5116: Vector2(0.0, 0.35), 5117: Vector2(0.0, 0.35), 5118: Vector2(0.0, 0.35), 5119: Vector2(0.0, 0.35), 5120: Vector2(0.0, 0.35),
-	5121: Vector2(0.0, 0.35), 5122: Vector2(0.0, 0.35), 5123: Vector2(0.0, 0.35), 5124: Vector2(0.0, 0.35), 5125: Vector2(0.0, 0.35),
-}  # Baked warp for 40x40 blocks (FG + BG versions)
+# Visual warp per block id (Ctrl+Arrows editor tool can still set these).
+# Baked warps are GONE: every block renders at exactly 16x16 so the grid is
+# perfectly uniform and the ball sits flush against every surface.
+var _custom_block_warps: Dictionary = {}
 
 func get_custom_block_warp(id: int) -> Vector2:
 	return _custom_block_warps.get(id, Vector2.ZERO)

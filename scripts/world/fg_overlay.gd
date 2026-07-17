@@ -6,18 +6,44 @@ var _renderer: Node2D = null
 func set_renderer(r: Node2D) -> void:
 	_renderer = r
 
+## Redraw governor (mirrors world_renderer): the overlay is static — only
+## content changes, camera view changes, or key-door flips repaint it.
+var _content_dirty: bool = true
+var _last_ct: Transform2D = Transform2D(1.0, Vector2(1e9, 1e9))
+var _last_vp: Vector2 = Vector2.ZERO
+var _last_keys: int = -1
+
 func _ready() -> void:
 	z_index = 2
 	texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
-	WorldManager.tile_changed.connect(func(_a, _b, _c): queue_redraw())
-	WorldManager.world_loaded.connect(func(): queue_redraw())
+	WorldManager.tile_changed.connect(func(_a, _b, _c): _content_dirty = true)
+	WorldManager.world_loaded.connect(func(): _content_dirty = true)
 
 func _process(_delta: float) -> void:
-	queue_redraw()
+	var ct: Transform2D = get_viewport().get_canvas_transform()
+	var vp: Vector2 = get_viewport_rect().size
+	var now: int = Time.get_ticks_msec()
+	var keys: int = 0
+	if WorldManager.key_timers.get("red", 0) > now:
+		keys |= 1
+	if WorldManager.key_timers.get("green", 0) > now:
+		keys |= 2
+	if WorldManager.key_timers.get("blue", 0) > now:
+		keys |= 4
+	var view_moved: bool = ct.x != _last_ct.x or ct.y != _last_ct.y \
+			or ct.origin.distance_squared_to(_last_ct.origin) > 0.04
+	if _content_dirty or view_moved or vp != _last_vp or keys != _last_keys:
+		_last_ct = ct
+		_last_vp = vp
+		_last_keys = keys
+		_content_dirty = false
+		queue_redraw()
 
 func _draw() -> void:
 	if not _renderer:
 		return
+	if _renderer._grid_ready:
+		return  # the renderer's overlay TileMapLayer (z=2) owns this now
 	var r: Array = _renderer.get_visible_range()
 	for y in range(r[1], r[3]):
 		for x in range(r[0], r[2]):
