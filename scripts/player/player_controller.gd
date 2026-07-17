@@ -26,6 +26,7 @@ var _last_normal: Vector2 = Vector2(0, -1)
 var _valley_smiley_ticks: int = 0
 var _slow_ticks: int = 0  # Ticks player has been slow
 var _smiley_textures: Array = []
+var _sprite_scale: float = 0.4  # ANIM_SCALE for the ball, 0.5 for HD smileys
 var _space_just: bool = false
 # Animated smiley: 3 frames (idle, transition, moving)
 var _anim_textures: Array = []  # [idle, transition, moving]
@@ -90,16 +91,18 @@ var _speech_timer: float = 0.0
 var _pending_speech: String = ""  # Queued speech to broadcast
 
 func _ready() -> void:
-	for i in range(2):
-		var tex: Texture2D = load("res://assets/sprites/smileys_%d.png" % i) as Texture2D
-		if tex:
-			_smiley_textures.append(tex)
+	# Original EE smiley sheet (HD 52px cells: row 0 classic, row 1 gold)
+	var smiley_sheet: Texture2D = load("res://assets/sprites/ee_smileys_hd.png") as Texture2D
+	if smiley_sheet:
+		_smiley_textures.append(smiley_sheet)
 	# Load animated sprite frames (BALL_1)
 	for fname in ["BALL_1_frame1", "BALL_1_frame2", "BALL_1_frame3"]:
 		var tex: Texture2D = load("res://assets/sprites/NEW_SPRITES_BALL/%s.png" % fname) as Texture2D
 		if tex:
 			_anim_textures.append(tex)
-	_use_anim_sprite = _anim_textures.size() == 3
+	# smiley_id -1 = DREAMER ball (animated art); 0..375 = an original EE smiley
+	_use_anim_sprite = _anim_textures.size() == 3 and (smiley_id < 0 or _smiley_textures.is_empty())
+	_sprite_scale = ANIM_SCALE if _use_anim_sprite else 0.5
 
 	_smiley_sprite = Sprite2D.new()
 	_smiley_sprite.centered = true
@@ -115,6 +118,8 @@ func _ready() -> void:
 	add_child(_smiley_sprite)
 	if not _use_anim_sprite:
 		_set_smiley(smiley_id)
+		# 52px HD cell shown at 26px — the classic EE overhang on a 16px ball
+		_smiley_sprite.scale = Vector2(_sprite_scale, _sprite_scale)
 	# Fire draw layer (above foreground blocks at z=2)
 	if _use_anim_sprite:
 		_fire_layer = Node2D.new()
@@ -207,15 +212,12 @@ func _setup_camera() -> void:
 func _set_smiley(id: int) -> void:
 	if _smiley_textures.is_empty():
 		return
-	var col: int = id % 188
-	var chunk: int = col / SMILEYS_PER_CHUNK
-	var local_col: int = col % SMILEYS_PER_CHUNK
-	if chunk >= _smiley_textures.size():
-		chunk = 0
-		local_col = 0
+	var sid: int = clampi(id, 0, 375)
+	var col: int = sid % 188
+	var row: int = 1 if sid >= 188 else 0  # row 1 = gold variants
 	var atlas_tex: AtlasTexture = AtlasTexture.new()
-	atlas_tex.atlas = _smiley_textures[chunk]
-	atlas_tex.region = Rect2(local_col * SMILEY_SIZE, 0, SMILEY_SIZE, SMILEY_SIZE)
+	atlas_tex.atlas = _smiley_textures[0]
+	atlas_tex.region = Rect2(col * 52, row * 52, 52, 52)
 	_smiley_sprite.texture = atlas_tex
 
 func _tick_update(delta: float) -> void:
@@ -234,7 +236,7 @@ func _tick_update(delta: float) -> void:
 			_smiley_sprite.rotation = stretch_angle + PI * 0.5
 			# Stretch along the direction INTO the hole, get thin perpendicular
 			# Y = toward hole (stretch), X = perpendicular (thin)
-			var base_s: float = ANIM_SCALE
+			var base_s: float = _sprite_scale
 			var stretch_y: float = lerpf(1.0, 2.5, t * t)  # Elongate toward hole
 			var thin_x: float = lerpf(1.0, 0.1, t * t)  # Get very thin
 			var shrink: float = lerpf(1.0, 0.0, t * t * t)  # Shrink to nothing at end
@@ -283,7 +285,7 @@ func _tick_update(delta: float) -> void:
 				_gz_death = false
 				_smiley_sprite.visible = true
 				_smiley_sprite.modulate = Color.WHITE
-				_smiley_sprite.scale = Vector2(ANIM_SCALE, ANIM_SCALE)
+				_smiley_sprite.scale = Vector2(_sprite_scale, _sprite_scale)
 				_smiley_sprite.rotation = 0.0
 				_name_label.visible = true
 				_fire_particles.clear()
@@ -294,7 +296,7 @@ func _tick_update(delta: float) -> void:
 					var to_center: Vector2 = _gz_death_center - (_visual_pos + Vector2(8, 8))
 					var stretch_angle: float = to_center.angle()
 					_smiley_sprite.rotation = stretch_angle + PI * 0.5
-					var base_s: float = ANIM_SCALE
+					var base_s: float = _sprite_scale
 					var stretch_y: float = lerpf(1.0, 2.5, t * t)
 					var thin_x: float = lerpf(1.0, 0.1, t * t)
 					var shrink: float = lerpf(1.0, 0.0, t * t * t)
@@ -311,7 +313,7 @@ func _tick_update(delta: float) -> void:
 				if _use_anim_sprite and _anim_textures.size() >= 3:
 					var af: int = clampi(_remote_sync.anim_frame, 0, _anim_textures.size() - 1)
 					_smiley_sprite.texture = _anim_textures[af]
-				_smiley_sprite.flip_h = _remote_sync.flip_h
+					_smiley_sprite.flip_h = _remote_sync.flip_h
 				_smiley_sprite.rotation = lerp_angle(_smiley_sprite.rotation, _remote_sync.rotation, _rc(0.4, delta))
 				_smiley_sprite.modulate = Color(0.6, 0.8, 1.0, 0.5) if _remote_sync.is_god else Color.WHITE
 			# Generate fire trail for remote player based on their speed
@@ -363,6 +365,12 @@ func _tick_update(delta: float) -> void:
 		_space_just = true
 	# Parried in battle: full control loss for the stun duration
 	if GameState.battle_mode and GameState.player_stunned:
+		ix = 0
+		iy = 0
+		_space_just = false
+		_space_held = false
+	# Online 3-2-1-GO countdown: everyone frozen until GO
+	if GameState.net_freeze:
 		ix = 0
 		iy = 0
 		_space_just = false
@@ -444,10 +452,17 @@ func _tick_update(delta: float) -> void:
 		if not _pending_speech.is_empty():
 			_bdata["sp"] = _pending_speech
 			_pending_speech = ""
-		_broadcast_state.rpc(_bdata)
+		if NetPlay.online:
+			NetPlay.send_pstate(_bdata)
+		else:
+			_broadcast_state.rpc(_bdata)
 		# Send tiles via RELIABLE RPC
 		if WorldManager._pending_net_tiles.size() > 0:
-			_broadcast_tiles.rpc(WorldManager._pending_net_tiles.duplicate())
+			var _tls: Array = WorldManager._pending_net_tiles.duplicate()
+			if NetPlay.online:
+				NetPlay.send_tiles(_tls)
+			else:
+				_broadcast_tiles.rpc(_tls)
 			WorldManager._pending_net_tiles.clear()
 		# All world edits go through NetworkManager (autoload, stable RPC path)
 		if WorldManager._pending_net_clear_world:
@@ -1141,7 +1156,7 @@ func _respawn() -> void:
 	_gz_death = false
 	_smiley_sprite.visible = true
 	_smiley_sprite.modulate = Color.WHITE
-	_smiley_sprite.scale = Vector2(ANIM_SCALE, ANIM_SCALE)
+	_smiley_sprite.scale = Vector2(_sprite_scale, _sprite_scale)
 	_smiley_sprite.rotation = 0.0
 	_name_label.visible = true
 	var sp: Vector2 = WorldManager.get_spawn_point()

@@ -7,6 +7,9 @@ var _bg: ColorRect
 var _players: Dictionary = {}  # peer_id -> PlayerController node
 var _world_ready: bool = false
 var _player_scene: PackedScene = preload("res://scenes/player/player.tscn")
+var _count_layer: CanvasLayer = null
+var _count_label: Label = null
+var _go_hold: float = 0.0
 
 func _ready() -> void:
 	RenderingServer.set_default_clear_color(Color(0.0, 0.0, 0.0))
@@ -15,6 +18,7 @@ func _ready() -> void:
 	NetworkManager.player_connected.connect(_on_player_connected)
 	NetworkManager.player_disconnected.connect(_on_player_disconnected)
 	NetworkManager.chat_received.connect(_on_chat_for_speech)
+	NetPlay.server_lost.connect(_on_server_lost)
 
 	# Load world: host loads from file, client already has it (loaded in main_menu).
 	# Battle mode skips this — the arena was already built by BattleMap.build().
@@ -74,6 +78,10 @@ func _setup_scene() -> void:
 	# HUD on top
 	var hud: CanvasLayer = preload("res://scripts/ui/game_hud.gd").new()
 	add_child(hud)
+
+	# Online match: 3-2-1-GO countdown (everyone frozen until GO)
+	if NetPlay.match_active and NetPlay.match_countdown > 0.0:
+		_build_countdown()
 
 	# Combat modes (weapons, AI opponents, lives HUD)
 	if GameState.battle_mode:
@@ -185,7 +193,38 @@ func _on_chat_for_speech(sender_name: String, _message: String) -> void:
 	if _players.has(my_id) and sender_name == GameState.player_name:
 		_players[my_id].set_speech(_message)
 
+func _build_countdown() -> void:
+	_count_layer = CanvasLayer.new()
+	_count_layer.layer = 95
+	add_child(_count_layer)
+	_count_label = Label.new()
+	_count_label.set_anchors_preset(Control.PRESET_FULL_RECT)
+	_count_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_count_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	_count_label.add_theme_font_size_override("font_size", 110)
+	_count_label.add_theme_color_override("font_color", Color(1.0, 0.9, 0.35))
+	_count_label.add_theme_color_override("font_outline_color", Color(0, 0, 0, 0.9))
+	_count_label.add_theme_constant_override("outline_size", 16)
+	_count_label.text = str(int(ceil(NetPlay.match_countdown)))
+	_count_layer.add_child(_count_label)
+
 func _process(_delta: float) -> void:
+	# Online countdown: 3-2-1-GO, then unfreeze
+	if _count_layer != null:
+		if NetPlay.match_countdown > 0.0:
+			NetPlay.match_countdown -= _delta
+			if NetPlay.match_countdown <= 0.0:
+				GameState.net_freeze = false
+				_count_label.text = "GO!"
+				_count_label.add_theme_color_override("font_color", Color(0.45, 1.0, 0.5))
+				_go_hold = 0.8
+			else:
+				_count_label.text = str(int(ceil(NetPlay.match_countdown)))
+		elif _go_hold > 0.0:
+			_go_hold -= _delta
+			if _go_hold <= 0.0:
+				_count_layer.queue_free()
+				_count_layer = null
 	# Keep vignette covering viewport
 	if _vignette and _camera_exists():
 		var cam: Camera2D = get_viewport().get_camera_2d()
@@ -207,18 +246,28 @@ func _input(event: InputEvent) -> void:
 			GameState.set_edit_mode(not GameState.is_edit_mode)
 			get_viewport().set_input_as_handled()
 		if event.physical_keycode == KEY_ESCAPE:
-			# Save world — but NEVER in battle mode (the arena must not
-			# overwrite the player's saved world)
-			if not GameState.battle_mode:
-				WorldManager.save_to_file("user://world_save.json")
-			GameState.battle_mode = false
-			GameState.boss_fight = false
-			GameState.survivors_mode = false
-			GameState.zombies_mode = false
-			GameState.player_stunned = false
-			GameState.cam_shake = 0.0
-			get_tree().paused = false
-			NetworkManager.disconnect_game()
-			get_tree().change_scene_to_file("res://scenes/ui/main_menu.tscn")
-	if event.is_action_pressed("save_world") and not GameState.battle_mode:
+			_leave_to_menu()
+	if event.is_action_pressed("save_world") and not GameState.battle_mode and not NetPlay.online:
 		WorldManager.save_to_file("user://world_save.json")
+
+func _leave_to_menu() -> void:
+	# Save world — but NEVER in battle mode (the arena must not overwrite the
+	# player's saved world) and never as a guest of the shared online world
+	# (the dedicated server owns that save).
+	if not GameState.battle_mode and not NetPlay.online:
+		WorldManager.save_to_file("user://world_save.json")
+	NetPlay.leave_room()
+	GameState.battle_mode = false
+	GameState.boss_fight = false
+	GameState.survivors_mode = false
+	GameState.zombies_mode = false
+	GameState.player_stunned = false
+	GameState.net_freeze = false
+	GameState.cam_shake = 0.0
+	get_tree().paused = false
+	NetworkManager.disconnect_game()
+	get_tree().change_scene_to_file("res://scenes/ui/main_menu.tscn")
+
+func _on_server_lost() -> void:
+	# Connection to the dedicated server dropped mid-game — back to the menu
+	_leave_to_menu()

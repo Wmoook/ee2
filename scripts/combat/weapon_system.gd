@@ -138,6 +138,7 @@ var _fx: Array = []               # {pos, vel, life, max_life, color, size}
 var _block_dmg: Dictionary = {}   # Vector2i tile -> accumulated break progress (0..BREAK_TIME)
 var _cooked_now: Dictionary = {}  # Tiles damaged this frame (skip their decay)
 var _broken: Array = []           # {x, y, id, respawn} — shattered tiles pending respawn
+var net_break_cb: Callable = Callable()  # online host: mirror terrain breaks to the lobby
 var _curve_dmg: Dictionary = {}   # curve key (first point, quantized) -> cook progress
 var _curve_cooked_now: Dictionary = {}
 var _broken_free: Array = []      # {fb, respawn} — shattered free blocks pending respawn
@@ -540,6 +541,8 @@ func damage_block(tx: int, ty: int, amount: float) -> bool:
 	WorldManager.fg_tiles[ty][tx] = 0
 	WorldManager.tile_changed.emit(tx, ty, 0)
 	_broken.append({"x": tx, "y": ty, "id": old_id, "respawn": BLOCK_RESPAWN})
+	if net_break_cb.is_valid():
+		net_break_cb.call("tile", float(tx), float(ty))
 	play_sfx("explode", cpos, 0.1, 1.5)
 	spawn_ring(cpos, Color(1.0, 0.55, 0.2), 3.0, 22.0, 0.22)
 	for _i in range(12):
@@ -579,6 +582,8 @@ func damage_free_block(idx: int, amount: float) -> bool:
 	WorldManager.free_blocks.remove_at(idx)
 	WorldManager.free_blocks_changed.emit()
 	_broken_free.append({"fb": copy, "respawn": BLOCK_RESPAWN})
+	if net_break_cb.is_valid():
+		net_break_cb.call("fb", (copy.pos as Vector2).x, (copy.pos as Vector2).y)
 	play_sfx("explode", c, 0.1, 1.5)
 	spawn_ring(c, Color(1.0, 0.55, 0.2), 3.0, 22.0, 0.22)
 	for _i in range(12):
@@ -622,6 +627,8 @@ func damage_curve(idx: int, at: Vector2, amount: float) -> bool:
 		return false
 	data["respawn"] = BLOCK_RESPAWN
 	_broken_curves.append(data)
+	if net_break_cb.is_valid():
+		net_break_cb.call("curve", at.x, at.y)
 	# Debris storm down the whole spline
 	var ap: PackedVector2Array = data.get("all_points", PackedVector2Array())
 	for pi in range(0, ap.size(), 8):
@@ -1405,6 +1412,11 @@ func _process(delta: float) -> void:
 							pr.team = a.team
 							spawn_hit(pr.pos, Color(0.7, 0.95, 1.0), nrm)
 							play_sfx("hit", pr.pos, 0.05, 1.35)
+						elif pr.get("ghost", false):
+							# Online replay: pops on contact, never damages —
+							# the shooter's client owns the authoritative hit
+							spawn_hit(pr.pos, pr.color, pr.vel.normalized())
+							alive = false
 						else:
 							a.hurt.call(pr.dmg, pr.vel.normalized())
 							spawn_hit(pr.pos, pr.color, pr.vel.normalized())

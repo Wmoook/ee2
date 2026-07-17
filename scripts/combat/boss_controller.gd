@@ -83,6 +83,11 @@ var rift_pos: Vector2 = Vector2.ZERO
 var cage_angle: float = 0.0
 var _sky_t: float = 0.0
 
+# ---- online co-op ----
+var puppet: bool = false             # non-host mirror: draw only, host simulates
+var net_pos_target: Vector2 = Vector2.ZERO
+var net_proj_cb: Callable = Callable()  # host broadcasts every spawned projectile
+
 # Flight envelope (set from BossMap by BossMode)
 var min_x: float = 64.0
 var max_x: float = 960.0
@@ -236,6 +241,25 @@ func end_beam(soon: float = 0.0) -> void:
 
 func _process(delta: float) -> void:
 	if state == ST_DEAD:
+		return
+	if puppet:
+		# Networked mirror: the lobby host runs the brain — we advance
+		# cosmetics, glide toward the replicated position, and draw.
+		_time += delta
+		_flash = maxf(0.0, _flash - delta)
+		_shake = maxf(0.0, _shake - delta * 6.0)
+		_orbit += delta * (1.1 + 0.5 * phase)
+		_ring_a += delta * (0.65 + 0.25 * phase)
+		_ring_b -= delta * (0.9 + 0.35 * phase)
+		if net_pos_target != Vector2.ZERO:
+			if pos.distance_to(net_pos_target) > 240.0:
+				pos = net_pos_target
+			else:
+				pos = pos.lerp(net_pos_target, 1.0 - pow(0.00005, delta))
+		if not get_player_center.is_null():
+			var ppc: Vector2 = get_player_center.call()
+			_eye = _eye.lerp((ppc - pos).normalized() * 6.5, 1.0 - pow(0.001, delta))
+		queue_redraw()
 		return
 	_time += delta
 	_flash = maxf(0.0, _flash - delta)
@@ -581,11 +605,14 @@ func _process(delta: float) -> void:
 					cx2 = clampf(pc.x + randf_range(-130.0, 130.0), min_x + 24.0, max_x - 24.0)
 				else:
 					cx2 = randf_range(min_x + 24.0, max_x - 24.0)
-				ws._projectiles.append({
+				var sky_pr: Dictionary = {
 					"pos": Vector2(cx2, min_y + 6.0), "vel": Vector2(randf_range(-45.0, 45.0), randf_range(520.0, 650.0)),
 					"team": 1, "dmg": 1, "life": 2.5,
 					"color": Color(1.0, 0.85, 0.4), "size": 4.2,
-				})
+				}
+				ws._projectiles.append(sky_pr)
+				if net_proj_cb.is_valid():
+					net_proj_cb.call(sky_pr)
 			if st_t <= 0.0:
 				state = ST_HOVER
 				st_t = _hover_time()
@@ -865,11 +892,14 @@ func _fire_burst(pc: Vector2) -> void:
 
 
 func _spawn_proj(dir: Vector2, spd: float) -> void:
-	ws._projectiles.append({
+	var pr: Dictionary = {
 		"pos": pos + dir * (BODY_R + 6.0), "vel": dir * spd,
 		"team": 1, "dmg": 1, "life": 3.6,
 		"color": phase_color(), "size": 3.2,
-	})
+	}
+	ws._projectiles.append(pr)
+	if net_proj_cb.is_valid():
+		net_proj_cb.call(pr)
 
 
 func _march_beam(delta: float = 0.0) -> void:

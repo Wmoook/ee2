@@ -88,10 +88,24 @@ var _result_panel: PanelContainer
 var _result_label: Label
 var _result_sub: Label
 
+# ---- online co-op (host simulates the horde) ----
+var net: bool = false
+var _is_host: bool = false
+var _net_ids: Array = []
+var _net_hp: Dictionary = {}      # pid -> hp (replicated)
+var _net_down: Dictionary = {}    # pid -> down
+var _down: bool = false
+var _net_accum: float = 0.0
+var _last_seen_round: int = 0
+
 
 func _ready() -> void:
 	z_index = 3
-	player = get_parent()._get_player(1)
+	net = NetPlay.match_active
+	if net:
+		_net_ids = NetPlay.member_ids()
+		_is_host = NetPlay.i_am_host()
+	player = get_parent()._get_player(NetPlay.my_id())
 	weapons = WeaponSystem.new()
 	get_parent().add_child.call_deferred(weapons)
 	for _w in ZombiesMap.WINDOWS:
@@ -135,6 +149,320 @@ func _wire_up() -> void:
 	weapons._actors["player"]["slot_guns"] = {2: "pistol", 3: ""}
 	weapons._actors["player"]["ammo"] = {"pistol": AMMO_POOLS.pistol}
 	weapons.select_slot("player", 2)
+	if net:
+		_net_setup()
+
+
+# ==================== ONLINE CO-OP ====================
+
+func _rid(pid: int) -> String:
+	return "p%d" % pid
+
+
+func _net_setup() -> void:
+	NetPlay.mode_msg.connect(_on_mode_msg)
+	NetworkManager.player_disconnected.connect(func(pid: int) -> void:
+		if _net_down.has(pid):
+			_net_down[pid] = true)
+	for pid in _net_ids:
+		_net_hp[pid] = MAX_HP
+		_net_down[pid] = false
+		if pid == NetPlay.my_id():
+			continue
+		var rid: String = _rid(pid)
+		weapons.register_actor(rid, 0,
+			_remote_center.bind(pid),
+			func() -> Vector2: return Vector2.ZERO,
+			_remote_alive.bind(pid),
+			func(_dmg: int, _dir: Vector2) -> void: pass,
+			func() -> int: return int(_net_hp.get(pid, MAX_HP)), MAX_HP,
+			func() -> bool: return true,
+			func(_v: Vector2) -> void: pass)
+		weapons._actors[rid]["no_pickup"] = true
+		weapons._actors[rid]["auto_equip"] = false
+	if _is_host:
+		weapons.net_break_cb = func(kind: String, a: float, b: float) -> void:
+			NetPlay.send_mode({"m": "brk", "k": kind, "a": a, "b": b})
+
+
+func _remote_node(pid: int) -> Node:
+	var scene: Node = get_parent()
+	if scene and scene.has_method("_get_player"):
+		return scene._get_player(pid)
+	return null
+
+
+func _remote_center(pid: int) -> Vector2:
+	var p: Node = _remote_node(pid)
+	if p == null:
+		return Vector2(-4000, -4000)
+	return p.position + Vector2(8.0, 8.0)
+
+
+func _remote_alive(pid: int) -> bool:
+	if _net_down.get(pid, false):
+		return false
+	var p: Node = _remote_node(pid)
+	return p != null and not p._is_dead
+
+
+func _nearest_ball(from: Vector2) -> Dictionary:
+	## Host: nearest LIVING (not-down) ball — the horde hunts everyone.
+	var best: Dictionary = {}
+	var best_d: float = 1e18
+	if is_instance_valid(player) and not player._is_dead and not _down:
+		best = {"pid": NetPlay.my_id(), "center": _player_center()}
+		best_d = _player_center().distance_squared_to(from)
+	if net:
+		for pid in _net_ids:
+			if pid == NetPlay.my_id() or not _remote_alive(pid):
+				continue
+			var rc: Vector2 = _remote_center(pid)
+			var d: float = rc.distance_squared_to(from)
+			if d < best_d:
+				best_d = d
+				best = {"pid": pid, "center": rc}
+	return best
+
+
+func _award(pid: int, amt: int, was_kill: bool = false) -> void:
+	if pid == NetPlay.my_id():
+		points += amt
+		if was_kill:
+			kills += 1
+	else:
+		NetPlay.send_mode({"m": "pts", "tgt": pid, "amt": amt, "k": was_kill})
+
+
+func _open_door(di: int) -> void:
+	if di < 0 or di >= _doors_open.size() or _doors_open[di]:
+		return
+	_doors_open[di] = true
+	var door: Dictionary = ZombiesMap.DOORS[di]
+	for x in range(door.x0, door.x1 + 1):
+		for y in range(door.y0, door.y1 + 1):
+			WorldManager.fg_tiles[y][x] = 0
+			WorldManager.tile_changed.emit(x, y, 0)
+	weapons.play_sfx("explode", door.prompt, 0.1, 0.8)
+	weapons.spawn_ring(door.prompt, Color(1.0, 0.7, 0.2), 4.0, 30.0, 0.3)
+
+
+func _apply_break(kind: String, a: float, b: float) -> void:
+	match kind:
+		"tile":
+			weapons.damage_block(int(a), int(b), 999.0)
+		"fb":
+			for i in range(WorldManager.free_blocks.size()):
+				var fb: Dictionary = WorldManager.free_blocks[i]
+				if (fb.pos as Vector2).distance_to(Vector2(a, b)) < 3.0:
+					weapons.damage_free_block(i, 999.0)
+					break
+		"curve":
+			var ci: int = WorldManager.curve_at_point(Vector2(a, b), 10.0)
+			if ci >= 0:
+				weapons.damage_curve(ci, Vector2(a, b), 999.0)
+
+
+func _go_down() -> void:
+	## Online: dropping to 0 HP downs you (spectate) instead of ending the
+	## game — you're back on your feet when the next round starts. The run
+	## ends only when EVERYONE is down at once.
+	_down = true
+	_net_down[NetPlay.my_id()] = true
+	weapons.set_shield("player", false)
+	weapons.spawn_explosion(_player_center(), Color(0.9, 0.2, 0.2))
+	if is_instance_valid(player):
+		player.physics.is_god_mode = true
+	NetPlay.send_mode({"m": "down"})
+	_banner_label.text = "DOWN — back next round"
+	_banner_label.visible = true
+	_banner_label.modulate.a = 1.0
+	_banner_t = 3.0
+	if _is_host:
+		_check_all_down()
+
+
+func _revive_me() -> void:
+	if not _down:
+		return
+	_down = false
+	_net_down[NetPlay.my_id()] = false
+	player_hp = MAX_HP
+	_invuln = 2.0
+	if is_instance_valid(player):
+		player.physics.is_god_mode = false
+		var sp: Vector2 = ZombiesMap.SPAWN_TILE
+		player.physics.set_position_tiles(sp.x, sp.y)
+	weapons.spawn_ring(_player_center(), Color(0.4, 1.0, 0.5), 6.0, 30.0, 0.4)
+
+
+func _check_all_down() -> void:
+	if not _is_host or _over:
+		return
+	if is_instance_valid(player) and not _down:
+		return
+	for pid in _net_ids:
+		if pid != NetPlay.my_id() and not _net_down.get(pid, false):
+			return
+	NetPlay.send_mode({"m": "zover"})
+	_game_over()
+
+
+func _on_mode_msg(from_id: int, data: Dictionary) -> void:
+	if not net:
+		return
+	var kind: String = str(data.get("m", ""))
+	var rid: String = _rid(from_id)
+	match kind:
+		"bs":
+			if weapons._actors.has(rid):
+				var ra: Dictionary = weapons._actors[rid]
+				weapons.set_aim(rid, Vector2(float(data.get("ax", 1.0)), float(data.get("ay", 0.0))))
+				weapons.set_shield(rid, bool(data.get("sh", false)))
+				var wpn: String = str(data.get("wpn", ""))
+				if ra.weapon != wpn:
+					if wpn == "":
+						weapons.strip_weapon(rid)
+					else:
+						weapons.give_weapon(rid, wpn)
+			_net_hp[from_id] = int(data.get("hp", MAX_HP))
+		"shot":
+			# Visual-only replay: ghost projectiles pop but never damage —
+			# the shooter's own client reports zombie damage via zdmg
+			if weapons._actors.has(rid):
+				var ra2: Dictionary = weapons._actors[rid]
+				var w: String = str(data.get("w", "pistol"))
+				if ra2.weapon != w:
+					weapons.give_weapon(rid, w)
+				ra2.cooldown = 0.0
+				ra2.stun_left = 0.0
+				if ra2.has("ammo"):
+					ra2.ammo[w] = 999
+				weapons.set_aim(rid, Vector2(float(data.get("ax", 1.0)), float(data.get("ay", 0.0))))
+				var n0: int = weapons._projectiles.size()
+				weapons.try_shoot(rid)
+				for k in range(n0, weapons._projectiles.size()):
+					weapons._projectiles[k]["ghost"] = true
+		"zdmg":
+			if _is_host:
+				_hurt_zombie_from(int(data.get("d", 1)),
+					Vector2(float(data.get("dx", 0.0)), float(data.get("dy", 0.0))),
+					str(data.get("id", "")), from_id, bool(data.get("melee", false)))
+		"pts":
+			if int(data.get("tgt", -1)) == NetPlay.my_id():
+				points += int(data.get("amt", 0))
+				if bool(data.get("k", false)):
+					kills += 1
+		"claw":
+			if int(data.get("tgt", -1)) == NetPlay.my_id() and not _down:
+				_claw_from(Vector2(float(data.get("zx", 0.0)), float(data.get("zy", 0.0))))
+		"door":
+			_open_door(int(data.get("i", -1)))
+		"plank":
+			if _is_host:
+				var wi: int = int(data.get("w", -1))
+				if wi >= 0 and wi < _planks.size():
+					_planks[wi] = mini(PLANKS_MAX, _planks[wi] + 1)
+		"zs":
+			if not _is_host:
+				_apply_horde_state(data)
+		"brk":
+			if not _is_host:
+				_apply_break(str(data.get("k", "tile")), float(data.get("a", 0.0)), float(data.get("b", 0.0)))
+		"down":
+			_net_down[from_id] = true
+			if _is_host:
+				_check_all_down()
+		"revive":
+			_revive_me()
+		"zover":
+			if not _over:
+				_game_over()
+		"_host_left":
+			if not _over:
+				_over = true
+				_result_label.text = "HOST LOST"
+				_result_sub.text = "The lobby host disconnected — the bunker goes dark."
+				_result_panel.visible = true
+
+
+func _apply_horde_state(data: Dictionary) -> void:
+	var rnd: int = int(data.get("rnd", round_num))
+	if rnd != round_num:
+		round_num = rnd
+		if rnd > _last_seen_round:
+			_last_seen_round = rnd
+			_banner_label.text = "ROUND %d" % rnd
+			_banner_label.visible = true
+			_banner_label.modulate.a = 1.0
+			_banner_t = 2.6
+			weapons.play_sfx("doom_spawn", _player_center(), 0.1, 0.55)
+	var pl: Array = data.get("pl", [])
+	for i in range(mini(pl.size(), _planks.size())):
+		_planks[i] = int(pl[i])
+	var seen: Dictionary = {}
+	for zr in data.get("z", []):
+		var id: String = "z%d" % int(zr[0])
+		seen[id] = true
+		if not _zombies.has(id):
+			var z: Dictionary = {
+				"id": id, "pos": Vector2(float(zr[1]), float(zr[2])), "tpos": Vector2(float(zr[1]), float(zr[2])),
+				"vel": Vector2.ZERO, "hp": int(zr[4]), "max_hp": maxi(int(zr[5]), 1),
+				"spd": 40.0, "r": 9.0, "state": int(zr[3]), "win": int(zr[6]),
+				"chew_t": 0.0, "enter_t": 0.0, "atk_cd": 0.0, "flash": 0.0,
+				"bob": randf() * TAU, "stuck": 0.0,
+			}
+			_zombies[id] = z
+			_register_zombie_actor(id, z.max_hp)
+			weapons.spawn_ring(z.pos, Color(0.45, 0.9, 0.3), 3.0, 18.0, 0.3)
+		else:
+			var z2: Dictionary = _zombies[id]
+			z2.tpos = Vector2(float(zr[1]), float(zr[2]))
+			if int(zr[4]) < z2.hp:
+				z2.flash = 0.14
+			z2.hp = int(zr[4])
+			z2.state = int(zr[3])
+			z2.win = int(zr[6])
+	for id in _zombies.keys():
+		if not seen.has(id):
+			var z3: Dictionary = _zombies[id]
+			weapons.spawn_explosion(z3.pos, Color(0.5, 0.85, 0.25))
+			weapons.play_sfx("explode", z3.pos, 0.06, 1.7)
+			_zombies.erase(id)
+			_purge.append(id)
+
+
+func _net_pump(delta: float) -> void:
+	_net_accum += delta
+	if _net_accum < 0.08:
+		return
+	_net_accum = 0.0
+	var pa: Dictionary = weapons._actors.get("player", {})
+	if not pa.is_empty():
+		NetPlay.send_mode_u({
+			"m": "bs", "sh": pa.shield_on,
+			"ax": pa.aim.x, "ay": pa.aim.y,
+			"wpn": pa.weapon, "hp": player_hp,
+		})
+	if _is_host:
+		var zarr: Array = []
+		for id in _zombies:
+			var z: Dictionary = _zombies[id]
+			zarr.append([int(str(id).trim_prefix("z")), z.pos.x, z.pos.y, int(z.state), int(z.hp), int(z.max_hp), int(z.win)])
+		NetPlay.send_mode_u({"m": "zs", "rnd": round_num, "z": zarr, "pl": _planks.duplicate()})
+
+
+func _claw_from(zpos: Vector2) -> void:
+	## A host-side zombie clawed ME — resolve shield/damage locally.
+	if _invuln > 0.0 or _down:
+		return
+	if weapons.is_shielded("player"):
+		var pa: Dictionary = weapons._actors["player"]
+		pa.shield_energy = maxf(0.0, pa.shield_energy - 0.5)
+		weapons.spawn_hit(zpos.lerp(_player_center(), 0.5), Color(0.5, 0.9, 1.0), Vector2.UP)
+		weapons.play_sfx("bonk", zpos, 0.05, 1.5)
+		return
+	_hurt_player(1, (_player_center() - zpos).normalized())
 
 
 func _build_hud() -> void:
@@ -245,11 +573,14 @@ func _build_hud() -> void:
 # ==================== Zombies ====================
 
 func _spawn_zombie() -> void:
-	# CoD-style spawn pressure: pick among the 3 windows nearest the player
-	var pc: Vector2 = _player_center()
+	# CoD-style spawn pressure: pick among the 3 windows nearest any survivor
 	var order: Array = []
 	for i in range(ZombiesMap.WINDOWS.size()):
-		order.append([ZombiesMap.WINDOWS[i].inside.distance_to(pc), i])
+		var wd: float = 1e18
+		var nb: Dictionary = _nearest_ball(ZombiesMap.WINDOWS[i].inside)
+		if not nb.is_empty():
+			wd = ZombiesMap.WINDOWS[i].inside.distance_to(nb.center)
+		order.append([wd, i])
 	order.sort()
 	var win: int = order[randi() % 3][1]
 	var spawns: Array = ZombiesMap.ZSPAWNS[win]
@@ -261,27 +592,49 @@ func _spawn_zombie() -> void:
 	if round_num >= 4 and randf() < 0.2:
 		spd *= 1.8  # sprinter
 	var z: Dictionary = {
-		"id": id, "pos": pos, "vel": Vector2.ZERO, "hp": hp, "max_hp": hp,
+		"id": id, "pos": pos, "tpos": pos, "vel": Vector2.ZERO, "hp": hp, "max_hp": hp,
 		"spd": spd, "r": 9.0, "state": 0, "win": win, "chew_t": 0.0,
 		"enter_t": 0.0, "atk_cd": 0.0, "flash": 0.0, "bob": randf() * TAU,
 		"stuck": 0.0,
 	}
 	_zombies[id] = z
+	_register_zombie_actor(id, hp)
+	weapons.spawn_ring(pos, Color(0.45, 0.9, 0.3), 3.0, 18.0, 0.3)
+
+
+func _register_zombie_actor(id: String, hp: int) -> void:
+	## Shared by the host's spawner and the puppet mirror. Puppets report
+	## their hits to the host (zdmg) instead of applying damage themselves.
+	var hurt_cb: Callable
+	if net and not _is_host:
+		hurt_cb = func(dmg: int, dir: Vector2) -> void:
+			if not _zombies.has(id):
+				return
+			var zz: Dictionary = _zombies[id]
+			zz.flash = 0.14
+			var melee: bool = weapons._actors.has("player") and weapons._actors["player"].dash_time > 0.0
+			NetPlay.send_mode({"m": "zdmg", "id": id, "d": dmg, "dx": dir.x, "dy": dir.y, "melee": melee})
+	else:
+		hurt_cb = _hurt_zombie.bind(id)
 	weapons.register_actor(id, 2,
 		func() -> Vector2: return _zombies[id].pos if _zombies.has(id) else Vector2(-999, -999),
 		func() -> Vector2: return _zombies[id].vel if _zombies.has(id) else Vector2.ZERO,
 		func() -> bool: return _zombies.has(id) and _zombies[id].hp > 0,
-		_hurt_zombie.bind(id),
+		hurt_cb,
 		func() -> int: return int(_zombies[id].hp) if _zombies.has(id) else 0, hp,
 		func() -> bool: return true,
 		func(v: Vector2) -> void:
 			if _zombies.has(id):
 				_zombies[id].vel += v * (EEPhysics.EE_TICK_FRAC * EEPhysics.TPS))
 	weapons._actors[id]["hit_radius"] = 10.0
-	weapons.spawn_ring(pos, Color(0.45, 0.9, 0.3), 3.0, 18.0, 0.3)
 
 
 func _hurt_zombie(dmg: int, dir: Vector2, id: String) -> void:
+	var melee: bool = weapons._actors.has("player") and weapons._actors["player"].dash_time > 0.0
+	_hurt_zombie_from(dmg, dir, id, NetPlay.my_id(), melee)
+
+
+func _hurt_zombie_from(dmg: int, dir: Vector2, id: String, shooter: int, melee: bool) -> void:
 	if not _zombies.has(id) or _over:
 		return
 	var z: Dictionary = _zombies[id]
@@ -290,11 +643,9 @@ func _hurt_zombie(dmg: int, dir: Vector2, id: String) -> void:
 	z.hp -= dmg
 	z.flash = 0.14
 	z.vel += dir * 60.0
-	points += POINTS_HIT
+	_award(shooter, POINTS_HIT)
 	if z.hp <= 0:
-		var melee: bool = weapons._actors.has("player") and weapons._actors["player"].dash_time > 0.0
-		points += POINTS_MELEE_KILL if melee else POINTS_KILL
-		kills += 1
+		_award(shooter, POINTS_MELEE_KILL if melee else POINTS_KILL, true)
 		_kill_zombie(id)
 
 
@@ -311,7 +662,6 @@ func _kill_zombie(id: String) -> void:
 
 
 func _zombie_ai(delta: float) -> void:
-	var pc: Vector2 = _player_center()
 	var ids: Array = _zombies.keys()
 	for id in ids:
 		var z: Dictionary = _zombies[id]
@@ -351,12 +701,17 @@ func _zombie_ai(delta: float) -> void:
 					z.pos = z.pos.move_toward(w.inside, z.spd * 1.2 * delta)
 				if z.enter_t <= 0.0 or z.pos.distance_to(w.inside) < 8.0:
 					z.state = 3
-			3:  # INSIDE — hunt the player
+			3:  # INSIDE — hunt the nearest survivor
+				var prey: Dictionary = _nearest_ball(z.pos)
+				var pc: Vector2 = prey.get("center", _player_center())
 				_steer(z, pc, delta, stunned, true)
-				# Claw the player
-				if z.atk_cd <= 0.0 and z.pos.distance_to(pc) < z.r + 9.0 and not _over:
+				# Claw whoever it caught
+				if z.atk_cd <= 0.0 and z.pos.distance_to(pc) < z.r + 9.0 and not _over and not prey.is_empty():
 					z.atk_cd = 1.0
-					_claw_player(z)
+					if int(prey.pid) == NetPlay.my_id():
+						_claw_player(z)
+					else:
+						NetPlay.send_mode({"m": "claw", "tgt": int(prey.pid), "zx": z.pos.x, "zy": z.pos.y})
 	# Separation so the horde doesn't stack into one mega-zombie
 	for i in range(ids.size()):
 		if not _zombies.has(ids[i]):
@@ -427,7 +782,7 @@ func _claw_player(z: Dictionary) -> void:
 
 
 func _hurt_player(dmg: int, dir: Vector2) -> void:
-	if _over or _invuln > 0.0:
+	if _over or _invuln > 0.0 or _down:
 		return
 	player_hp -= dmg
 	_invuln = TOUCH_IFRAMES
@@ -438,7 +793,10 @@ func _hurt_player(dmg: int, dir: Vector2) -> void:
 	player.physics._speedX += dir.x * 4.0
 	player.physics._speedY += dir.y * 4.0 - 2.0
 	if player_hp <= 0:
-		_game_over()
+		if net:
+			_go_down()
+		else:
+			_game_over()
 
 
 # ==================== Rounds ====================
@@ -454,12 +812,19 @@ func _round_logic(delta: float) -> void:
 		if _round_break <= 0.0:
 			round_num += 1
 			_to_spawn = 5 + round_num * 3
+			if net:
+				_to_spawn = int(_to_spawn * (1.0 + 0.55 * float(maxi(1, _net_ids.size()) - 1)))
 			_round_break = 8.0
 			_banner_label.text = "ROUND %d" % round_num
 			_banner_label.visible = true
 			_banner_label.modulate.a = 1.0
 			_banner_t = 2.6
+			_last_seen_round = round_num
 			weapons.play_sfx("doom_spawn", _player_center(), 0.1, 0.55)
+			if net and _is_host:
+				# Everyone downed earlier gets back up for the new round
+				NetPlay.send_mode({"m": "revive"})
+				_revive_me()
 		return
 	if _to_spawn > 0:
 		_spawn_t -= delta
@@ -557,14 +922,10 @@ func _interactions(delta: float) -> void:
 		_prompt = "F: OPEN %s — $%d" % [door.label, door.cost]
 		if f_edge and points >= door.cost:
 			points -= door.cost
-			_doors_open[di] = true
-			for x in range(door.x0, door.x1 + 1):
-				for y in range(door.y0, door.y1 + 1):
-					WorldManager.fg_tiles[y][x] = 0
-					WorldManager.tile_changed.emit(x, y, 0)
-			weapons.play_sfx("explode", door.prompt, 0.1, 0.8)
-			weapons.spawn_ring(door.prompt, Color(1.0, 0.7, 0.2), 4.0, 30.0, 0.3)
+			_open_door(di)
 			GameState.cam_shake += 3.0
+			if net:
+				NetPlay.send_mode({"m": "door", "i": di})
 		return
 
 	# Barricade rebuild (hold F)
@@ -590,9 +951,13 @@ func _interactions(delta: float) -> void:
 			_rebuild_t += delta
 			if _rebuild_t >= REBUILD_TIME:
 				_rebuild_t = 0.0
-				_planks[i] = mini(PLANKS_MAX, _planks[i] + 1)
 				points += POINTS_PLANK
 				weapons.play_sfx("bonk", w.rect.get_center(), 0.06, 1.1)
+				if net and not _is_host:
+					# The host owns plank counts (zombies chew them there)
+					NetPlay.send_mode({"m": "plank", "w": i})
+				else:
+					_planks[i] = mini(PLANKS_MAX, _planks[i] + 1)
 		else:
 			_rebuild_t = 0.0
 		return
@@ -670,10 +1035,32 @@ func _process(delta: float) -> void:
 	if pa.weapon == "" and pa.cur_slot >= 2:
 		pa.weapon = weapons.slot_weapon("player", pa.cur_slot)
 
-	_round_logic(delta)
-	_zombie_ai(delta)
-	_interactions(delta)
-	_player_input(delta)
+	if net:
+		_net_pump(delta)
+	if not net or _is_host:
+		_round_logic(delta)
+		_zombie_ai(delta)
+	else:
+		# Puppet horde: glide to replicated positions, tick cosmetics
+		if _banner_t > 0.0:
+			_banner_t -= delta
+			_banner_label.modulate.a = clampf(_banner_t / 0.8, 0.0, 1.0)
+			if _banner_t <= 0.0:
+				_banner_label.visible = false
+		for id in _zombies:
+			var z: Dictionary = _zombies[id]
+			z.flash = maxf(0.0, z.flash - delta)
+			z.bob += delta * 3.0
+			var tp: Vector2 = z.get("tpos", z.pos)
+			if z.pos.distance_to(tp) > 120.0:
+				z.pos = tp
+			else:
+				z.pos = z.pos.lerp(tp, 1.0 - pow(0.0002, delta))
+	if not _down:
+		_interactions(delta)
+		_player_input(delta)
+	else:
+		_prompt = "DOWN — you're back next round"
 	_atmosphere(delta)
 	_refresh_hud()
 	_f_was = Input.is_physical_key_pressed(KEY_F)
@@ -779,20 +1166,25 @@ func _game_over() -> void:
 
 
 func _retry() -> void:
+	# Online runs restart from the lobby — RETRY relaunches solo
+	NetPlay.leave_room()
 	GameState.battle_mode = true
 	GameState.zombies_mode = true
 	GameState.boss_fight = false
 	GameState.survivors_mode = false
 	GameState.cam_shake = 0.0
+	GameState.net_freeze = false
 	ZombiesMap.build()
 	get_tree().change_scene_to_file("res://scenes/world/game.tscn")
 
 
 func _return_to_menu() -> void:
+	NetPlay.leave_room()
 	GameState.battle_mode = false
 	GameState.zombies_mode = false
 	GameState.cam_shake = 0.0
 	GameState.player_stunned = false
+	GameState.net_freeze = false
 	NetworkManager.disconnect_game()
 	get_tree().change_scene_to_file("res://scenes/ui/main_menu.tscn")
 

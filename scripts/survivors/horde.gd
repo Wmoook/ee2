@@ -47,14 +47,20 @@ const SMILEYS_PER_CHUNK: int = 157
 
 var _smileys: Array = []
 
+# ---- online co-op ----
+var net_puppet: bool = false            # non-host mirror: lerp + draw, no AI
+var net_hurt_route: Callable = Callable()  # non-host: (nid, dmg, kb) -> host
+var target_provider: Callable = Callable() # host: per-enemy target (nearest ball)
+var _nid_seq: int = 1
+
 
 func _ready() -> void:
 	z_index = 3
 	_ball_tex = load("res://assets/sprites/NEW_SPRITES_BALL/BALL_1_frame1.png") as Texture2D
-	for i in range(2):
-		var st: Texture2D = load("res://assets/sprites/smileys_%d.png" % i) as Texture2D
-		if st:
-			_smileys.append(st)
+	# Original EE smiley sheet (HD, 52px cells) — the horde wears real faces
+	var st: Texture2D = load("res://assets/sprites/ee_smileys_hd.png") as Texture2D
+	if st:
+		_smileys.append(st)
 	for n in ["hit", "explode", "pickup", "bonk", "shoot_scatter", "doom_spawn"]:
 		var stream: AudioStream = load("res://assets/sfx/%s.wav" % n) as AudioStream
 		if stream:
@@ -83,11 +89,12 @@ func spawn(type: String, pos: Vector2, hp_scale: float = 1.0, spd_scale: float =
 		return
 	var t: Dictionary = TYPES[type]
 	var faces: Array = t.get("faces", [])
+	_nid_seq += 1
 	enemies.append({
-		"type": type, "pos": pos, "vel": Vector2.ZERO,
+		"type": type, "pos": pos, "tpos": pos, "vel": Vector2.ZERO, "nid": _nid_seq,
 		"hp": t.hp * hp_scale, "max_hp": t.hp * hp_scale,
 		"spd": t.spd * spd_scale, "acc": t.acc, "r": t.r, "tint": t.tint,
-		"face": faces[randi() % faces.size()] if faces.size() > 0 else -1,
+		"face": faces[_nid_seq % faces.size()] if faces.size() > 0 else -1,
 		"t": randf() * TAU, "flash": 0.0, "lunge": randf_range(1.0, 2.4),
 		"orbit": randf() * TAU, "shoot": randf_range(1.5, 2.5), "wob": randf() * TAU,
 	})
@@ -111,6 +118,11 @@ func hurt(i: int, dmg: float, kb: Vector2 = Vector2.ZERO) -> void:
 	if i < 0 or i >= enemies.size():
 		return
 	var e: Dictionary = enemies[i]
+	if net_hurt_route.is_valid():
+		# Online puppet: flash locally, let the host apply the damage
+		e.flash = 0.12
+		net_hurt_route.call(int(e.get("nid", 0)), dmg, kb)
+		return
 	e.hp -= dmg
 	e.flash = 0.12
 	var resist: float = 0.25 if e.type == "bulwark" else (0.05 if e.type == "jr" or e.type == "prime" else 1.0)
@@ -180,7 +192,41 @@ func _process(delta: float) -> void:
 		var e: Dictionary = enemies[i]
 		e.t += delta
 		e.flash = maxf(0.0, e.flash - delta)
-		var to_p: Vector2 = pc - e.pos
+		if net_puppet:
+			# Host owns movement: glide to the replicated spot. jr/prime still
+			# run their shoot timers locally (barrage aimed at MY ball).
+			var tp: Vector2 = e.get("tpos", e.pos)
+			if e.pos.distance_to(tp) > 160.0:
+				e.pos = tp
+			else:
+				e.pos = e.pos.lerp(tp, 1.0 - pow(0.0003, delta))
+			if e.type == "jr":
+				e.shoot -= delta
+				if e.shoot <= 0.0:
+					e.shoot = 2.6
+					for k in range(8):
+						var ja2: float = TAU * float(k) / 8.0 + e.t
+						eproj.append({"pos": e.pos, "vel": Vector2.from_angle(ja2) * 200.0, "life": 3.0, "friendly": false})
+					sfx("shoot_scatter", e.pos, 0.7)
+			elif e.type == "prime":
+				e.shoot -= delta
+				if e.shoot <= 0.0:
+					e.shoot = 1.7
+					var seek_p: Vector2 = (pc - e.pos).normalized()
+					for k in range(12):
+						var pa3: float = TAU * float(k) / 12.0 + e.t * 0.7
+						eproj.append({"pos": e.pos, "vel": Vector2.from_angle(pa3) * 230.0, "life": 3.4, "friendly": false})
+					for k2 in range(3):
+						eproj.append({"pos": e.pos, "vel": seek_p.rotated((float(k2) - 1.0) * 0.22) * 330.0, "life": 3.0, "friendly": false})
+					sfx("shoot_scatter", e.pos, 0.55)
+			# Contact vs MY ball stays victim-side
+			if e.pos.distance_to(pc) < e.r + 9.0:
+				mode.on_contact(i)
+			continue
+		var tgt_pc: Vector2 = pc
+		if target_provider.is_valid():
+			tgt_pc = target_provider.call(e)
+		var to_p: Vector2 = tgt_pc - e.pos
 		var dist: float = to_p.length()
 		var seek: Vector2 = to_p / maxf(dist, 0.01)
 		var want: Vector2 = seek * e.spd
@@ -192,7 +238,7 @@ func _process(delta: float) -> void:
 					e.vel = seek * e.spd * 3.1
 			"wisp":
 				e.orbit += delta * 1.7
-				var ring: Vector2 = pc + Vector2.from_angle(e.orbit) * maxf(150.0 - e.t * 4.0, 40.0)
+				var ring: Vector2 = tgt_pc + Vector2.from_angle(e.orbit) * maxf(150.0 - e.t * 4.0, 40.0)
 				want = (ring - e.pos).normalized() * e.spd * 1.4
 			"jr":
 				e.shoot -= delta
@@ -218,8 +264,8 @@ func _process(delta: float) -> void:
 		e.pos += e.vel * delta
 		e.pos.x = clampf(e.pos.x, SurvivorsMap.MIN_X, SurvivorsMap.MAX_X)
 		e.pos.y = clampf(e.pos.y, SurvivorsMap.MIN_Y, SurvivorsMap.MAX_Y)
-		# Contact with the player
-		if dist < e.r + 9.0:
+		# Contact with MY ball (remote contacts are resolved by the mode)
+		if e.pos.distance_to(pc) < e.r + 9.0:
 			mode.on_contact(i)
 	# ── Enemy shrapnel ──
 	for i in range(eproj.size() - 1, -1, -1):
@@ -333,10 +379,8 @@ func _draw() -> void:
 			var tint: Color = Color(base.r + flash_add, base.g + flash_add, base.b + flash_add)
 			var rect: Rect2 = Rect2(e.pos.x - sz / 2.0, e.pos.y - sz / 2.0, sz, sz)
 			var face: int = e.get("face", -1)
-			var chunk: int = face / SMILEYS_PER_CHUNK
-			if face >= 0 and chunk < _smileys.size():
-				var lc: int = face % SMILEYS_PER_CHUNK
-				draw_texture_rect_region(_smileys[chunk], rect, Rect2(lc * SMILEY_SIZE, 0, SMILEY_SIZE, SMILEY_SIZE), tint)
+			if face >= 0 and _smileys.size() > 0:
+				draw_texture_rect_region(_smileys[0], rect, Rect2(float(face % 188) * 52.0, 0, 52, 52), tint)
 			elif _ball_tex:
 				draw_texture_rect(_ball_tex, rect, false, tint)
 			if e.type == "bulwark":

@@ -1905,16 +1905,6 @@ func net_set_tile(x: int, y: int, block_id: int, layer: String = "fg") -> void:
 	elif layer == "bg":
 		set_bg_tile(x, y, block_id)
 	_pending_net_tiles.append({"x": x, "y": y, "id": block_id, "l": layer})
-	# Debug log next to exe
-	var _log_name: String = "host_log.txt" if NetworkManager.is_host else "receiver_log.txt"
-	var _log_path: String = OS.get_executable_path().get_base_dir() + "/" + _log_name
-	var f: FileAccess = FileAccess.open(_log_path, FileAccess.READ_WRITE)
-	if f == null:
-		f = FileAccess.open(_log_path, FileAccess.WRITE)
-	if f:
-		f.seek_end()
-		f.store_line("NET_SET_TILE x=%d y=%d id=%d layer=%s queue=%d peer=%s" % [x, y, block_id, layer, _pending_net_tiles.size(), str(NetworkManager._peer)])
-		f.close()
 
 var _pending_net_clear_world: bool = false  # Queued full world clear
 var _pending_net_poly_fullsync: bool = false  # Send full polyline state

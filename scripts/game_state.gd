@@ -9,7 +9,26 @@ var selected_palette_index: int = 0
 var selected_category: int = 0
 var state_channels: Dictionary = {}
 var player_name: String = "Player"
-var player_smiley_id: int = 0
+var player_smiley_id: int = -1  # -1 = DREAMER ball; 0..187 EE smileys; 188..375 gold
+var net_freeze: bool = false    # online 3-2-1-GO: input locked until GO
+
+func save_profile() -> void:
+	var f: FileAccess = FileAccess.open("user://profile.json", FileAccess.WRITE)
+	if f:
+		f.store_string(JSON.stringify({"name": player_name, "smiley_id": player_smiley_id}))
+		f.close()
+
+func load_profile() -> void:
+	if not FileAccess.file_exists("user://profile.json"):
+		return
+	var f: FileAccess = FileAccess.open("user://profile.json", FileAccess.READ)
+	if f == null:
+		return
+	var data: Variant = JSON.parse_string(f.get_as_text())
+	f.close()
+	if data is Dictionary:
+		player_name = str(data.get("name", "Player"))
+		player_smiley_id = clampi(int(data.get("smiley_id", -1)), -1, 375)
 var _block_db: Dictionary = {}
 var _solid_set: Dictionary = {}
 var _non_solid_fg: Dictionary = {}
@@ -162,10 +181,13 @@ signal block_selected(block_id: int)
 signal state_channel_changed(channel_id: int, value: int)
 
 func _ready() -> void:
+	load_profile()
 	# Uncapped FPS + no vsync so render framerate is independent of physics (100Hz).
 	# Frame interpolation in player_controller makes motion smooth at any FPS.
-	Engine.max_fps = 0
-	DisplayServer.window_set_vsync_mode(DisplayServer.VSYNC_DISABLED)
+	# On the web, browsers own the frame loop — leave vsync/fps defaults alone.
+	if not OS.has_feature("web"):
+		Engine.max_fps = 0
+		DisplayServer.window_set_vsync_mode(DisplayServer.VSYNC_DISABLED)
 	# Load items_map.json
 	_load_items_map()
 	# Register custom blocks (40x40 textures scaled to 16x16)

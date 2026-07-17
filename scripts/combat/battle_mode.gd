@@ -44,27 +44,46 @@ var _result_panel: PanelContainer
 var _result_label: Label
 var _result_sub: Label
 
+# ---- online PvP (lobby match) ----
+var net: bool = false
+var _net_ids: Array = []            # sorted member peer ids
+var _net_hp: Dictionary = {}        # peer_id -> hp (replicated)
+var _net_lives: Dictionary = {}     # peer_id -> lives (replicated)
+var _net_out: Dictionary = {}       # peer_id -> eliminated
+var _net_prev_stun: Dictionary = {} # peer_id -> last seen stun_left (parry edge)
+var _net_accum: float = 0.0
+var _eliminated: bool = false
+
 
 func _ready() -> void:
-	player = get_parent()._get_player(1)
+	net = NetPlay.match_active
+	if net:
+		_net_ids = NetPlay.member_ids()
+		# Everyone spawns on their own arena spot (index in the member list)
+		var my_idx: int = maxi(0, _net_ids.find(NetPlay.my_id()))
+		if BattleMap.SPAWN_SPOTS.size() > 0:
+			WorldManager.spawn_points[0] = BattleMap.SPAWN_SPOTS[my_idx % BattleMap.SPAWN_SPOTS.size()]
+	player = get_parent()._get_player(NetPlay.my_id())
 	# World-space combat layer
 	weapons = WeaponSystem.new()
 	get_parent().add_child.call_deferred(weapons)
-	# The bots — each on its own team (true free-for-all)
-	var n: int = clampi(GameState.battle_bot_count, 1, 3)
-	for i in range(n):
-		var b: BotController = BotController.new()
-		b.actor_id = _bot_id(i)
-		b.team_id = i + 1
-		b.display_name = "BOT" if n == 1 else "BOT %d" % (i + 1)
-		b.tint = BOT_TINTS[i % BOT_TINTS.size()]
-		b._ai_timer = 0.011 * i  # Stagger the think ticks across frames
-		bots.append(b)
-		bots_lives.append(MAX_LIVES)
-		bots_hp.append(MAX_HP)
-		_bots_invuln.append(0.0)
-		_bots_respawn.append(-1.0)
-		get_parent().add_child.call_deferred(b)
+	# The bots — each on its own team (true free-for-all). ONLINE: no bots,
+	# the lobby IS the free-for-all.
+	if not net:
+		var n: int = clampi(GameState.battle_bot_count, 1, 3)
+		for i in range(n):
+			var b: BotController = BotController.new()
+			b.actor_id = _bot_id(i)
+			b.team_id = i + 1
+			b.display_name = "BOT" if n == 1 else "BOT %d" % (i + 1)
+			b.tint = BOT_TINTS[i % BOT_TINTS.size()]
+			b._ai_timer = 0.011 * i  # Stagger the think ticks across frames
+			bots.append(b)
+			bots_lives.append(MAX_LIVES)
+			bots_hp.append(MAX_HP)
+			_bots_invuln.append(0.0)
+			_bots_respawn.append(-1.0)
+			get_parent().add_child.call_deferred(b)
 	_build_hud()
 	call_deferred("_wire_up")
 
@@ -80,10 +99,13 @@ func _wire_up() -> void:
 	weapons.super_pos = BattleMap.SUPER_POS
 	weapons.ability_spots = BattleMap.ABILITY_SPOTS.duplicate()
 	weapons.ability_picked.connect(_on_ability)
-	weapons.register_actor("player", 0,
+	var my_team: int = 0
+	if net:
+		my_team = maxi(0, _net_ids.find(NetPlay.my_id()))
+	weapons.register_actor("player", my_team,
 		func() -> Vector2: return Vector2(player.physics.x + 8.0, player.physics.y + 8.0),
 		func() -> Vector2: return Vector2(player.physics._speedX, player.physics._speedY) * EEPhysics.EE_TICK_FRAC * EEPhysics.TPS,
-		func() -> bool: return is_instance_valid(player) and not player._is_dead,
+		func() -> bool: return is_instance_valid(player) and not player._is_dead and not _eliminated,
 		_hurt_player,
 		func() -> int: return player_hp, MAX_HP,
 		func() -> bool: return player.physics.is_grounded,
@@ -113,8 +135,247 @@ func _wire_up() -> void:
 				b.physics._speedX += v.x
 				b.physics._speedY += v.y)
 		weapons._actors[_bot_id(i)]["loadout"] = GameState.battle_guns_enabled
-	if player.has_signal("died"):
+	if net:
+		_net_setup()
+	if is_instance_valid(player) and player.has_signal("died"):
 		player.died.connect(_on_player_died)
+
+
+# ==================== ONLINE PvP ====================
+
+func _rid(pid: int) -> String:
+	return "p%d" % pid
+
+
+func _net_setup() -> void:
+	NetPlay.mode_msg.connect(_on_mode_msg)
+	NetworkManager.player_disconnected.connect(_on_net_player_left)
+	for pid in _net_ids:
+		_net_hp[pid] = MAX_HP
+		_net_lives[pid] = MAX_LIVES
+		_net_out[pid] = false
+		_net_prev_stun[pid] = 0.0
+		if pid == NetPlay.my_id():
+			continue
+		var team: int = maxi(0, _net_ids.find(pid))
+		var rid: String = _rid(pid)
+		weapons.register_actor(rid, team,
+			_remote_center.bind(pid),
+			_remote_vel.bind(pid),
+			_remote_alive.bind(pid),
+			func(_dmg: int, _dir: Vector2) -> void: pass,  # victim-authoritative: their client decides
+			func() -> int: return int(_net_hp.get(pid, MAX_HP)), MAX_HP,
+			func() -> bool: return true,
+			func(_v: Vector2) -> void: pass)
+		weapons._actors[rid]["loadout"] = GameState.battle_guns_enabled
+		weapons._actors[rid]["auto_equip"] = false
+		weapons._actors[rid]["no_pickup"] = true
+
+
+func _remote_node(pid: int) -> Node:
+	var scene: Node = get_parent()
+	if scene and scene.has_method("_get_player"):
+		return scene._get_player(pid)
+	return null
+
+
+func _remote_center(pid: int) -> Vector2:
+	var p: Node = _remote_node(pid)
+	if p == null:
+		return Vector2(-4000, -4000)
+	return p.position + Vector2(8.0, 8.0)
+
+
+func _remote_vel(pid: int) -> Vector2:
+	var p: Node = _remote_node(pid)
+	if p == null or p.get("_remote_sync") == null:
+		return Vector2.ZERO
+	return p._remote_sync.speed * EEPhysics.EE_TICK_FRAC * EEPhysics.TPS
+
+
+func _remote_alive(pid: int) -> bool:
+	if _net_out.get(pid, false):
+		return false
+	var p: Node = _remote_node(pid)
+	return p != null and not p._is_dead
+
+
+func _on_net_player_left(pid: int) -> void:
+	if not net or _over or not _net_out.has(pid):
+		return
+	_net_out[pid] = true
+	_net_lives[pid] = 0
+	_net_check_win()
+
+
+func _on_mode_msg(from_id: int, data: Dictionary) -> void:
+	if _over or not net:
+		return
+	var kind: String = str(data.get("m", ""))
+	var rid: String = _rid(from_id)
+	match kind:
+		"bs":
+			# 20Hz battle state: shield, aim, weapon, beam-fire, hp, lives
+			if weapons._actors.has(rid):
+				var ra: Dictionary = weapons._actors[rid]
+				weapons.set_aim(rid, Vector2(float(data.get("ax", 1.0)), float(data.get("ay", 0.0))))
+				weapons.set_shield(rid, bool(data.get("sh", false)))
+				var wpn: String = str(data.get("wpn", ""))
+				if ra.weapon != wpn:
+					if wpn == "":
+						weapons.strip_weapon(rid)
+					else:
+						weapons.give_weapon(rid, wpn)
+				if bool(data.get("fire", false)) and ra.weapon != "" \
+						and WeaponSystem.WEAPONS.get(ra.weapon, {}).get("beam", false):
+					ra.cooldown = 0.0
+					weapons.try_shoot(rid)
+			_net_hp[from_id] = int(data.get("hp", MAX_HP))
+			var new_lives: int = int(data.get("lives", MAX_LIVES))
+			_net_lives[from_id] = new_lives
+			if new_lives <= 0 and not _net_out.get(from_id, false):
+				_net_out[from_id] = true
+				_net_check_win()
+		"shot":
+			# Discrete remote shot — replay it locally so its projectiles are
+			# live on MY sim (they can hit me; hits on others are cosmetic)
+			if weapons._actors.has(rid):
+				var ra2: Dictionary = weapons._actors[rid]
+				var w: String = str(data.get("w", "pistol"))
+				if ra2.weapon != w:
+					weapons.give_weapon(rid, w)
+				ra2.cooldown = 0.0
+				ra2.stun_left = 0.0
+				weapons.set_aim(rid, Vector2(float(data.get("ax", 1.0)), float(data.get("ay", 0.0))))
+				weapons.try_shoot(rid)
+		"dash":
+			# Remote dash punch: arm the melee state on my sim — the shared
+			# dash-contact rules (damage, shield redirect, timed parry) run here
+			if weapons._actors.has(rid):
+				var ra3: Dictionary = weapons._actors[rid]
+				ra3.charge = float(data.get("pow", 0.0))
+				ra3.stun_left = 0.0
+				weapons.set_aim(rid, Vector2(float(data.get("ax", 1.0)), float(data.get("ay", 0.0))))
+				weapons.release_dash(rid)
+		"stun":
+			# I parried someone / someone parried me — authoritative on the victim
+			if int(data.get("tgt", -1)) == NetPlay.my_id() and weapons._actors.has("player"):
+				weapons._actors["player"].stun_left = maxf(weapons._actors["player"].stun_left, float(data.get("d", 1.0)))
+				weapons.play_sfx("parry", Vector2(player.physics.x + 8.0, player.physics.y + 8.0), 0.05, 0.8)
+		"out":
+			_net_out[from_id] = true
+			_net_lives[from_id] = 0
+			_net_check_win()
+		"_host_left":
+			pass  # PvP keeps going — no host dependency
+
+
+func _net_pump(delta: float) -> void:
+	_net_accum += delta
+	if _net_accum < 0.05:
+		return
+	_net_accum = 0.0
+	var pa: Dictionary = weapons._actors.get("player", {})
+	if pa.is_empty():
+		return
+	var beam_firing: bool = Input.is_mouse_button_pressed(MOUSE_BUTTON_LEFT) and pa.weapon != "" \
+			and WeaponSystem.WEAPONS.get(pa.weapon, {}).get("beam", false)
+	NetPlay.send_mode_u({
+		"m": "bs",
+		"sh": pa.shield_on,
+		"ax": pa.aim.x, "ay": pa.aim.y,
+		"wpn": pa.weapon,
+		"fire": beam_firing,
+		"hp": player_hp,
+		"lives": player_lives,
+	})
+	# Timed-parry authority: when MY sim stuns a remote attacker (their dash
+	# hit my late shield), tell that player to actually eat the stun.
+	for pid in _net_ids:
+		if pid == NetPlay.my_id():
+			continue
+		var rid: String = _rid(pid)
+		if not weapons._actors.has(rid):
+			continue
+		var s: float = weapons._actors[rid].stun_left
+		if s > 0.2 and _net_prev_stun.get(pid, 0.0) <= 0.01:
+			NetPlay.send_mode({"m": "stun", "tgt": pid, "d": s})
+		_net_prev_stun[pid] = s
+
+
+func _net_check_win() -> void:
+	if _over:
+		return
+	var alive: Array = []
+	for pid in _net_ids:
+		if not _net_out.get(pid, false):
+			alive.append(pid)
+	if alive.size() > 1:
+		return
+	_over = true
+	var winner: int = alive[0] if alive.size() == 1 else -1
+	if winner == NetPlay.my_id():
+		_result_label.text = "VICTORY!"
+		_result_label.add_theme_color_override("font_color", Color(0.3, 1.0, 0.4))
+		_result_sub.text = "Last ball rolling. %d lives to spare." % player_lives
+	else:
+		var wname: String = str(NetworkManager.get_player_info(winner).get("name", "???")) if winner > 0 else "Nobody"
+		_result_label.text = "%s WINS" % wname.to_upper()
+		_result_label.add_theme_color_override("font_color", Color(1.0, 0.75, 0.3))
+		_result_sub.text = "Better luck next round."
+	_result_panel.visible = true
+
+
+func _collide_online(pid: int) -> void:
+	## My ball vs a remote ball. I only resolve MY side — their client
+	## resolves theirs with the mirrored data. Shield holders are anchors.
+	var p: Node = _remote_node(pid)
+	if p == null or p._is_dead or player._is_dead:
+		return
+	var ap: EEPhysics = player.physics
+	var ac: Vector2 = Vector2(ap.x + 8.0, ap.y + 8.0)
+	var bc: Vector2 = _remote_center(pid)
+	var dvec: Vector2 = bc - ac
+	var d: float = dvec.length()
+	if d >= 16.0 or d <= 0.01:
+		return
+	var n: Vector2 = dvec / d
+	var overlap: float = 16.0 - d
+	var my_sh: bool = weapons.is_shielded("player")
+	var their_sh: bool = weapons.is_shielded(_rid(pid))
+	var av: Vector2 = Vector2(ap._speedX, ap._speedY)
+	var bv: Vector2 = _remote_vel(pid) / (EEPhysics.EE_TICK_FRAC * EEPhysics.TPS)
+	var a_n: float = av.dot(n)
+	var b_n: float = bv.dot(n)
+	var approach: float = a_n - b_n
+	# Separation: my share (shield holder never budges)
+	var sep_w: float = 0.5
+	if my_sh and not their_sh:
+		sep_w = 0.0
+	elif their_sh and not my_sh:
+		sep_w = 1.0
+	var sep: Vector2 = -n * overlap * sep_w
+	if not ap._collides_px(ap.x + sep.x, ap.y + sep.y):
+		ap.x += sep.x
+		ap.y += sep.y
+	if approach <= 0.0:
+		return
+	if their_sh and not my_sh:
+		av = -n * maxf(av.length() * 1.2, 4.5)
+	elif my_sh and not their_sh:
+		pass  # anchor: their client hurls them, I stay planted
+	else:
+		var i_am_aggressor: bool = a_n > -b_n
+		av += n * (-approach * (0.45 if i_am_aggressor else 1.05))
+	ap._speedX = av.x
+	ap._speedY = av.y
+	if (approach > 1.2 or my_sh or their_sh) and _bonk_gate <= 0.0:
+		_bonk_gate = 0.09
+		var mid: Vector2 = (ac + bc) * 0.5
+		var shield_bounce: bool = my_sh or their_sh
+		weapons.play_sfx("bonk", mid, 0.08, clampf((1.8 if shield_bounce else 1.5) - approach * 0.07, 0.7, 1.8))
+		weapons.spawn_hit(mid, Color(0.6, 0.95, 1.0) if shield_bounce else Color(0.9, 0.95, 1.0), n)
+		GameState.cam_shake += clampf(approach * 0.35, 0.5, 4.0)
 
 
 func _nearest_enemy(idx: int) -> Dictionary:
@@ -170,6 +431,9 @@ func _build_hud() -> void:
 
 	_fight_label = Label.new()
 	_fight_label.text = "FIGHT!"
+	if net:
+		_fight_timer = 0.0  # the 3-2-1-GO overlay owns the intro online
+		_fight_label.visible = false
 	_fight_label.add_theme_font_size_override("font_size", 52)
 	_fight_label.add_theme_color_override("font_color", Color(1.0, 0.6, 0.15))
 	_fight_label.add_theme_color_override("font_shadow_color", Color(0, 0, 0, 0.9))
@@ -271,10 +535,20 @@ func _pick_spawn(avoid_px: Vector2) -> Vector2:
 
 
 func _nearest_threat_to(p: Vector2) -> Vector2:
-	## Center of the nearest living bot (used to pick the player's respawn
-	## away from danger). Falls back to arena center when all bots are down.
+	## Center of the nearest living enemy (used to pick the player's respawn
+	## away from danger). Falls back to arena center when nothing threatens.
 	var best: Vector2 = Vector2(768.0, 300.0)
 	var best_d: float = 1e18
+	if net:
+		for pid in _net_ids:
+			if pid == NetPlay.my_id() or _net_out.get(pid, false):
+				continue
+			var rc: Vector2 = _remote_center(pid)
+			var rd: float = rc.distance_squared_to(p)
+			if rd < best_d:
+				best_d = rd
+				best = rc
+		return best
 	for i in range(bots.size()):
 		if bots[i].dead:
 			continue
@@ -298,7 +572,16 @@ func _on_player_died() -> void:
 	player_hp = MAX_HP
 	_player_invuln = INVULN_TIME + 0.7  # Covers the respawn delay
 	if player_lives <= 0:
-		_end(false)
+		if net:
+			# ELIMINATED — spectate in god mode until someone wins
+			_eliminated = true
+			_net_out[NetPlay.my_id()] = true
+			NetPlay.send_mode({"m": "out"})
+			if is_instance_valid(player):
+				player.physics.is_god_mode = true
+			_net_check_win()
+		else:
+			_end(false)
 
 
 func _end(player_won: bool) -> void:
@@ -327,9 +610,11 @@ func _end(player_won: bool) -> void:
 
 
 func _return_to_menu() -> void:
+	NetPlay.leave_room()
 	GameState.battle_mode = false
 	GameState.cam_shake = 0.0
 	GameState.player_stunned = false
+	GameState.net_freeze = false
 	NetworkManager.disconnect_game()
 	get_tree().change_scene_to_file("res://scenes/ui/main_menu.tscn")
 
@@ -341,6 +626,13 @@ func _process(delta: float) -> void:
 	for i in range(bots.size()):
 		if _bots_invuln[i] > 0.0:
 			_bots_invuln[i] -= delta
+	# Online: pump my state + resolve my side of ball-vs-ball contacts
+	if net and not _over and is_instance_valid(player):
+		_net_pump(delta)
+		if not player._is_dead and not _eliminated:
+			for pid in _net_ids:
+				if pid != NetPlay.my_id() and not _net_out.get(pid, false):
+					_collide_online(pid)
 	# Player stun: control lock + unmissable visual (yellow strobe)
 	var p_stunned: bool = weapons.is_stunned("player")
 	GameState.player_stunned = p_stunned
@@ -432,11 +724,16 @@ func _process(delta: float) -> void:
 					var imp: float = 7.0 + 10.0 * res.power
 					player.physics._speedX += ddir.x * imp
 					player.physics._speedY += ddir.y * imp
+					if net:
+						NetPlay.send_mode({"m": "dash", "pow": res.power, "ax": aim.x, "ay": aim.y})
 		elif lmb and weapons.try_shoot("player"):
 			var kick: float = weapons.get_kick("player")
 			var wn: String = weapons.get_weapon("player")
 			if wn != "" and WeaponSystem.WEAPONS[wn].get("beam", false):
 				kick *= delta * 6.0  # Beams fire every frame — gentle steady pushback
+			elif net and wn != "":
+				# Beams replicate via the 20Hz fire flag; bullets as discrete events
+				NetPlay.send_mode({"m": "shot", "w": wn, "ax": aim.x, "ay": aim.y})
 			var kdir: Vector2 = aim.normalized()
 			player.physics._speedX -= kdir.x * kick
 			player.physics._speedY -= kdir.y * kick
@@ -539,12 +836,19 @@ func _layout_hud() -> void:
 	var vps: Vector2 = get_viewport().get_visible_rect().size
 	var top: PanelContainer = _hud.get_node_or_null("ScorePanel") as PanelContainer
 	if top:
-		var bot_bits: PackedStringArray = PackedStringArray()
-		for i in range(bots.size()):
-			bot_bits.append(("%d" % bots_lives[i]) if bots_lives[i] > 0 else "✖")
-		if bots.size() == 1:
-			_score_label.text = "YOU  %d ♥ %s  BOT" % [player_lives, bot_bits[0]]
+		if net:
+			var bits: PackedStringArray = PackedStringArray()
+			for pid in _net_ids:
+				var nm: String = "YOU" if pid == NetPlay.my_id() else str(NetworkManager.get_player_info(pid).get("name", "P%d" % pid))
+				var lv: int = player_lives if pid == NetPlay.my_id() else int(_net_lives.get(pid, MAX_LIVES))
+				bits.append("%s %s" % [nm, ("%d♥" % lv) if lv > 0 else "✖"])
+			_score_label.text = "   ·   ".join(bits)
+		elif bots.size() == 1:
+			_score_label.text = "YOU  %d ♥ %s  BOT" % [player_lives, ("%d" % bots_lives[0]) if bots_lives[0] > 0 else "✖"]
 		else:
+			var bot_bits: PackedStringArray = PackedStringArray()
+			for i in range(bots.size()):
+				bot_bits.append(("%d" % bots_lives[i]) if bots_lives[i] > 0 else "✖")
 			_score_label.text = "YOU  %d ♥ %s  BOTS" % [player_lives, " · ".join(bot_bits)]
 		var wname: String = weapons.get_weapon("player")
 		var wtext: String

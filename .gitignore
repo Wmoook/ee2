@@ -2,3 +2,5 @@
 *.import
 build/
 build.zip
+deploy/web/
+deploy/server/

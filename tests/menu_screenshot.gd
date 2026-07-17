@@ -11,5 +11,14 @@ func _ready() -> void:
 		await get_tree().create_timer(0.3).timeout
 		var img: Image = get_viewport().get_texture().get_image()
 		img.save_png("user://menu_check_%d.png" % i)
+	# Lobby overlay (browser view)
+	menu._select_tab(1)
+	menu._overlay.visible = true
+	menu._browser_box.visible = true
+	menu._room_box.visible = false
+	menu._set_lobby_list_message("No BATTLE lobbies yet — create one!")
+	await get_tree().create_timer(0.3).timeout
+	var img2: Image = get_viewport().get_texture().get_image()
+	img2.save_png("user://menu_check_lobby.png")
 	print("MENU SHOTS SAVED")
 	get_tree().quit(0)
