@@ -52,12 +52,23 @@ var BLOCK_CATEGORIES: Array = [
 		5011, 5012, 5013, 5014, 5015,
 		5016, 5017, 5018, 5019, 5020, 5021, 5022, 5023, 5024, 5025,
 	]},
-	{"name": "Candy", "ids": [5030, 5031, 5032, 5033, 5034, 5035]},
-	{"name": "Neon", "ids": [5036, 5037, 5038, 5039, 5040, 5041]},
-	{"name": "Castle", "ids": [5042, 5043, 5044, 5045, 5046, 5047]},
-	{"name": "Frost", "ids": [5048, 5049, 5050, 5051, 5052]},
-	{"name": "Magma", "ids": [5053, 5054, 5055, 5056, 5057]},
-	{"name": "Curves", "ids": [5058, 5059, 5060, 5061, 5062, 5063, 5064, 5065, 5066, 5067]},
+	{"name": "Candy", "color": Color(1.0, 0.5, 0.7), "ids": [5030, 5031, 5032, 5033, 5034, 5035]},
+	{"name": "Neon", "color": Color(0.25, 0.9, 1.0), "ids": [5036, 5037, 5038, 5039, 5040, 5041]},
+	{"name": "Castle", "color": Color(0.7, 0.72, 0.78), "ids": [5042, 5043, 5044, 5045, 5046, 5047]},
+	{"name": "Frost", "color": Color(0.6, 0.85, 1.0), "ids": [5048, 5049, 5050, 5051, 5052]},
+	{"name": "Magma", "color": Color(1.0, 0.45, 0.15), "ids": [5053, 5054, 5055, 5056, 5057]},
+	{"name": "Jungle", "color": Color(0.35, 0.8, 0.3), "ids": [6000, 6001, 6002, 6003, 6004, 6005, 6006, 6007]},
+	{"name": "Ocean", "color": Color(0.2, 0.65, 0.95), "ids": [6008, 6009, 6010, 6011, 6012, 6013, 6014, 6015]},
+	{"name": "Space", "color": Color(0.6, 0.5, 1.0), "ids": [6016, 6017, 6018, 6019, 6020, 6021, 6022, 6023]},
+	{"name": "Factory", "color": Color(0.85, 0.7, 0.3), "ids": [6024, 6025, 6026, 6027, 6028, 6029, 6030, 6031]},
+	{"name": "Desert", "color": Color(0.95, 0.75, 0.4), "ids": [6032, 6033, 6034, 6035, 6036, 6037, 6038, 6039]},
+	{"name": "Dream", "color": Color(0.9, 0.75, 0.95), "ids": [6040, 6041, 6042, 6043, 6044, 6045, 6046, 6047]},
+	{"name": "Arcade", "color": Color(1.0, 0.85, 0.2), "ids": [6048, 6049, 6050, 6051, 6052, 6053, 6054, 6055]},
+	{"name": "Gems", "color": Color(0.5, 0.95, 0.85), "ids": [6056, 6057, 6058, 6059, 6060, 6061, 6062, 6063]},
+	{"name": "Spooky", "color": Color(0.85, 0.45, 0.1), "ids": [6064, 6065, 6066, 6067, 6068, 6069, 6070, 6071]},
+	{"name": "Curves", "color": Color(0.95, 0.4, 0.85), "ids": [
+		5058, 5059, 5060, 5061, 5062, 5063, 5064, 5065, 5066, 5067,
+		6080, 6081, 6082, 6083, 6084, 6085, 6086, 6087, 6088, 6089]},
 	{"name": "Slopes", "ids": [
 		2000, 2001, 2002, 2003,
 		2004, 2005, 2006, 2007,
@@ -164,6 +175,56 @@ var BLOCK_CATEGORIES: Array = [
 # Flat palette of all block IDs (built from categories)
 var BLOCK_PALETTE: Array = []
 
+func get_category_color(i: int) -> Color:
+	if i >= 0 and i < BLOCK_CATEGORIES.size():
+		return BLOCK_CATEGORIES[i].get("color", Color(0.45, 0.45, 0.7))
+	return Color(0.45, 0.45, 0.7)
+
+# Display names for every custom block (palette tooltips + info bar).
+var custom_block_names: Dictionary = {
+	5000: "Dream Slab", 5001: "Dream Panel", 5002: "Dream Tile", 5003: "Dream Plate", 5004: "Dream Core",
+	5005: "Arena Plate", 5006: "Hazard Core", 5007: "Arena Rail", 5008: "Arena Vent", 5009: "Arena Glass", 5010: "Plasma Spike",
+	5011: "Obsidian Wall", 5012: "Ribbed Floor", 5013: "Rune Core", 5014: "Void Fill", 5015: "Warden Energy",
+	5016: "Wild Grass", 5017: "Packed Dirt", 5018: "Old Bark", 5019: "Canopy Leaf", 5020: "City Brick",
+	5021: "Concrete", 5022: "Wall Glass", 5023: "Asphalt", 5024: "Cave Rock", 5025: "Cave Crystal",
+	5030: "Bubblegum", 5031: "Candy Cane", 5032: "Chocolate", 5033: "Mint Swirl", 5034: "Berry Jelly", 5035: "Golden Wafer",
+	5036: "Tron Panel", 5037: "Circuit Magenta", 5038: "Hexcore", 5039: "Amber Scan", 5040: "Violet Pulse", 5041: "Grid Strobe",
+	5042: "Stone Brick", 5043: "Cobblestone", 5044: "Mossy Brick", 5045: "Cracked Keep", 5046: "Marble", 5047: "Royal Inlay",
+	5048: "Ice Glass", 5049: "Packed Snow", 5050: "Frost Brick", 5051: "Glacier", 5052: "Aurora Crystal",
+	5053: "Basalt Columns", 5054: "Lava Cracks", 5055: "Ember Rock", 5056: "Obsidian", 5057: "Magma Flow",
+	5058: "Rainbow Ribbon", 5059: "Neon Tube Cyan", 5060: "Neon Tube Pink", 5061: "Gold Rail", 5062: "Steel Pipe",
+	5063: "Candy Stripe", 5064: "Lava Ribbon", 5065: "Ice Ribbon", 5066: "Jungle Vine", 5067: "Starlight",
+	6000: "Canopy Leaf", 6001: "Mossy Log", 6002: "Bamboo", 6003: "Temple Stone", 6004: "Vine Wall",
+	6005: "Bloom", 6006: "Root Tangle", 6007: "Glowshroom",
+	6008: "Deep Water", 6009: "Coral Pink", 6010: "Coral Cyan", 6011: "Golden Sand", 6012: "Shell Tile",
+	6013: "Kelp Weave", 6014: "Bubble Stone", 6015: "Treasure Hoard",
+	6016: "Starfield", 6017: "Nebula", 6018: "Asteroid", 6019: "Hull Plate", 6020: "Portlight",
+	6021: "Solar Cell", 6022: "Hazard Stripe", 6023: "Reactor Core",
+	6024: "Steel Plate", 6025: "Rust Plate", 6026: "Vent Grate", 6027: "Gearbox", 6028: "Pipe Grid",
+	6029: "Caution Tape", 6030: "Server Rack", 6031: "Conveyor",
+	6032: "Sandstone", 6033: "Glyph Stone", 6034: "Pharaoh Gold", 6035: "Dune Sand", 6036: "Cracked Clay",
+	6037: "Pyramid Brick", 6038: "Oasis Tile", 6039: "Scarab Lapis",
+	6040: "Cloud Puff", 6041: "Mint Whip", 6042: "Lavender Haze", 6043: "Peach Sky", 6044: "Star Cream",
+	6045: "Cotton Rose", 6046: "Moon Milk", 6047: "Aurora Silk",
+	6048: "Pixel Brick", 6049: "Pixel Grass", 6050: "Bonus Star", 6051: "Checker", 6052: "Pipe Green",
+	6053: "Sky Block", 6054: "Coin Tile", 6055: "Glitch",
+	6056: "Ruby", 6057: "Emerald", 6058: "Sapphire", 6059: "Amethyst", 6060: "Topaz",
+	6061: "Diamond", 6062: "Dark Gem", 6063: "Opal",
+	6064: "Pumpkin", 6065: "Bone Pile", 6066: "Cobweb Stone", 6067: "Witchbrick", 6068: "Tombstone",
+	6069: "Ghostglow", 6070: "Blood Moon", 6071: "Coffin Wood",
+	6080: "Voltage", 6081: "Rose Vine", 6082: "Toxic Flow", 6083: "River Run", 6084: "Chrome",
+	6085: "Ember Rope", 6086: "Cloudstream", 6087: "Royal Ribbon", 6088: "Void Trail", 6089: "Sakura Stream",
+}
+
+func custom_block_name(id: int) -> String:
+	if custom_block_names.has(id):
+		return custom_block_names[id]
+	if custom_block_names.has(id - 100):
+		return custom_block_names[id - 100] + " BG"
+	if custom_block_names.has(id - 1000):
+		return custom_block_names[id - 1000] + " BG"
+	return ""
+
 # Action block classification
 var _action_arrows: Dictionary = {}
 var _action_dots: Dictionary = {}
@@ -250,6 +311,21 @@ func _register_custom_blocks() -> void:
 			"path16": "res://assets/sprites/NEW_BLOCK_SPRITE/block_%d_16.png" % pk_n})
 		_custom_block_warps[pk_id] = Vector2(0.0, 0.35)
 		_custom_block_warps[pk_id + 100] = Vector2(0.0, 0.35)
+	# MEGA PACKS (Jungle/Ocean/Space/Factory/Desert/Dream/Arcade/Gems/Spooky
+	# 6000-6071) + CURVES II ribbons (6080-6089). The classic +100 BG scheme
+	# is full past id 5099, so these BG twins live at id + 1000 (7000s).
+	var pack2_ids: Array = []
+	for mp in range(6000, 6072):
+		pack2_ids.append(mp)
+	for mp2 in range(6080, 6090):
+		pack2_ids.append(mp2)
+	for mp_id in pack2_ids:
+		custom_blocks.append({"id": mp_id,
+			"path": "res://assets/sprites/BLOCK_PACKS/%d.png" % mp_id,
+			"path16": "res://assets/sprites/BLOCK_PACKS/%d_16.png" % mp_id,
+			"bg_off": 1000})
+		_custom_block_warps[mp_id] = Vector2(0.0, 0.35)
+		_custom_block_warps[mp_id + 1000] = Vector2(0.0, 0.35)
 	for cb in custom_blocks:
 		var tex: Texture2D = load(cb.path) as Texture2D
 		var tex16: Texture2D = load(cb.path16) as Texture2D
@@ -259,8 +335,9 @@ func _register_custom_blocks() -> void:
 				_custom_block_textures[cb.id * -1] = tex16  # 16x16 for grid (negative key)
 			_block_db[cb.id] = {"atlas": "custom", "layer": "foreground", "artoffset": 0, "custom_tex": true}
 			_solid_set[cb.id] = true
-			# Register BG version (ID + 100) — same texture, background layer
-			var bg_id: int = cb.id + 100
+			# Register BG version — same texture, background layer. Classic
+			# customs use +100; the 6000-range mega packs use +1000.
+			var bg_id: int = cb.id + int(cb.get("bg_off", 100))
 			_custom_block_textures[bg_id] = tex
 			if tex16:
 				_custom_block_textures[bg_id * -1] = tex16

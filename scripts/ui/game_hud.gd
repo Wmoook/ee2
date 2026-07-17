@@ -191,7 +191,7 @@ func _build_palette() -> void:
 		btn.text = GameState.get_category_name(i)
 		btn.custom_minimum_size = Vector2(60, TAB_HEIGHT - 4)
 		btn.add_theme_font_size_override("font_size", 11)
-		_style_tab_button(btn, i == 0)
+		_style_tab_button(btn, i == 0, i)
 		btn.pressed.connect(_on_tab_pressed.bind(i))
 		tab_container.add_child(btn)
 		_tab_buttons.append(btn)
@@ -243,12 +243,15 @@ func _build_palette() -> void:
 	)
 	add_child(_palette_toggle_btn)
 
-func _style_tab_button(btn: Button, active: bool) -> void:
+func _style_tab_button(btn: Button, active: bool, cat_index: int = -1) -> void:
+	# Pack tabs carry their theme color — active tabs glow with it
+	var accent: Color = GameState.get_category_color(cat_index) if cat_index >= 0 else Color(0.45, 0.45, 0.7)
 	if active:
 		var s: StyleBoxFlat = StyleBoxFlat.new()
-		s.bg_color = Color(0.22, 0.22, 0.35, 0.95)
-		s.border_color = Color(0.45, 0.45, 0.7, 0.8)
+		s.bg_color = Color(accent.r * 0.22, accent.g * 0.22, accent.b * 0.26, 0.95)
+		s.border_color = accent
 		s.set_border_width_all(1)
+		s.border_width_bottom = 3
 		s.set_corner_radius_all(4)
 		s.content_margin_left = 8.0
 		s.content_margin_right = 8.0
@@ -257,12 +260,12 @@ func _style_tab_button(btn: Button, active: bool) -> void:
 		btn.add_theme_stylebox_override("normal", s)
 		btn.add_theme_stylebox_override("hover", s)
 		btn.add_theme_stylebox_override("pressed", s)
-		btn.add_theme_color_override("font_color", Color(0.9, 0.9, 1.0))
+		btn.add_theme_color_override("font_color", Color(accent.r * 0.5 + 0.5, accent.g * 0.5 + 0.5, accent.b * 0.5 + 0.5))
 		btn.add_theme_color_override("font_hover_color", Color(1.0, 1.0, 1.0))
 	else:
 		var s: StyleBoxFlat = StyleBoxFlat.new()
 		s.bg_color = Color(0.12, 0.12, 0.18, 0.8)
-		s.border_color = Color(0.25, 0.25, 0.35, 0.4)
+		s.border_color = Color(accent.r * 0.4, accent.g * 0.4, accent.b * 0.4, 0.5)
 		s.set_border_width_all(1)
 		s.set_corner_radius_all(4)
 		s.content_margin_left = 8.0
@@ -274,8 +277,8 @@ func _style_tab_button(btn: Button, active: bool) -> void:
 		sh.bg_color = Color(0.17, 0.17, 0.25, 0.9)
 		btn.add_theme_stylebox_override("hover", sh)
 		btn.add_theme_stylebox_override("pressed", s)
-		btn.add_theme_color_override("font_color", Color(0.55, 0.55, 0.65))
-		btn.add_theme_color_override("font_hover_color", Color(0.75, 0.75, 0.85))
+		btn.add_theme_color_override("font_color", Color(0.62, 0.62, 0.7))
+		btn.add_theme_color_override("font_hover_color", Color(0.85, 0.85, 0.92))
 
 func _populate_grid(cat_index: int) -> void:
 	# Clear existing block buttons
@@ -399,6 +402,10 @@ func _make_block_thumbnail(block_id: int) -> Texture2D:
 func _get_block_name(block_id: int) -> String:
 	if block_id == 0:
 		return "Eraser"
+	# Custom pack blocks carry real names (with pack context)
+	var cname: String = GameState.custom_block_name(block_id)
+	if cname != "":
+		return cname
 	# Slope blocks (IDs 2000-2039)
 	if block_id >= 2000 and block_id <= 2039:
 		var slope_idx: int = block_id - 2000
@@ -462,7 +469,7 @@ func _on_tab_pressed(cat_index: int) -> void:
 	GameState.selected_category = cat_index
 	# Update tab styles
 	for i in range(_tab_buttons.size()):
-		_style_tab_button(_tab_buttons[i], i == cat_index)
+		_style_tab_button(_tab_buttons[i], i == cat_index, i)
 	_populate_grid(cat_index)
 	# Select first block in category
 	var ids: Array = GameState.get_category_ids(cat_index)
