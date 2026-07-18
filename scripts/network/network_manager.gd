@@ -182,6 +182,7 @@ func _stop_tunnel() -> void:
 
 func _on_peer_connected(id: int) -> void:
 	if is_dedicated:
+		print("[net] peer %d connected (online=%d)" % [id, multiplayer.get_peers().size()])
 		NetPlay.server_peer_connected(id)
 		return
 	if is_host:
@@ -191,6 +192,7 @@ func _on_peer_connected(id: int) -> void:
 
 func _on_peer_disconnected(id: int) -> void:
 	if is_dedicated:
+		print("[net] peer %d disconnected (online=%d)" % [id, multiplayer.get_peers().size()])
 		NetPlay.server_peer_left(id)
 		return
 	players.erase(id)

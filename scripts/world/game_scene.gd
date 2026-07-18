@@ -10,9 +10,13 @@ var _player_scene: PackedScene = preload("res://scenes/player/player.tscn")
 var _count_layer: CanvasLayer = null
 var _count_label: Label = null
 var _go_hold: float = 0.0
+var _online_guest: bool = false
+var _rejoining: bool = false
+var _rejoin_t: float = 0.0
 
 func _ready() -> void:
 	RenderingServer.set_default_clear_color(Color(0.0, 0.0, 0.0))
+	_online_guest = NetPlay.online
 
 	# Connect network signals for player spawn/despawn
 	NetworkManager.player_connected.connect(_on_player_connected)
@@ -225,6 +229,12 @@ func _process(_delta: float) -> void:
 			if _go_hold <= 0.0:
 				_count_layer.queue_free()
 				_count_layer = null
+	# Reconnect watchdog: if the rejoin hasn't landed in 12s, give up to menu
+	if _rejoining:
+		_rejoin_t += get_process_delta_time()
+		if _rejoin_t > 12.0 and not NetPlay.online:
+			_rejoining = false
+			_leave_to_menu()
 	# Keep vignette covering viewport
 	if _vignette and _camera_exists():
 		var cam: Camera2D = get_viewport().get_camera_2d()
@@ -253,8 +263,10 @@ func _input(event: InputEvent) -> void:
 func _leave_to_menu() -> void:
 	# Save world — but NEVER in battle mode (the arena must not overwrite the
 	# player's saved world) and never as a guest of the shared online world
-	# (the dedicated server owns that save).
-	if not GameState.battle_mode and not NetPlay.online:
+	# (the dedicated server owns that save). _online_guest is captured at
+	# scene start: after a connection DROP NetPlay.online is already false,
+	# and saving then would clobber the local world with the shared one.
+	if not GameState.battle_mode and not _online_guest:
 		WorldManager.save_to_file("user://world_save.json")
 	NetPlay.leave_room()
 	GameState.battle_mode = false
@@ -269,5 +281,39 @@ func _leave_to_menu() -> void:
 	get_tree().change_scene_to_file("res://scenes/ui/main_menu.tscn")
 
 func _on_server_lost() -> void:
-	# Connection to the dedicated server dropped mid-game — back to the menu
+	# Connection to the dedicated server dropped mid-game. Lobby matches
+	# can't survive a drop (the lobby is gone) — back to the menu. But in
+	# the sandbox world, reconnect and rejoin QUIETLY: a transient drop
+	# should cost a respawn, not a trip to the menu.
+	if GameState.battle_mode or GameState.boss_fight or GameState.zombies_mode or GameState.survivors_mode:
+		_leave_to_menu()
+		return
+	_start_rejoin()
+
+func _start_rejoin() -> void:
+	if _rejoining:
+		return
+	_rejoining = true
+	_rejoin_t = 0.0
+	GameState.net_freeze = false
+	var lay: CanvasLayer = CanvasLayer.new()
+	lay.layer = 90
+	var lbl: Label = Label.new()
+	lbl.text = "⟳  Reconnecting…"
+	lbl.add_theme_font_size_override("font_size", 30)
+	lbl.add_theme_color_override("font_color", Color(1, 1, 1))
+	lbl.add_theme_color_override("font_outline_color", Color(0, 0, 0))
+	lbl.add_theme_constant_override("outline_size", 8)
+	lbl.set_anchors_preset(Control.PRESET_CENTER)
+	lay.add_child(lbl)
+	add_child(lay)
+	NetPlay.world_joined.connect(_on_rejoined, CONNECT_ONE_SHOT)
+	NetPlay.connect_failed.connect(_on_rejoin_failed, CONNECT_ONE_SHOT)
+	NetPlay.join_world()
+
+func _on_rejoined() -> void:
+	# Fresh world snapshot applied — rebuild the scene on top of it
+	get_tree().change_scene_to_file("res://scenes/world/game.tscn")
+
+func _on_rejoin_failed() -> void:
 	_leave_to_menu()

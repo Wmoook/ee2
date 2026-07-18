@@ -106,6 +106,18 @@ server.on("upgrade", (req, socket, head) => {
     return;
   }
   const backend = net.connect(GODOT_PORT, "127.0.0.1");
+  // Per-connection forensics: which side closed first, when, and how much
+  // data each direction moved. This is the ONLY visibility into silent drops.
+  const wsId = Math.random().toString(36).slice(2, 8);
+  const t0 = Date.now();
+  let up = 0, down = 0, closedBy = null;
+  const logClose = (who, err) => {
+    if (closedBy) return;
+    closedBy = who;
+    const dur = ((Date.now() - t0) / 1000).toFixed(1);
+    console.log(`[ws ${wsId}] closed by ${who}${err ? " (" + err.code + ")" : ""} after ${dur}s up=${up} down=${down}`);
+  };
+  console.log(`[ws ${wsId}] open ${req.headers["x-forwarded-for"] || req.socket.remoteAddress}`);
   const kill = () => {
     socket.destroy();
     backend.destroy();
@@ -118,11 +130,15 @@ server.on("upgrade", (req, socket, head) => {
     raw += "\r\n";
     backend.write(raw);
     if (head && head.length) backend.write(head);
+    socket.on("data", (b) => { up += b.length; });
+    backend.on("data", (b) => { down += b.length; });
     socket.pipe(backend);
     backend.pipe(socket);
   });
-  backend.on("error", kill);
-  socket.on("error", kill);
+  backend.on("error", (e) => { logClose("godot-error", e); kill(); });
+  socket.on("error", (e) => { logClose("client-error", e); kill(); });
+  socket.on("close", () => { logClose("client"); backend.destroy(); });
+  backend.on("close", () => { logClose("godot"); socket.destroy(); });
   socket.setNoDelay(true);
   backend.setNoDelay(true);
 });
