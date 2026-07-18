@@ -241,13 +241,21 @@ func _rubble_support_scan() -> void:
 		var bty: int = int(floor((fc.y + 12.5) / 16.0))
 		if bty >= ground_y or WorldManager.is_solid_at(int(floor(fc.x / 16.0)), bty):
 			sup = true
+		var slide_vx: float = _rng.randf_range(-10.0, 10.0)
 		if not sup:
 			var oi: int = WorldManager.free_block_at_point(Vector2(fc.x, fc.y + 12.5))
 			if oi >= 0 and not (WorldManager.free_blocks[oi] == fb):
-				sup = true
+				# Only a support REASONABLY UNDER the block holds it — resting
+				# on the corner of an offset block means you topple off it
+				# (kills the impossible snaking spires; neat stacks survive)
+				var sc: Vector2 = (WorldManager.free_blocks[oi].pos as Vector2) + Vector2(8, 8)
+				if absf(sc.x - fc.x) <= 6.0:
+					sup = true
+				else:
+					slide_vx = 55.0 * (1.0 if fc.x >= sc.x else -1.0) + _rng.randf_range(-10.0, 10.0)
 		if not sup and _debris.size() < MAX_DEBRIS:
 			WorldManager.free_blocks.remove_at(ri)
-			_debris.append({"pos": fc, "vel": Vector2(_rng.randf_range(-10.0, 10.0), 0.0),
+			_debris.append({"pos": fc, "vel": Vector2(slide_vx, 0.0),
 				"rot": deg_to_rad(float(fb.get("rotation", 0.0))), "rv": _rng.randf_range(-2.0, 2.0),
 				"id": fb.id, "bn": 1})
 			changed = true
