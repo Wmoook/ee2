@@ -448,10 +448,20 @@ func _draw() -> void:
 						cmesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
 						poly["_cached_mesh"] = cmesh
 						poly["_cached_tex"] = curve_tex
+						poly["mesh_off"] = Vector2.ZERO  # mesh matches current points
 						poly["_actual_tile_count"] = int(round(max_d / 16.0))
 			# Render: ONE draw_mesh call (zero per-frame computation)
 			if poly.has("_cached_mesh"):
-				draw_mesh(poly["_cached_mesh"], poly["_cached_tex"], Transform2D.IDENTITY)
+				# Falling curves (BLOCK GRAVITY) translate their points in place;
+				# the cached mesh is drawn at the accumulated offset instead of
+				# being rebuilt every frame
+				var moff: Vector2 = poly.get("mesh_off", Vector2.ZERO)
+				if moff != Vector2.ZERO:
+					draw_set_transform(moff, 0.0, Vector2.ONE)
+					draw_mesh(poly["_cached_mesh"], poly["_cached_tex"], Transform2D.IDENTITY)
+					draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
+				else:
+					draw_mesh(poly["_cached_mesh"], poly["_cached_tex"], Transform2D.IDENTITY)
 			else:
 				# Fallback
 				draw_polyline(poly_pts, Color(0.5, 0.5, 0.52, 1.0), 16.0, true)

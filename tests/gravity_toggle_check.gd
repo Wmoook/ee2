@@ -19,12 +19,20 @@ func _ready() -> void:
 	var grav: GravityMode = GravityMode.new()
 	grav.attached = true
 	add_child(grav)
+	var curve_y0: float = 0.0
+	if WorldManager.polylines.size() > 0:
+		curve_y0 = (WorldManager.polylines[0].points as PackedVector2Array)[0].y
 	await get_tree().create_timer(0.3).timeout
 	var mid_debris: int = grav._debris.size()
 	await get_tree().create_timer(4.0).timeout
 	var col_ok: bool = WorldManager.get_tile(8, 35) == 5000
 	var plat_gone: bool = WorldManager.get_tile(23, 10) == 0
-	var polys_gone: bool = WorldManager.polylines.is_empty()
+	# Curves fall as ONE rigid object: still present, whole, and LOWER
+	var polys_gone: bool = false
+	if WorldManager.polylines.size() > 0:
+		var cy1: float = (WorldManager.polylines[0].points as PackedVector2Array)[0].y
+		var rest_v: float = float(WorldManager.polylines[0].get("gm_vel", 1.0))
+		polys_gone = cy1 > curve_y0 + 100.0 and rest_v <= 0.0
 	var settled: bool = grav._debris.size() == 0
 	var rubble: int = 0
 	for fb in WorldManager.free_blocks:
@@ -36,9 +44,9 @@ func _ready() -> void:
 			var t: int = WorldManager.get_tile(x, y)
 			if t != 0 and t != 9:
 				grid += 1
-	# initial: 4 column + 8 platform = 12 grid; curve ~10 tiles extra
-	var mass_ok: bool = grid + rubble >= 20 and grid + rubble <= 26
-	print("GTOG: mid_debris=%d col=%s plat_fell=%s polys_gone=%s settled=%s grid=%d rubble=%d" % [mid_debris, col_ok, plat_gone, polys_gone, settled, grid, rubble])
-	var ok: bool = mid_debris > 6 and col_ok and plat_gone and polys_gone and settled and mass_ok
+	# initial: 4 column + 8 platform = 12 grid (curve stays a curve now)
+	var mass_ok: bool = grid + rubble >= 11 and grid + rubble <= 13
+	print("GTOG: mid_debris=%d col=%s plat_fell=%s curve_fell_whole=%s settled=%s grid=%d rubble=%d" % [mid_debris, col_ok, plat_gone, polys_gone, settled, grid, rubble])
+	var ok: bool = mid_debris > 4 and col_ok and plat_gone and polys_gone and settled and mass_ok
 	print("GRAVITY TOGGLE CHECK: %s" % ("PASS" if ok else "FAIL"))
 	get_tree().quit(0 if ok else 1)

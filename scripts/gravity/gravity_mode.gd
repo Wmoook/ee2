@@ -91,38 +91,169 @@ func _exit_tree() -> void:
 	_debris.clear()
 
 func _crumble_curves_and_frees() -> void:
-	## BLOCK GRAVITY ON: curves shatter into their component 16px tiles
-	## (tangent-rotated debris) and every placed free block goes dynamic.
+	## BLOCK GRAVITY ON: every curve becomes ONE rigid falling object (its
+	## whole ribbon + end caps drop together and land intact); placed free
+	## blocks go dynamic as debris. Caps ride their curve.
+	var claimed: Dictionary = {}
 	for poly in WorldManager.polylines:
-		if poly.get("collision_only", false) or poly.get("render_only", false):
-			continue
-		var pts: PackedVector2Array = poly.points
-		var bid: int = poly.get("block_id", 9)
-		var acc: float = 8.0
-		for i in range(1, pts.size()):
-			var seg: float = pts[i].distance_to(pts[i - 1])
-			acc += seg
-			while acc >= 16.0 and _debris.size() < MAX_DEBRIS:
-				acc -= 16.0
-				var t: Vector2 = (pts[i] - pts[i - 1]).normalized()
-				_debris.append({"pos": pts[i], "vel": Vector2(_rng.randf_range(-25.0, 25.0), _rng.randf_range(-40.0, 0.0)),
-					"rot": atan2(t.y, t.x), "rv": _rng.randf_range(-3.0, 3.0), "id": bid, "bn": 0})
-	WorldManager.polylines.clear()
-	WorldManager.build_curve_colliders()
-	var fbs: Array = WorldManager.free_blocks.duplicate()
-	WorldManager.free_blocks.clear()
-	for fb in fbs:
-		if fb.get("curve_visual", false) or fb.get("curve_collision", false):
+		poly["gm_vel"] = 0.001  # support check decides whether it actually falls
+		var caps: Array = []
+		if not poly.get("collision_only", false):
+			var pts: PackedVector2Array = poly.points
+			if pts.size() >= 2:
+				for fi in range(WorldManager.free_blocks.size()):
+					if claimed.has(fi):
+						continue
+					var fb: Dictionary = WorldManager.free_blocks[fi]
+					if not fb.get("is_cap", false):
+						continue
+					var fc: Vector2 = (fb.pos as Vector2) + Vector2(8, 8)
+					if fc.distance_to(pts[0]) < 22.0 or fc.distance_to(pts[pts.size() - 1]) < 22.0:
+						claimed[fi] = true
+						caps.append(fb)
+		poly["gm_caps"] = caps
+	# Non-cap free blocks become debris
+	var keep: Array = []
+	for fi in range(WorldManager.free_blocks.size()):
+		var fb: Dictionary = WorldManager.free_blocks[fi]
+		if claimed.has(fi) or fb.get("is_cap", false) or fb.get("curve_visual", false) or fb.get("curve_collision", false):
+			keep.append(fb)
 			continue
 		if _debris.size() < MAX_DEBRIS:
 			_debris.append({"pos": (fb.pos as Vector2) + Vector2(8, 8), "vel": Vector2(0, -20),
 				"rot": deg_to_rad(float(fb.get("rotation", 0.0))), "rv": _rng.randf_range(-2.0, 2.0),
 				"id": fb.id, "bn": 0})
 		else:
-			WorldManager.free_blocks.append(fb)
+			keep.append(fb)
+	WorldManager.free_blocks = keep
 	WorldManager.free_blocks_changed.emit()
-	WorldManager.polylines_changed.emit()
-	WorldManager.tile_changed.emit(0, 0, 0)
+
+func _family(a: Dictionary, b: Dictionary) -> bool:
+	# Same curve's render parent / split halves share endpoints
+	var ap: PackedVector2Array = a.points
+	var bp: PackedVector2Array = b.points
+	if ap.size() < 2 or bp.size() < 2:
+		return false
+	for e0 in [ap[0], ap[ap.size() - 1]]:
+		for e1 in [bp[0], bp[bp.size() - 1]]:
+			if e0.distance_to(e1) < 1.5:
+				return true
+	return false
+
+func _curve_room(poly: Dictionary, max_probe: float) -> float:
+	## Vertical room beneath the curve before it touches ground/tiles/another
+	## resting curve. Sampled along the ribbon.
+	var pts: PackedVector2Array = poly.points
+	var stepn: int = maxi(1, pts.size() / 40)
+	var room: float = max_probe
+	var probe_cells: int = 1 + int(ceil(max_probe / 16.0))
+	for i in range(0, pts.size(), stepn):
+		var pt: Vector2 = pts[i]
+		var bot: float = pt.y + 8.0
+		var tx: int = int(floor(pt.x / 16.0))
+		var ty0: int = int(floor(bot / 16.0))
+		for ty in range(ty0, ty0 + probe_cells + 1):
+			if ty >= WorldManager.world_height - 1 or WorldManager.is_solid_at(tx, ty):
+				room = minf(room, maxf(float(ty) * 16.0 - bot, 0.0))
+				break
+	for op in WorldManager.polylines:
+		if op == poly or op.get("collision_only", false):
+			continue
+		if op.has("gm_vel") and float(op.gm_vel) > 0.0:
+			continue  # still falling — not support
+		if _family(op, poly):
+			continue
+		if op.bbox_max.x < poly.bbox_min.x or op.bbox_min.x > poly.bbox_max.x:
+			continue
+		var ops: PackedVector2Array = op.points
+		var ostep: int = maxi(1, ops.size() / 60)
+		for i in range(0, pts.size(), stepn):
+			var pt: Vector2 = pts[i]
+			for j in range(0, ops.size(), ostep):
+				var q: Vector2 = ops[j]
+				if absf(q.x - pt.x) < 12.0 and q.y > pt.y:
+					room = minf(room, maxf(q.y - pt.y - 16.7, 0.0))
+	return room
+
+func _shift_poly(poly: Dictionary, dy: float) -> void:
+	var off: Vector2 = Vector2(0, dy)
+	var pts: PackedVector2Array = poly.points
+	for i in range(pts.size()):
+		pts[i] += off
+	poly["points"] = pts
+	for key in ["render_top", "render_bot"]:
+		if poly.has(key):
+			var arr: PackedVector2Array = poly[key]
+			for i in range(arr.size()):
+				arr[i] += off
+			poly[key] = arr
+	poly["bbox_min"] = (poly.bbox_min as Vector2) + off
+	poly["bbox_max"] = (poly.bbox_max as Vector2) + off
+	poly["mesh_off"] = poly.get("mesh_off", Vector2.ZERO) + off
+	for fb in poly.get("gm_caps", []):
+		fb["pos"] = (fb.pos as Vector2) + off
+
+func _step_curves(delta: float) -> void:
+	var any_fall: bool = false
+	var landed_now: bool = false
+	for poly in WorldManager.polylines:
+		if not poly.has("gm_vel"):
+			continue
+		if (poly.points as PackedVector2Array).size() < 2:
+			continue
+		var v: float = float(poly.gm_vel)
+		if v <= 0.0:
+			# Resting — does it still have support? (knock its perch away!)
+			if _curve_room(poly, 4.0) >= 3.0:
+				poly["gm_vel"] = 0.001
+			continue
+		v = minf(v + G_PX * delta, TERMINAL)
+		var want: float = v * delta
+		var room: float = _curve_room(poly, want + 2.0)
+		var drop: float = minf(want, room)
+		if drop > 0.0:
+			_shift_poly(poly, drop)
+			any_fall = true
+		if room <= want:
+			poly["gm_vel"] = 0.0
+			landed_now = true
+		else:
+			poly["gm_vel"] = v
+	if landed_now:
+		WorldManager.build_curve_colliders()
+	if any_fall:
+		WorldManager.polylines_changed.emit()
+		WorldManager.free_blocks_changed.emit()
+
+func _rubble_support_scan() -> void:
+	## Rubble whose perch fell away must fall too (probe BELOW its own
+	## rotated body — 12.5 > the 11.4 diagonal — so it can never
+	## "stand on itself" and float)
+	var changed: bool = false
+	var ri: int = WorldManager.free_blocks.size() - 1
+	while ri >= 0:
+		var fb: Dictionary = WorldManager.free_blocks[ri]
+		if not fb.get("rubble", false):
+			ri -= 1
+			continue
+		var fc: Vector2 = (fb.pos as Vector2) + Vector2(8, 8)
+		var sup: bool = false
+		var bty: int = int(floor((fc.y + 12.5) / 16.0))
+		if bty >= ground_y or WorldManager.is_solid_at(int(floor(fc.x / 16.0)), bty):
+			sup = true
+		if not sup:
+			var oi: int = WorldManager.free_block_at_point(Vector2(fc.x, fc.y + 12.5))
+			if oi >= 0 and not (WorldManager.free_blocks[oi] == fb):
+				sup = true
+		if not sup and _debris.size() < MAX_DEBRIS:
+			WorldManager.free_blocks.remove_at(ri)
+			_debris.append({"pos": fc, "vel": Vector2(_rng.randf_range(-10.0, 10.0), 0.0),
+				"rot": deg_to_rad(float(fb.get("rotation", 0.0))), "rv": _rng.randf_range(-2.0, 2.0),
+				"id": fb.id, "bn": 1})
+			changed = true
+		ri -= 1
+	if changed:
+		WorldManager.free_blocks_changed.emit()
 
 func _find_player() -> Node:
 	for ch in get_parent().get_children():
@@ -277,9 +408,27 @@ func _step_debris(delta: float) -> void:
 			var tilt: float = absf(fposmod(d.rot, PI / 2.0) - PI / 4.0)
 			var square_ish: bool = tilt > PI / 4.0 - 0.14  # within ~8 deg of upright
 			if on_rubble or not square_ish:
-				# Rest askew where it lies (snap the angle a little for repose)
+				# Rest askew where it lies (snap the angle a little). Blocks
+				# must NEVER overlap: climb up off other blocks, stay clear of
+				# the border and any solid tile.
 				var rr: float = round(d.rot / (PI / 12.0)) * (PI / 12.0)
-				WorldManager.free_blocks.append({"pos": Vector2(pos.x - 8.0, pos.y - 8.0),
+				var rx: float = clampf(pos.x, 16.0 + 11.6, float(WorldManager.world_width - 1) * 16.0 - 11.6)
+				var ry: float = pos.y
+				for _hop in range(14):
+					var bump: bool = false
+					for nb in WorldManager.fb_near(rx - 8.0, ry - 8.0, 24.0):
+						if nb.get("rubble", false) or nb.get("is_cap", false):
+							var nc: Vector2 = (nb.pos as Vector2) + Vector2(8, 8)
+							if absf(nc.x - rx) < 13.0 and absf(nc.y - ry) < 13.0:
+								ry = nc.y - 14.2
+								bump = true
+					if not bump:
+						break
+				for side in [-11.0, 11.0]:
+					var scx: int = int(floor((rx + side) / 16.0))
+					if WorldManager.is_solid_at(scx, int(floor(ry / 16.0))):
+						rx = float(scx) * 16.0 + (16.0 + 11.4 if side < 0.0 else -11.4)
+				WorldManager.free_blocks.append({"pos": Vector2(rx - 8.0, ry - 8.0),
 					"id": d.id, "rotation": rad_to_deg(rr), "rubble": true})
 				WorldManager.free_blocks_changed.emit()
 				_debris.remove_at(i)
@@ -303,10 +452,13 @@ func _process(delta: float) -> void:
 	if _renderer == null:
 		_renderer = get_parent().get("renderer")
 	_knock_from_player(delta)
+	if attached:
+		_step_curves(delta)
 	_scan_accum += delta
 	if _scan_accum >= SCAN_DT:
 		_scan_accum = 0.0
 		_support_scan()
+		_rubble_support_scan()
 	_step_debris(delta)
 	if _debris.size() > 0 or true:
 		queue_redraw()
