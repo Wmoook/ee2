@@ -1171,8 +1171,11 @@ func _process(_delta: float) -> void:
 						# every peer's re-apply). ~2-3px chords are visually
 						# identical and physics-safe (capsule contacts use
 						# closest-segment distance) — giant curves place instantly.
-						if spline_pts.size() > 700:
-							var keep_step: int = int(ceil(float(spline_pts.size()) / 700.0))
+						# 4000-pt budget: the old 700 cap made SUPER long curves
+						# angular (30px chords -> crooked-domino tiles); since the
+						# pinch-scan prefix-sum fix, 4000 pts adds ~75ms once.
+						if spline_pts.size() > 4000:
+							var keep_step: int = int(ceil(float(spline_pts.size()) / 4000.0))
 							var dec: PackedVector2Array = PackedVector2Array()
 							for _di in range(0, spline_pts.size(), keep_step):
 								dec.append(spline_pts[_di])
