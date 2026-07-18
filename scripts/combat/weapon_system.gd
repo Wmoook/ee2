@@ -9,7 +9,7 @@ extends Node2D
 ## bright-particle style (same language as the fire trail).
 
 const ACTOR_RADIUS: float = 10.0     # Projectile-vs-ball hit radius
-const CURVE_HIT_DIST: float = 8.35   # Projectile-vs-curve centerline distance
+const CURVE_HIT_DIST: float = 8.0    # Projectile-vs-curve centerline distance
 const PICKUP_RADIUS: float = 16.0
 const PICKUP_RESPAWN: float = 8.0    # Seconds until a taken pad refills
 

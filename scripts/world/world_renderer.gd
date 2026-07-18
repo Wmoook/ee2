@@ -328,7 +328,7 @@ func _draw() -> void:
 		var poly_pts: PackedVector2Array = poly.points
 		var poly_norms: Array = poly.normals
 		if poly_pts.size() >= 2:
-			var half_w: float = 8.35  # 8.0 + 0.35 warp to match 40x40 block texture
+			var half_w: float = 8.0  # Curve tiles are EXACTLY block-sized (16px)
 			# Look up block texture (custom or atlas)
 			var curve_bid: int = poly.get("block_id", 9)
 			var curve_tex: Texture2D = null

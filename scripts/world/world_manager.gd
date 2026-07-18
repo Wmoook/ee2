@@ -213,8 +213,8 @@ func add_polyline(points: PackedVector2Array, side: String = "top", block_id: in
 	var render_bot: PackedVector2Array = PackedVector2Array()
 	var render_dists: Array = [0.0]
 	for ri in range(points.size()):
-		render_top.append(points[ri] + vert_normals[ri] * 8.35)
-		render_bot.append(points[ri] - vert_normals[ri] * 8.35)
+		render_top.append(points[ri] + vert_normals[ri] * 8.0)
+		render_bot.append(points[ri] - vert_normals[ri] * 8.0)
 		if ri > 0:
 			render_dists.append(render_dists[ri - 1] + points[ri].distance_to(points[ri - 1]))
 	# Pre-build mesh for instant rendering (zero per-frame cost)
@@ -449,7 +449,7 @@ func check_polyline_collision(px: float, py: float, pw: float, ph: float, prefer
 		var second_t: float = 0.0
 		var second_dist: float = 999999.0
 		var eff_radius: float = 8.0
-		var block_half: float = 8.35
+		var block_half: float = 8.0
 		var _shash: Dictionary = poly.get("spatial_hash", {})
 		var _cs: int = _shash.get("cell_size", 32)
 		var _sgx: int = int(floor(pcx / _cs))
@@ -596,14 +596,14 @@ func check_polyline_collision(px: float, py: float, pw: float, ph: float, prefer
 	return result
 
 func enforce_polyline_hard_constraint(px: float, py: float, prev_px: float, prev_py: float, exclude_poly: int = -1) -> Dictionary:
-	## Hard constraint: player center must be >= 16.35px from every polyline centerline.
+	## Hard constraint: player center must be >= 16px from every polyline centerline.
 	## Uses prev position to determine correct push side. No exceptions.
 	## Returns {pushed: bool, x: float, y: float, normal: Vector2, tangent: Vector2}
 	var cx: float = px + 8.0
 	var cy: float = py + 8.0
 	var prev_cx: float = prev_px + 8.0
 	var prev_cy: float = prev_py + 8.0
-	var min_dist: float = 16.35  # 8 player half + 8.35 curve visual half (exact visual match)
+	var min_dist: float = 16.0  # 8 player half + 8 curve visual half (exact visual match)
 	var total_push: Vector2 = Vector2.ZERO
 	var best_normal: Vector2 = Vector2.ZERO
 	var best_tangent: Vector2 = Vector2(1, 0)
@@ -675,11 +675,11 @@ func enforce_polyline_hard_constraint(px: float, py: float, prev_px: float, prev
 	return {"pushed": pushed, "x": cx - 8.0, "y": cy - 8.0, "push": total_push, "normal": best_normal, "tangent": best_tangent, "poly_count": touching_polys.size()}
 
 func get_curve_push_data(cx: float, cy: float) -> Array:
-	## Compute push vectors to keep player center >= 16.35px from polyline centerlines.
+	## Compute push vectors to keep player center >= 16px from polyline centerlines.
 	## Uses per-polyline spatial hash for O(1) lookup. Each polyline contributes at most
 	## one push (from the closest segment). Returns [{push, normal, depth, poly_idx}].
 	var result: Array = []
-	var min_dist: float = 16.35
+	var min_dist: float = 16.0
 	for pi in range(polylines.size()):
 		var poly: Dictionary = polylines[pi]
 		if poly.get("render_only", false):

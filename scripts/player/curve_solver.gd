@@ -5,7 +5,8 @@ extends RefCounted
 ## Replaces the old push-out/CCD/wedge-state-machine approach with real physics:
 ##
 ##   * The player is a point (its center) and every polyline centerline is a
-##     capsule of radius 16.35px (8 player half-size + 8.35 curve visual half).
+##     capsule of radius 16.0px (8 player half-size + 8 curve visual half —
+##     curve tiles are EXACTLY block-sized).
 ##     This is exactly the hitbox the old code enforced, minus its edge cases.
 ##   * Movement is split into substeps small enough (<= 2px per axis) that a
 ##     substep can never carry the center from one side of a centerline to the
@@ -21,7 +22,7 @@ extends RefCounted
 ##     and clipping against both normals brings it to rest. Jumping out works
 ##     because the combined contact normal opposes gravity -> grounded.
 
-const RADIUS: float = 16.35          # 8 (player half) + 8.35 (curve visual half)
+const RADIUS: float = 16.0           # 8 (player half) + 8 (curve visual half)
 const TOUCH: float = 0.25            # Separation band that still counts as contact
 const SUBSTEP: float = 2.0           # Max per-axis movement per substep (px)
 const MAX_SUBSTEPS: int = 12

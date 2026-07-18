@@ -189,8 +189,8 @@ func _test_v_wedge_and_jump() -> void:
 		p.tick(0, 0, false, false)
 		if p.y + 8.0 > 400.0:
 			below_pinch = true
-	# Expected rest: on the V bisector, 16.35/sin(45deg) above the pinch
-	var want_cy: float = 400.0 - 16.35 / sin(deg_to_rad(45.0))
+	# Expected rest: on the V bisector, 16.0/sin(45deg) above the pinch
+	var want_cy: float = 400.0 - 16.0 / sin(deg_to_rad(45.0))
 	var cx: float = p.x + 8.0
 	var cy: float = p.y + 8.0
 	_check(not below_pinch, "never fell through the pinch")
@@ -277,7 +277,7 @@ func _test_pinch_slam() -> void:
 		p.tick(0, 0, false, false)
 		if p.y + 8.0 > 395.0:
 			breached = true
-	var want_cy: float = 400.0 - 16.35 / sin(deg_to_rad(45.0))
+	var want_cy: float = 400.0 - 16.0 / sin(deg_to_rad(45.0))
 	var cx: float = p.x + 8.0
 	var cy: float = p.y + 8.0
 	_check(not breached, "never passed the pinch at terminal velocity")
