@@ -293,7 +293,12 @@ func _receive_freeblocks(blocks: Array) -> void:
 	if is_host and sender != 0 and not _world_edit_ok(sender):
 		return
 	for b in blocks:
-		WorldManager.free_blocks.append({"pos": Vector2(b.pos_x, b.pos_y), "id": b.id, "rotation": b.rot})
+		var fb: Dictionary = {"pos": Vector2(b.pos_x, b.pos_y), "id": b.id, "rotation": b.rot}
+		if b.get("fh", false):
+			fb["flip_h"] = true
+		if b.get("cap", false):
+			fb["is_cap"] = true
+		WorldManager.free_blocks.append(fb)
 	WorldManager.tile_changed.emit(0, 0, 0)
 	if is_host and sender != 0:
 		for pid in _relay_ids(sender):
@@ -312,7 +317,12 @@ func _receive_fb_replace(remove_count: int, blocks: Array) -> void:
 	if remove_count > 0 and remove_count <= WorldManager.free_blocks.size():
 		WorldManager.free_blocks.resize(WorldManager.free_blocks.size() - remove_count)
 	for b in blocks:
-		WorldManager.free_blocks.append({"pos": Vector2(b.pos_x, b.pos_y), "id": b.id, "rotation": b.rot})
+		var fb: Dictionary = {"pos": Vector2(b.pos_x, b.pos_y), "id": b.id, "rotation": b.rot}
+		if b.get("fh", false):
+			fb["flip_h"] = true
+		if b.get("cap", false):
+			fb["is_cap"] = true
+		WorldManager.free_blocks.append(fb)
 	WorldManager.tile_changed.emit(0, 0, 0)
 	if is_host and sender != 0:
 		for pid in _relay_ids(sender):

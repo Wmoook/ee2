@@ -1677,6 +1677,10 @@ func serialize_world() -> Dictionary:
 			fd["py"] = fb.pivot.y
 		if fb.get("group", -1) >= 0:
 			fd["group"] = fb.group
+		if fb.get("flip_h", false):
+			fd["fh"] = true
+		if fb.get("is_cap", false):
+			fd["cap"] = true
 		free_data.append(fd)
 	var line_data: Array = []
 	for ln in lines:
@@ -1730,6 +1734,10 @@ func deserialize_world(data: Dictionary) -> void:
 			fbd["pivot"] = Vector2(float(fb.get("px", fb.x + 8)), float(fb.get("py", fb.y + 8)))
 		if fb.has("group"):
 			fbd["group"] = int(fb.group)
+		if fb.get("fh", false):
+			fbd["flip_h"] = true
+		if fb.get("cap", false):
+			fbd["is_cap"] = true
 		free_blocks.append(fbd)
 	lines.clear()
 	for ln in data.get("lines", []):
@@ -1759,50 +1767,92 @@ func deserialize_world(data: Dictionary) -> void:
 	gravity_zones.deserialize(data.get("gravity_zones", []))
 	_regenerate_curve_collision_blocks()
 	build_curve_colliders()
-	purge_legacy_curve_caps()
+	heal_curve_caps()
 	world_loaded.emit()
 
-func purge_legacy_curve_caps() -> void:
-	## Pre-capless-era curves placed square cap FREE BLOCKS at their ends —
-	## some are near-invisible (dark ribbon art on black) and act as phantom
-	## hitboxes. Remove anything provably a cap: (a) a free block sitting on
-	## a live polyline endpoint with that polyline's own block id, or (b) a
-	## Curves-tab ribbon block at a non-45-degree rotation (only the old cap
-	## placement produced those angles).
-	var ends: Array = []
+func curve_cap_blocks(pts: PackedVector2Array, block_id: int) -> Array:
+	## The two square end-cap free blocks of a curve: entire blocks flush
+	## against the ribbon ends, rotated to the end tangents, pattern-mirrored
+	## to continue the tile sequence. is_cap marks them so heal/erase can
+	## manage them without ever touching user-placed blocks.
+	if pts.size() < 2:
+		return []
+	var total: float = 0.0
+	for i in range(1, pts.size()):
+		total += pts[i].distance_to(pts[i - 1])
+	# 10px+ baselines: adjacent 1px samples give unstable tangents
+	var s_ref: int = 1
+	for i in range(1, pts.size()):
+		if pts[0].distance_to(pts[i]) >= 10.0:
+			s_ref = i
+			break
+	var s_dir: Vector2 = (pts[s_ref] - pts[0]).normalized()
+	var e_ref: int = pts.size() - 2
+	for i in range(pts.size() - 2, -1, -1):
+		if pts[pts.size() - 1].distance_to(pts[i]) >= 10.0:
+			e_ref = i
+			break
+	var e_dir: Vector2 = (pts[pts.size() - 1] - pts[e_ref]).normalized()
+	var caps: Array = []
+	caps.append({"pos": pts[0] - s_dir * 7.7 - Vector2(8, 8), "id": block_id,
+		"rotation": rad_to_deg(atan2(s_dir.y, s_dir.x)), "is_cap": true})
+	var end_cap: Dictionary = {"pos": pts[pts.size() - 1] + e_dir * 7.7 - Vector2(8, 8),
+		"id": block_id, "rotation": rad_to_deg(atan2(e_dir.y, e_dir.x)), "is_cap": true}
+	# End cap is the tile AFTER the last mesh tile — mirror on odd counts
+	if int(round(total / 16.0)) % 2 == 1:
+		end_cap["flip_h"] = true
+	caps.append(end_cap)
+	return caps
+
+func heal_curve_caps() -> void:
+	## Curve ends are ENTIRE blocks. On every world load: each live curve end
+	## gets its cap block (created if missing, snapped exactly if drifted —
+	## this converts legacy caps and repairs capless-era worlds), cap blocks
+	## whose curve is gone are deleted, and legacy ribbon-texture caps at
+	## non-45-degree rotations (only the old cap placer made those) vanish.
+	var expected: Array = []  # [center: Vector2, cap: Dictionary]
 	for poly in polylines:
 		if poly.get("collision_only", false):
 			continue
 		var pts: PackedVector2Array = poly.points
-		if pts.size() >= 2:
-			ends.append([pts[0], poly.get("block_id", 9)])
-			ends.append([pts[pts.size() - 1], poly.get("block_id", 9)])
-	var removed: int = 0
+		if pts.size() < 2:
+			continue
+		for cap in curve_cap_blocks(pts, poly.get("block_id", 9)):
+			expected.append([(cap.pos as Vector2) + Vector2(8, 8), cap])
+	var changed: bool = false
 	var i: int = free_blocks.size() - 1
 	while i >= 0:
 		var fb: Dictionary = free_blocks[i]
 		if fb.get("curve_visual", false) or fb.get("curve_collision", false):
 			i -= 1
 			continue
-		var is_cap: bool = false
 		var fc: Vector2 = (fb.pos as Vector2) + Vector2(8, 8)
-		for e in ends:
-			if fb.id == e[1] and fc.distance_to(e[0]) < 16.0:
-				is_cap = true
+		var slot: int = -1
+		for e in range(expected.size()):
+			if int(fb.id) == int(expected[e][1].id) and fc.distance_to(expected[e][0]) < 10.0:
+				slot = e
 				break
-		if not is_cap:
+		if slot >= 0:
+			free_blocks[i] = expected[slot][1].duplicate()
+			expected.remove_at(slot)
+			changed = true
+		elif fb.get("is_cap", false):
+			free_blocks.remove_at(i)
+			changed = true
+		else:
 			var rid: int = int(fb.id)
 			if (rid >= 5058 and rid <= 5067) or (rid >= 6080 and rid <= 6089):
 				var rr: float = absf(fmod(float(fb.get("rotation", 0.0)), 45.0))
 				if rr > 1.0 and rr < 44.0:
-					is_cap = true
-		if is_cap:
-			free_blocks.remove_at(i)
-			removed += 1
+					free_blocks.remove_at(i)
+					changed = true
 		i -= 1
-	if removed > 0:
+	for e in expected:
+		free_blocks.append(e[1].duplicate())
+		changed = true
+	if changed:
 		free_blocks_changed.emit()
-		print("[world] purged %d legacy curve end-cap blocks" % removed)
+		tile_changed.emit(0, 0, 0)
 
 func add_line(start: Vector2, end: Vector2, color: Color, width: float = 3.0) -> void:
 	lines.append({"start": start, "end": end, "color": color, "width": width})
@@ -1998,7 +2048,12 @@ func fb_near(px: float, py: float, reach: float = 36.0) -> Array:
 ## Network-aware free block add
 func net_add_free_block(fb: Dictionary) -> void:
 	free_blocks.append(fb)
-	_pending_net_freeblocks.append({"pos_x": fb.pos.x, "pos_y": fb.pos.y, "id": fb.id, "rot": fb.get("rotation", 0.0)})
+	var nb: Dictionary = {"pos_x": fb.pos.x, "pos_y": fb.pos.y, "id": fb.id, "rot": fb.get("rotation", 0.0)}
+	if fb.get("flip_h", false):
+		nb["fh"] = true
+	if fb.get("is_cap", false):
+		nb["cap"] = true
+	_pending_net_freeblocks.append(nb)
 	tile_changed.emit(0, 0, 0)  # Trigger renderer redraw
 
 ## Network-aware tile edit — use instead of direct set_fg_tile/set_bg_tile
@@ -2044,7 +2099,12 @@ func net_replace_free_blocks(remove_count: int, new_blocks: Array) -> void:
 	# Queue for network: tell remote to do the same
 	var serialized: Array = []
 	for fb in new_blocks:
-		serialized.append({"pos_x": fb.pos.x, "pos_y": fb.pos.y, "id": fb.id, "rot": fb.get("rotation", 0.0)})
+		var nb: Dictionary = {"pos_x": fb.pos.x, "pos_y": fb.pos.y, "id": fb.id, "rot": fb.get("rotation", 0.0)}
+		if fb.get("flip_h", false):
+			nb["fh"] = true
+		if fb.get("is_cap", false):
+			nb["cap"] = true
+		serialized.append(nb)
 	_pending_net_fb_replace = {"remove": remove_count, "blocks": serialized}
 
 ## Network-aware gravity zone add

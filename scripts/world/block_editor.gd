@@ -1165,9 +1165,6 @@ func _process(_delta: float) -> void:
 					if spline_pts.size() > 0 and spline_pts[-1].distance_to(cpts[-1]) > 0.5:
 						spline_pts.append(cpts[-1])
 					if spline_pts.size() >= 2:
-						# No truncation and NO end-cap blocks: the mesh renders
-						# the full spline, so the curve is one consistent ribbon
-						# from the first control point to the last.
 						# Decimate long splines: 1px resolution on a huge curve is
 						# thousands of points, and EVERYTHING downstream pays per
 						# point (pinch scan, colliders, mesh, network payload,
@@ -1182,7 +1179,27 @@ func _process(_delta: float) -> void:
 							if dec[dec.size() - 1] != spline_pts[spline_pts.size() - 1]:
 								dec.append(spline_pts[spline_pts.size() - 1])
 							spline_pts = dec
+						# Truncate to the last full 16px tile boundary so the
+						# ribbon is always whole tiles, then cap each end with
+						# an ENTIRE block flush against the cut
+						var _tlen: float = 0.0
+						for _ti in range(1, spline_pts.size()):
+							_tlen += spline_pts[_ti].distance_to(spline_pts[_ti - 1])
+						var _tmax: float = floor(_tlen / 16.0) * 16.0
+						if _tmax >= 16.0 and _tlen - _tmax > 0.05:
+							var _taccum: float = 0.0
+							for _ti in range(1, spline_pts.size()):
+								var _tseg: float = spline_pts[_ti].distance_to(spline_pts[_ti - 1])
+								if _taccum + _tseg >= _tmax:
+									var _tt: float = (_tmax - _taccum) / maxf(_tseg, 0.001)
+									var _tcut: Vector2 = spline_pts[_ti - 1].lerp(spline_pts[_ti], _tt)
+									spline_pts.resize(_ti)
+									spline_pts.append(_tcut)
+									break
+								_taccum += _tseg
 						WorldManager.net_add_polyline(spline_pts, "both", GameState.selected_block_id)
+						for _cap in WorldManager.curve_cap_blocks(spline_pts, GameState.selected_block_id):
+							WorldManager.net_add_free_block(_cap)
 				_curve_points.clear()
 				_curve_preview.clear()
 				_curve_mode = false
