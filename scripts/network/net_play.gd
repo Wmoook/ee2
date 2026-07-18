@@ -38,6 +38,7 @@ var match_countdown: float = 0.0  # 3-2-1-GO handled by game_scene
 var _want_world_after_connect: bool = false
 var _browse_mode: String = ""     # lobby list filter while browsing
 var _ping_accum: float = 0.0
+var _beat_accum: float = 0.0
 
 # ---- server state ----
 var server_active: bool = false
@@ -59,6 +60,17 @@ func _process(delta: float) -> void:
 		if _ping_accum >= 20.0:
 			_ping_accum = 0.0
 			rq_ping.rpc_id(1)
+	# Server heartbeat: Railway's edge closes a WebSocket after ~87s with NO
+	# server->client data. A solo player in the world receives NOTHING after
+	# the snapshot (client pings are one-way), so every session died at ~87s
+	# ("keeps resetting to menu"). A tiny broadcast every 10s keeps every
+	# connection warm.
+	if server_active:
+		_beat_accum += delta
+		if _beat_accum >= 10.0:
+			_beat_accum = 0.0
+			if multiplayer.get_peers().size() > 0:
+				sv_beat.rpc()
 
 # ==================== URL resolution ====================
 
@@ -338,6 +350,10 @@ func _server_leave_room(id: int, disconnected: bool) -> void:
 @rpc("any_peer", "reliable")
 func rq_ping() -> void:
 	pass
+
+@rpc("authority", "reliable")
+func sv_beat() -> void:
+	pass  # The traffic itself is the point (edge idle-timeout keepalive)
 
 @rpc("any_peer", "reliable")
 func rq_hello(info: Dictionary) -> void:
