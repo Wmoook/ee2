@@ -10,6 +10,8 @@ const SCAN_DT: float = 0.07           # support-scan cadence (cascade speed)
 const KNOCK_SPEED: float = 1.0        # min |EE speed| to plow through blocks
 const MAX_DEBRIS: int = 900
 const G_PX: float = 1150.0            # debris gravity px/s^2
+const DEB_R: float = 7.6              # debris collision radius (blocks NEVER overlap)
+const REST_SPEED: float = 34.0        # slower than this + supported = comes to rest
 const TERMINAL: float = 760.0
 
 ## attached=true: BLOCK GRAVITY toggle in a normal world — everything the
@@ -46,14 +48,11 @@ static func build_map() -> void:
 	for row in range(9):
 		for cx in range(px + row, px + 18 - row):
 			WorldManager.set_fg_tile(cx, GROUND_Y - 1 - row, 6008)
-	# Arch: two legs + a span (knock a leg out!)
+	# Staircase fortress (every column grounded — stable until plowed)
 	var ax: int = 86
-	for cy in range(GROUND_Y - 9, GROUND_Y):
-		WorldManager.set_fg_tile(ax, cy, 6027)
-		WorldManager.set_fg_tile(ax + 9, cy, 6027)
-	for cx in range(ax, ax + 10):
-		WorldManager.set_fg_tile(cx, GROUND_Y - 10, 6051)
-		WorldManager.set_fg_tile(cx, GROUND_Y - 9 if cx == ax or cx == ax + 9 else GROUND_Y - 10, 6051)
+	for stp in range(10):
+		for cy in range(GROUND_Y - 3 - stp, GROUND_Y):
+			WorldManager.set_fg_tile(ax + stp, cy, 6051)
 	# Tall thin spire near spawn to topple immediately
 	for cy in range(GROUND_Y - 14, GROUND_Y):
 		WorldManager.set_fg_tile(9, cy, 6060)
@@ -85,7 +84,8 @@ func _exit_tree() -> void:
 	# rest instantly as rubble free blocks
 	for d in _debris:
 		WorldManager.free_blocks.append({"pos": (d.pos as Vector2) - Vector2(8, 8),
-			"id": d.id, "rotation": rad_to_deg(round(d.rot / (PI / 12.0)) * (PI / 12.0)), "rubble": true})
+			"id": d.id, "rotation": rad_to_deg(round(d.rot / (PI / 12.0)) * (PI / 12.0)), "rubble": true,
+			"jam": int(d.get("jam", 0))})
 	if _debris.size() > 0:
 		WorldManager.free_blocks_changed.emit()
 	_debris.clear()
@@ -243,21 +243,45 @@ func _rubble_support_scan() -> void:
 			sup = true
 		var slide_vx: float = _rng.randf_range(-10.0, 10.0)
 		if not sup:
-			var oi: int = WorldManager.free_block_at_point(Vector2(fc.x, fc.y + 12.5))
-			if oi >= 0 and not (WorldManager.free_blocks[oi] == fb):
-				# Only a support REASONABLY UNDER the block holds it — resting
-				# on the corner of an offset block means you topple off it
-				# (kills the impossible snaking spires; neat stacks survive)
-				var sc: Vector2 = (WorldManager.free_blocks[oi].pos as Vector2) + Vector2(8, 8)
-				if absf(sc.x - fc.x) <= 6.0:
-					sup = true
-				else:
-					slide_vx = 55.0 * (1.0 if fc.x >= sc.x else -1.0) + _rng.randf_range(-10.0, 10.0)
+			# A block stays put if a support sits reasonably CENTERED under it,
+			# or if it is NESTED in the pocket between two supports. A single
+			# offset corner-contact topples it off sideways (angle of repose —
+			# no impossible balanced spires).
+			var cnt: int = 0
+			var walls: int = 0
+			var centered: bool = false
+			var one_dx: float = 0.0
+			for nb in WorldManager.fb_near(fc.x - 8.0, fc.y - 8.0, 24.0):
+				if nb == fb or not (nb.get("rubble", false) or nb.get("is_cap", false)):
+					continue
+				var ncc: Vector2 = (nb.pos as Vector2) + Vector2(8, 8)
+				var dxx: float = ncc.x - fc.x
+				var dyy: float = ncc.y - fc.y
+				if dyy > 3.0 and dyy < 15.5 and absf(dxx) < 13.5:
+					cnt += 1
+					one_dx = dxx
+					# Only a SQUARE-SET support can hold a block alone — a
+					# tilted block's point balances nothing (diamond columns
+					# collapse); pockets (cnt>=2) still hold anything
+					var srot: float = absf(fposmod(float(nb.get("rotation", 0.0)), 90.0))
+					var square_sup: bool = srot < 10.0 or srot > 80.0
+					if absf(dxx) <= 6.0 and square_sup:
+						centered = true
+				elif absf(dyy) <= 3.0 and absf(dxx) >= 11.0 and absf(dxx) <= 17.0:
+					walls += 1  # wedged laterally between neighbors
+			if centered or cnt >= 2 or (cnt >= 1 and walls >= 1):
+				sup = true
+			elif cnt == 1:
+				slide_vx = 55.0 * (1.0 if one_dx <= 0.0 else -1.0) + _rng.randf_range(-10.0, 10.0)
+			# Jammed: a block toppled twice settles for good (granular
+			# systems jam — also guarantees the sim converges, no churn)
+			if not sup and int(fb.get("jam", 0)) >= 2:
+				sup = true
 		if not sup and _debris.size() < MAX_DEBRIS:
 			WorldManager.free_blocks.remove_at(ri)
 			_debris.append({"pos": fc, "vel": Vector2(slide_vx, 0.0),
 				"rot": deg_to_rad(float(fb.get("rotation", 0.0))), "rv": _rng.randf_range(-2.0, 2.0),
-				"id": fb.id, "bn": 1})
+				"id": fb.id, "bn": 1, "jam": int(fb.get("jam", 0)) + 1})
 			changed = true
 		ri -= 1
 	if changed:
@@ -355,104 +379,143 @@ func _knock_from_player(_delta: float) -> void:
 				_loosen(cxx, cyu, Vector2(_rng.randf_range(-40.0, 40.0), sy * 26.0))
 
 func _step_debris(delta: float) -> void:
-	# Player collision setup: debris deflects OFF the ball, never through it
+	## Granular sim: debris collides with OTHER debris (spatial hash + two
+	## relaxation passes), with resting rubble piles, tiles, walls, ground
+	## and the player. Blocks NEVER overlap — mid-air or landed — and they
+	## come to rest exactly where they physically stop (no teleport stacking).
+	var n: int = _debris.size()
+	if n == 0:
+		return
 	var pc: Vector2 = Vector2.INF
 	var pvel: Vector2 = Vector2.ZERO
 	if _player != null and _player.get("physics") != null:
 		pc = Vector2(_player.physics.x + 8.0, _player.physics.y + 8.0)
 		pvel = Vector2(_player.physics._speedX, _player.physics._speedY) * 100.0
-	var i: int = _debris.size() - 1
-	while i >= 0:
-		var d: Dictionary = _debris[i]
+	# 1) integrate
+	for d in _debris:
 		var vel: Vector2 = d.vel
 		vel.y = minf(vel.y + G_PX * delta, TERMINAL)
-		vel.x *= pow(0.4, delta)  # lateral decay
-		var pos: Vector2 = d.pos + vel * delta
-		d.rot = d.rot + d.rv * delta
-		# Deflect off the player ball (16px circle vs 16px block ~ r8+r8)
+		vel.x *= pow(0.5, delta)
+		d.vel = vel
+		d.pos = (d.pos as Vector2) + vel * delta
+		d.rot = float(d.rot) + float(d.rv) * delta
+	# 2) debris-vs-debris: positional relaxation + inelastic impulse
+	var hgrid: Dictionary = {}
+	for i in range(n):
+		var cp: Vector2 = _debris[i].pos
+		var key: Vector2i = Vector2i(int(floor(cp.x / 16.0)), int(floor(cp.y / 16.0)))
+		if hgrid.has(key):
+			hgrid[key].append(i)
+		else:
+			hgrid[key] = [i]
+	for _pass in range(2):
+		for i in range(n):
+			var di: Dictionary = _debris[i]
+			var ci: Vector2 = di.pos
+			var kx: int = int(floor(ci.x / 16.0))
+			var ky: int = int(floor(ci.y / 16.0))
+			for ox in range(-1, 2):
+				for oy in range(-1, 2):
+					var cell = hgrid.get(Vector2i(kx + ox, ky + oy))
+					if cell == null:
+						continue
+					for j in cell:
+						if j <= i:
+							continue
+						var dj: Dictionary = _debris[j]
+						var dvec: Vector2 = (dj.pos as Vector2) - ci
+						var dist: float = dvec.length()
+						if dist >= DEB_R * 2.0 or dist < 0.001:
+							continue
+						var nrm: Vector2 = dvec / dist
+						var push: float = (DEB_R * 2.0 - dist) * 0.5
+						di.pos = (di.pos as Vector2) - nrm * push
+						dj.pos = (dj.pos as Vector2) + nrm * push
+						ci = di.pos
+						var rel: float = ((dj.vel as Vector2) - (di.vel as Vector2)).dot(nrm)
+						if rel < 0.0:
+							var imp: float = -rel * 0.55
+							di.vel = (di.vel as Vector2) - nrm * imp
+							dj.vel = (dj.vel as Vector2) + nrm * imp
+	# 3) statics, player, rest
+	var rested: bool = false
+	var i2: int = n - 1
+	while i2 >= 0:
+		var d: Dictionary = _debris[i2]
+		var pos: Vector2 = d.pos
+		var vel: Vector2 = d.vel
+		var supported: bool = false
+		# player: solid ball — debris deflects off, never through
 		if pc.x != INF:
 			var away: Vector2 = pos - pc
 			var adist: float = away.length()
-			if adist < 16.5:
+			if adist < 16.2:
 				away = away.normalized() if adist > 0.01 else Vector2(0, -1)
-				pos = pc + away * 16.5
-				var rel: Vector2 = vel - pvel
-				var into: float = rel.dot(-away)
+				pos = pc + away * 16.2
+				var relp: Vector2 = vel - pvel
+				var into: float = relp.dot(-away)
 				if into > 0.0:
-					vel += away * (into * 1.15) + pvel * 0.25
-				d.rv = _rng.randf_range(-5.0, 5.0)
-		var cx: int = clampi(int(floor(pos.x / 16.0)), 1, WorldManager.world_width - 2)
-		# Wall bump: cancel lateral motion into solids
+					vel += away * (into * 1.1) + pvel * 0.2
+					d.rv = _rng.randf_range(-5.0, 5.0)
+		# resting rubble & caps: static circles — land ON piles, never inside
+		for nb in WorldManager.fb_near(pos.x - 8.0, pos.y - 8.0, 24.0):
+			if not (nb.get("rubble", false) or nb.get("is_cap", false)):
+				continue
+			var nc: Vector2 = (nb.pos as Vector2) + Vector2(8, 8)
+			var dv: Vector2 = pos - nc
+			var dd: float = dv.length()
+			if dd >= 15.4 or dd < 0.001:
+				continue
+			var nn: Vector2 = dv / dd
+			pos = nc + nn * 15.4
+			var into2: float = vel.dot(-nn)
+			if into2 > 0.0:
+				vel += nn * (into2 * 1.15)
+			if nn.y < -0.5:
+				supported = true
+		# side walls (grid tiles)
 		if vel.x != 0.0:
-			var side_cx: int = int(floor((pos.x + (8.0 if vel.x > 0.0 else -8.0)) / 16.0))
-			if WorldManager.get_tile(side_cx, int(floor(pos.y / 16.0))) != 0:
+			var scx: int = int(floor((pos.x + (DEB_R if vel.x > 0.0 else -DEB_R)) / 16.0))
+			var scy: int = int(floor(pos.y / 16.0))
+			if WorldManager.is_solid_at(scx, scy):
+				pos.x = float(scx) * 16.0 + (16.0 + DEB_R if vel.x < 0.0 else -DEB_R)
 				vel.x = 0.0
-				pos.x = d.pos.x
-				cx = clampi(int(floor(pos.x / 16.0)), 1, WorldManager.world_width - 2)
-		# Landed? bounce with spin (up to 2 hops), then come to rest — TILTED
-		# blocks stay tilted as rubble free blocks; only near-square landings
-		# merge back into the grid. Debris also stacks on rubble piles.
-		var below: int = int(floor((pos.y + 8.0) / 16.0))
-		var on_rubble: bool = WorldManager.free_block_at_point(Vector2(pos.x, pos.y + 9.5)) >= 0
-		if vel.y > 0.0 and (below >= ground_y or WorldManager.get_tile(cx, below) != 0 or on_rubble):
-			if vel.y > 230.0 and int(d.bn) < 2:
-				d.bn = int(d.bn) + 1
-				vel.y = -vel.y * 0.38
-				vel.x += _rng.randf_range(-80.0, 80.0)
-				d.rv = _rng.randf_range(-7.0, 7.0) + vel.x * 0.02
-				pos.y -= 1.0
-				d.vel = vel
-				d.pos = pos
-				i -= 1
+		# ground / tiles below: bounce hard hits, otherwise stand
+		var bcx: int = clampi(int(floor(pos.x / 16.0)), 1, WorldManager.world_width - 2)
+		var bty: int = int(floor((pos.y + DEB_R) / 16.0))
+		if bty >= ground_y or WorldManager.is_solid_at(bcx, bty):
+			var top: float = float(bty) * 16.0
+			if pos.y + DEB_R > top and vel.y > 0.0:
+				pos.y = top - DEB_R
+				if vel.y > 240.0 and int(d.get("bn", 0)) < 2:
+					d.bn = int(d.get("bn", 0)) + 1
+					vel.y = -vel.y * 0.36
+					vel.x += _rng.randf_range(-60.0, 60.0)
+					d.rv = _rng.randf_range(-6.0, 6.0)
+				else:
+					vel.y = 0.0
+					vel.x *= 0.55
+					supported = true
+		# rest: supported and slow — become rubble EXACTLY here
+		if supported and vel.length() < REST_SPEED:
+			if pc.x != INF and pos.distance_to(pc) < 18.0:
+				vel.x = 110.0 * (1.0 if pos.x >= pc.x else -1.0)
+				vel.y = -70.0
+			else:
+				var rr: float = round(float(d.rot) / (PI / 12.0)) * (PI / 12.0)
+				var rx: float = clampf(pos.x, 16.0 + DEB_R, float(WorldManager.world_width - 1) * 16.0 - DEB_R)
+				WorldManager.free_blocks.append({"pos": Vector2(rx - 8.0, pos.y - 8.0),
+					"id": d.id, "rotation": rad_to_deg(rr), "rubble": true,
+					"jam": int(d.get("jam", 0))})
+				rested = true
+				_debris.remove_at(i2)
+				i2 -= 1
 				continue
-			if pc.x != INF and pos.distance_to(pc) < 22.0:
-				# Would entomb the ball — kick the block off sideways instead
-				vel.x = 120.0 * (1.0 if pos.x >= pc.x else -1.0)
-				vel.y = -90.0
-				d.vel = vel
-				d.pos = pos
-				i -= 1
-				continue
-			var tilt: float = absf(fposmod(d.rot, PI / 2.0) - PI / 4.0)
-			var square_ish: bool = tilt > PI / 4.0 - 0.14  # within ~8 deg of upright
-			if on_rubble or not square_ish:
-				# Rest askew where it lies (snap the angle a little). Blocks
-				# must NEVER overlap: climb up off other blocks, stay clear of
-				# the border and any solid tile.
-				var rr: float = round(d.rot / (PI / 12.0)) * (PI / 12.0)
-				var rx: float = clampf(pos.x, 16.0 + 11.6, float(WorldManager.world_width - 1) * 16.0 - 11.6)
-				var ry: float = pos.y
-				for _hop in range(14):
-					var bump: bool = false
-					for nb in WorldManager.fb_near(rx - 8.0, ry - 8.0, 24.0):
-						if nb.get("rubble", false) or nb.get("is_cap", false):
-							var nc: Vector2 = (nb.pos as Vector2) + Vector2(8, 8)
-							if absf(nc.x - rx) < 13.0 and absf(nc.y - ry) < 13.0:
-								ry = nc.y - 14.2
-								bump = true
-					if not bump:
-						break
-				for side in [-11.0, 11.0]:
-					var scx: int = int(floor((rx + side) / 16.0))
-					if WorldManager.is_solid_at(scx, int(floor(ry / 16.0))):
-						rx = float(scx) * 16.0 + (16.0 + 11.4 if side < 0.0 else -11.4)
-				WorldManager.free_blocks.append({"pos": Vector2(rx - 8.0, ry - 8.0),
-					"id": d.id, "rotation": rad_to_deg(rr), "rubble": true})
-				WorldManager.free_blocks_changed.emit()
-				_debris.remove_at(i)
-				i -= 1
-				continue
-			var cy: int = below - 1
-			while cy > 1 and WorldManager.get_tile(cx, cy) != 0:
-				cy -= 1
-			if cy > 1:
-				WorldManager.set_fg_tile(cx, cy, d.id)
-			_debris.remove_at(i)
-			i -= 1
-			continue
-		d.vel = vel
 		d.pos = pos
-		i -= 1
+		d.vel = vel
+		i2 -= 1
+	if rested:
+		WorldManager.free_blocks_changed.emit()
 
 func _process(delta: float) -> void:
 	if _player == null:
