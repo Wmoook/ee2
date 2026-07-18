@@ -715,9 +715,10 @@ func _build_zoom_buttons() -> void:
 	_rotate_btn.pressed.connect(_on_rotate_toggle)
 	_zoom_container.add_child(_rotate_btn)
 
-	# BLOCK GRAVITY toggle — offline sandbox only (never the shared world).
-	# ON: everything falls, curves crumble. Exiting the world restores it.
-	if not GameState.battle_mode and not NetPlay.online:
+	# BLOCK GRAVITY toggle — any sandbox (online it is LOCAL-ONLY: nobody
+	# else sees your collapse and the shared world is untouched).
+	# ON: everything falls, curves crumble. OFF: the world snaps back.
+	if not GameState.battle_mode:
 		_gravity_btn = Button.new()
 		_gravity_btn.text = "Gravity OFF"
 		_gravity_btn.custom_minimum_size = Vector2(88, 32)
@@ -814,13 +815,15 @@ func _on_rotate_toggle() -> void:
 
 func _on_gravity_toggle() -> void:
 	if _gravity_node != null and is_instance_valid(_gravity_node):
-		_gravity_node.queue_free()
+		# OFF = the world snaps back to exactly how it was before
+		_gravity_node.free()
 		_gravity_node = null
+		if not GameState.gravity_snapshot.is_empty():
+			WorldManager.deserialize_world(GameState.gravity_snapshot)
+			GameState.gravity_snapshot = {}
 		_gravity_btn.text = "Gravity OFF"
 		return
-	# First activation this visit: snapshot the world so leaving restores it
-	if GameState.gravity_snapshot.is_empty():
-		GameState.gravity_snapshot = WorldManager.serialize_world()
+	GameState.gravity_snapshot = WorldManager.serialize_world()
 	var grav: GravityMode = GravityMode.new()
 	grav.attached = true
 	grav.name = "BlockGravity"

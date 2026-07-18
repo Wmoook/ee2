@@ -169,8 +169,10 @@ func _support_scan() -> void:
 					tip = 1.0 if _rng.randf() < 0.5 else -1.0
 				var n: int = col_n.get(cx, 0)
 				col_n[cx] = n + 1
-				var vx: float = tip * (22.0 + float(n) * 26.0 + _rng.randf_range(0.0, 30.0))
-				_loosen(cx, cy, Vector2(vx, _rng.randf_range(-30.0, 0.0)))
+				# Gentle LEAN, growing a little with height (capped): a tower
+				# tips and crumbles — support loss never LAUNCHES blocks
+				var vx: float = tip * (8.0 + minf(float(n) * 4.0, 42.0) + _rng.randf_range(0.0, 10.0))
+				_loosen(cx, cy, Vector2(vx, _rng.randf_range(-20.0, 0.0)))
 
 func _knock_from_player(_delta: float) -> void:
 	if _player == null or _player.get("physics") == null:
