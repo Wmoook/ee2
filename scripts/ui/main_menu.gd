@@ -357,6 +357,12 @@ func _build_battle_page() -> VBoxContainer:
 	zomb_btn.tooltip_text = "UNDEAD BUNKER: rounds, wall guns, MYSTERY BOX, Pack-a-Punch. F = buy/rebuild."
 	zomb_btn.pressed.connect(_on_zombies)
 	mrow.add_child(zomb_btn)
+	var grav_btn: Button = EditorToolsDock.make_button("🧲 GRAVITY", Color(0.13, 0.45, 0.52))
+	grav_btn.custom_minimum_size = Vector2(0, 38)
+	grav_btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	grav_btn.tooltip_text = "Fully destructible sandbox: blocks FALL without support — plow through towers!"
+	grav_btn.pressed.connect(_on_gravity)
+	mrow.add_child(grav_btn)
 
 	var refresh_battle_ui: Callable = func() -> void:
 		var n: int = clampi(GameState.battle_bot_count, 1, 3)
@@ -806,6 +812,7 @@ func _go_offline() -> void:
 	NetPlay.match_active = false
 	NetPlay.match_countdown = 0.0
 	GameState.net_freeze = false
+	GameState.gravity_mode = false
 	GameState.set_edit_mode(false)
 	GameState.camera_offset = Vector2.ZERO  # No stale pan from the camera pad
 
@@ -843,6 +850,16 @@ func _on_zombies() -> void:
 	GameState.survivors_mode = false
 	GameState.zombies_mode = true
 	ZombiesMap.build()
+	get_tree().change_scene_to_file("res://scenes/world/game.tscn")
+
+func _on_gravity() -> void:
+	_go_offline()
+	GameState.battle_mode = true  # gates editing/saving like other arena modes
+	GameState.boss_fight = false
+	GameState.survivors_mode = false
+	GameState.zombies_mode = false
+	GameState.gravity_mode = true
+	GravityMode.build_map()
 	get_tree().change_scene_to_file("res://scenes/world/game.tscn")
 
 # ==================== Online world flow ====================

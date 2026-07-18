@@ -16,6 +16,7 @@ var player_smiley_id: int = -1  # -1 = DREAMER ball; 0..187 EE smileys; 188..375
 ## HELLO so a stale tab fails fast instead of mid-game.
 const NET_BUILD: String = "v19"
 var net_freeze: bool = false    # online 3-2-1-GO: input locked until GO
+var gravity_mode: bool = false  # GRAVITY sandbox: destructible falling-block arena
 var rejoin_pos: Vector2 = Vector2.INF  # respawn HERE after an auto-rejoin (drop mid-run)
 
 func save_profile() -> void:

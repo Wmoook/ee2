@@ -89,7 +89,11 @@ func _setup_scene() -> void:
 
 	# Combat modes (weapons, AI opponents, lives HUD)
 	if GameState.battle_mode:
-		if GameState.zombies_mode:
+		if GameState.gravity_mode:
+			var grav: GravityMode = GravityMode.new()
+			grav.name = "GravityMode"
+			add_child(grav)
+		elif GameState.zombies_mode:
 			var zomb: ZombiesMode = ZombiesMode.new()
 			zomb.name = "ZombiesMode"
 			add_child(zomb)
@@ -279,6 +283,7 @@ func _leave_to_menu() -> void:
 	GameState.zombies_mode = false
 	GameState.player_stunned = false
 	GameState.net_freeze = false
+	GameState.gravity_mode = false
 	GameState.rejoin_pos = Vector2.INF
 	GameState.cam_shake = 0.0
 	get_tree().paused = false
