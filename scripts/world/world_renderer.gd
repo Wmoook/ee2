@@ -390,7 +390,12 @@ func _draw() -> void:
 							# Use these as the final points (will be processed below)
 							r_top[mi] = cut_top
 							r_bot[mi] = cut_bot
-						if md - prev_md < 0.5 and md < max_d:
+						# Merge dense points — but ONLY when the edges barely moved:
+						# round-join arc steps advance ~0 arc distance yet sweep
+						# real pixels and must be emitted
+						if md - prev_md < 0.5 and md < max_d \
+								and r_top[mi].distance_squared_to(prev_mt) < 0.25 \
+								and r_bot[mi].distance_squared_to(prev_mb) < 0.25:
 							continue
 						# Tiling UV: repeat every 16px, mirror every other tile.
 						# WALK every 16px boundary inside this chord — a chord can

@@ -208,15 +208,38 @@ func add_polyline(points: PackedVector2Array, side: String = "top", block_id: in
 	var pad: float = 24.0  # Padding for player half-size + some margin
 	bb_min -= Vector2(pad, pad)
 	bb_max += Vector2(pad, pad)
-	# Pre-compute render data
+	# Pre-compute render data. Sharp bends get ROUND JOINS: a hairpin vertex
+	# (decimated U-turns can reverse ~180 deg in one step) has a degenerate
+	# averaged normal that collapsed the ribbon into a needle point. Instead,
+	# the edge sweeps an arc of inserted vertices around the corner — tight
+	# turns render as smooth rounded bends. Collision is untouched
+	# (centerline capsules already handle the wedge).
 	var render_top: PackedVector2Array = PackedVector2Array()
 	var render_bot: PackedVector2Array = PackedVector2Array()
-	var render_dists: Array = [0.0]
+	var render_dists: Array = []
+	var _cum_d: float = 0.0
 	for ri in range(points.size()):
-		render_top.append(points[ri] + vert_normals[ri] * 8.0)
-		render_bot.append(points[ri] - vert_normals[ri] * 8.0)
 		if ri > 0:
-			render_dists.append(render_dists[ri - 1] + points[ri].distance_to(points[ri - 1]))
+			_cum_d += points[ri].distance_to(points[ri - 1])
+		var sharp: bool = false
+		if ri > 0 and ri < points.size() - 1:
+			var bd0: Vector2 = (points[ri] - points[ri - 1]).normalized()
+			var bd1: Vector2 = (points[ri + 1] - points[ri]).normalized()
+			sharp = bd0.dot(bd1) < 0.5  # bend sharper than 60 degrees
+		if sharp:
+			var jn0: Vector2 = seg_normals[ri - 1]
+			var jn1: Vector2 = seg_normals[ri]
+			var jang: float = jn0.angle_to(jn1)
+			var jsteps: int = maxi(2, int(ceil(absf(jang) / 0.35)))
+			for jk in range(jsteps + 1):
+				var jnk: Vector2 = jn0.rotated(jang * float(jk) / float(jsteps))
+				render_top.append(points[ri] + jnk * 8.0)
+				render_bot.append(points[ri] - jnk * 8.0)
+				render_dists.append(_cum_d + 0.001 * float(jk))
+		else:
+			render_top.append(points[ri] + vert_normals[ri] * 8.0)
+			render_bot.append(points[ri] - vert_normals[ri] * 8.0)
+			render_dists.append(_cum_d)
 	# Pre-build mesh for instant rendering (zero per-frame cost)
 	var mesh: ArrayMesh = null
 	if points.size() >= 2:
