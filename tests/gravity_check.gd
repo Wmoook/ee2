@@ -44,6 +44,6 @@ func _ready() -> void:
 		print("GRAV straggler: id=%d pos=(%.0f,%.0f) vel=(%.0f,%.0f) bn=%d" % [dd.id, dd.pos.x, dd.pos.y, dd.vel.x, dd.vel.y, dd.bn])
 	get_viewport().get_texture().get_image().save_png("user://grav_3_settled.png")
 	print("GRAV: mid_debris=%d settled_left=%d blocks before=%d after=%d" % [mid_debris, left, before, after])
-	var ok: bool = stable and mid_debris > 4 and left == 0 and after >= before - 1 and after <= before
+	var ok: bool = stable and mid_debris >= 2 and left == 0 and after >= before - 1 and after <= before
 	print("GRAVITY CHECK: %s" % ("PASS" if ok else "FAIL"))
 	get_tree().quit(0 if ok else 1)

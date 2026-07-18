@@ -257,7 +257,7 @@ func _rubble_support_scan() -> void:
 				var ncc: Vector2 = (nb.pos as Vector2) + Vector2(8, 8)
 				var dxx: float = ncc.x - fc.x
 				var dyy: float = ncc.y - fc.y
-				if dyy > 3.0 and dyy < 15.5 and absf(dxx) < 13.5:
+				if dyy > 3.0 and dyy < 17.5 and absf(dxx) < 14.0:
 					cnt += 1
 					one_dx = dxx
 					# Only a SQUARE-SET support can hold a block alone — a
@@ -267,7 +267,7 @@ func _rubble_support_scan() -> void:
 					var square_sup: bool = srot < 10.0 or srot > 80.0
 					if absf(dxx) <= 6.0 and square_sup:
 						centered = true
-				elif absf(dyy) <= 3.0 and absf(dxx) >= 11.0 and absf(dxx) <= 17.0:
+				elif absf(dyy) <= 4.0 and absf(dxx) >= 11.0 and absf(dxx) <= 18.0:
 					walls += 1  # wedged laterally between neighbors
 			if centered or cnt >= 2 or (cnt >= 1 and walls >= 1):
 				sup = true
@@ -286,6 +286,13 @@ func _rubble_support_scan() -> void:
 		ri -= 1
 	if changed:
 		WorldManager.free_blocks_changed.emit()
+
+static func _sq_ext(rot: float, nang: float) -> float:
+	## Half-extent of a rotated 16px square along direction angle nang
+	## (8 when square-on, up to 11.31 corner-on) — collision uses REAL
+	## square footprints so blocks never visually overlap.
+	var a: float = rot - nang
+	return 8.0 * (absf(cos(a)) + absf(sin(a)))
 
 func _find_player() -> Node:
 	for ch in get_parent().get_children():
@@ -346,29 +353,47 @@ func _knock_from_player(_delta: float) -> void:
 	var bx: float = ph.x
 	var by: float = ph.y
 	var rows: Array = [int(floor(by / 16.0)), int(floor((by + 15.0) / 16.0))]
-	# Horizontal plow: the column just ahead of the leading edge
+	# Plow direction: current speed OR the HELD direction — a solid pile
+	# stops the ball (speed 0) before a speed-only check can fire, which
+	# left the player stuck pressing into rubble
+	var dir_x: float = Input.get_axis("ui_left", "ui_right")
+	if dir_x == 0.0:
+		if Input.is_physical_key_pressed(KEY_D):
+			dir_x = 1.0
+		elif Input.is_physical_key_pressed(KEY_A):
+			dir_x = -1.0
+	var push_dir: float = 0.0
 	if absf(sx) > KNOCK_SPEED:
-		var lead_x: float = bx + 18.0 if sx > 0.0 else bx - 3.0
+		push_dir = signf(sx)
+	elif dir_x != 0.0:
+		push_dir = dir_x
+	var fling: float = maxf(absf(sx), 2.6) * 34.0
+	# Horizontal plow: the column just ahead of the leading edge
+	if push_dir != 0.0:
+		var lead_x: float = bx + 18.0 if push_dir > 0.0 else bx - 3.0
 		var cx: int = int(floor(lead_x / 16.0))
 		for cy in rows:
 			if WorldManager.get_tile(cx, cy) != 0 and not _is_static(cx, cy):
-				_loosen(cx, cy, Vector2(sx * 34.0, minf(sy * 20.0, 0.0) - 90.0))
+				_loosen(cx, cy, Vector2(fling * push_dir, minf(sy * 20.0, 0.0) - 90.0))
 				if not ph.is_god_mode:
 					ph._speedX *= 0.88  # impact costs a little momentum (not as a god)
-	# Plow through resting RUBBLE free blocks the same way
-	if absf(sx) > KNOCK_SPEED or absf(sy) > KNOCK_SPEED:
+	# Plow through resting RUBBLE free blocks the same way (held direction
+	# counts, so a stopping pile can always be pushed through)
+	if push_dir != 0.0 or absf(sy) > KNOCK_SPEED:
 		var kicked: Array = []
-		for fb in WorldManager.fb_near(bx, by, 26.0):
+		for fb in WorldManager.fb_near(bx, by, 30.0):
 			if fb.get("rubble", false):
 				var fc: Vector2 = (fb.pos as Vector2) + Vector2(8, 8)
-				if fc.distance_to(Vector2(bx + 8.0, by + 8.0)) < 24.0:
-					kicked.append(fb)
+				if fc.distance_to(Vector2(bx + 8.0, by + 8.0)) < 26.0:
+					if push_dir == 0.0 or signf(fc.x - (bx + 8.0)) == push_dir or absf(fc.x - (bx + 8.0)) < 6.0:
+						kicked.append(fb)
 		for fb in kicked:
 			WorldManager.free_blocks.erase(fb)
 			_debris.append({"pos": (fb.pos as Vector2) + Vector2(8, 8),
-				"vel": Vector2(sx * 34.0, minf(sy * 26.0, 0.0) - 110.0),
+				"vel": Vector2(fling * push_dir, minf(sy * 26.0, 0.0) - 110.0),
 				"rot": deg_to_rad(float(fb.get("rotation", 0.0))),
-				"rv": _rng.randf_range(-5.0, 5.0), "id": fb.id, "bn": 0})
+				"rv": _rng.randf_range(-4.0, 4.0), "id": fb.id, "bn": 0,
+				"jam": int(fb.get("jam", 0))})
 		if kicked.size() > 0:
 			WorldManager.free_blocks_changed.emit()
 	# Head bonk: knock the ceiling block when jumping up into it
@@ -398,6 +423,7 @@ func _step_debris(delta: float) -> void:
 		vel.x *= pow(0.5, delta)
 		d.vel = vel
 		d.pos = (d.pos as Vector2) + vel * delta
+		d.rv = float(d.rv) * pow(0.45, delta)
 		d.rot = float(d.rot) + float(d.rv) * delta
 	# 2) debris-vs-debris: positional relaxation + inelastic impulse
 	var hgrid: Dictionary = {}
@@ -414,8 +440,8 @@ func _step_debris(delta: float) -> void:
 			var ci: Vector2 = di.pos
 			var kx: int = int(floor(ci.x / 16.0))
 			var ky: int = int(floor(ci.y / 16.0))
-			for ox in range(-1, 2):
-				for oy in range(-1, 2):
+			for ox in range(-2, 3):
+				for oy in range(-2, 3):
 					var cell = hgrid.get(Vector2i(kx + ox, ky + oy))
 					if cell == null:
 						continue
@@ -425,10 +451,14 @@ func _step_debris(delta: float) -> void:
 						var dj: Dictionary = _debris[j]
 						var dvec: Vector2 = (dj.pos as Vector2) - ci
 						var dist: float = dvec.length()
-						if dist >= DEB_R * 2.0 or dist < 0.001:
+						if dist >= 22.8 or dist < 0.001:
 							continue
 						var nrm: Vector2 = dvec / dist
-						var push: float = (DEB_R * 2.0 - dist) * 0.5
+						var nang: float = atan2(nrm.y, nrm.x)
+						var needed: float = _sq_ext(float(di.rot), nang) + _sq_ext(float(dj.rot), nang)
+						if dist >= needed:
+							continue
+						var push: float = (needed - dist) * 0.5
 						di.pos = (di.pos as Vector2) - nrm * push
 						dj.pos = (dj.pos as Vector2) + nrm * push
 						ci = di.pos
@@ -449,25 +479,32 @@ func _step_debris(delta: float) -> void:
 		if pc.x != INF:
 			var away: Vector2 = pos - pc
 			var adist: float = away.length()
-			if adist < 16.2:
+			if adist < 19.5:
 				away = away.normalized() if adist > 0.01 else Vector2(0, -1)
-				pos = pc + away * 16.2
-				var relp: Vector2 = vel - pvel
-				var into: float = relp.dot(-away)
-				if into > 0.0:
-					vel += away * (into * 1.1) + pvel * 0.2
-					d.rv = _rng.randf_range(-5.0, 5.0)
+				var pneed: float = 8.2 + _sq_ext(float(d.rot), atan2(away.y, away.x))
+				if adist < pneed:
+					pos = pc + away * pneed
+					var relp: Vector2 = vel - pvel
+					var into: float = relp.dot(-away)
+					if into > 0.0:
+						vel += away * (into * 1.1) + pvel * 0.2
+						if into > 70.0:
+							d.rv = _rng.randf_range(-5.0, 5.0)
 		# resting rubble & caps: static circles — land ON piles, never inside
-		for nb in WorldManager.fb_near(pos.x - 8.0, pos.y - 8.0, 24.0):
+		for nb in WorldManager.fb_near(pos.x - 8.0, pos.y - 8.0, 32.0):
 			if not (nb.get("rubble", false) or nb.get("is_cap", false)):
 				continue
 			var nc: Vector2 = (nb.pos as Vector2) + Vector2(8, 8)
 			var dv: Vector2 = pos - nc
 			var dd: float = dv.length()
-			if dd >= 15.4 or dd < 0.001:
+			if dd >= 22.8 or dd < 0.001:
 				continue
 			var nn: Vector2 = dv / dd
-			pos = nc + nn * 15.4
+			var nang2: float = atan2(nn.y, nn.x)
+			var need2: float = _sq_ext(float(d.rot), nang2) + _sq_ext(deg_to_rad(float(nb.get("rotation", 0.0))), nang2)
+			if dd >= need2:
+				continue
+			pos = nc + nn * need2
 			var into2: float = vel.dot(-nn)
 			if into2 > 0.0:
 				vel += nn * (into2 * 1.15)
@@ -481,12 +518,13 @@ func _step_debris(delta: float) -> void:
 				pos.x = float(scx) * 16.0 + (16.0 + DEB_R if vel.x < 0.0 else -DEB_R)
 				vel.x = 0.0
 		# ground / tiles below: bounce hard hits, otherwise stand
+		var extv: float = _sq_ext(float(d.rot), PI / 2.0)
 		var bcx: int = clampi(int(floor(pos.x / 16.0)), 1, WorldManager.world_width - 2)
-		var bty: int = int(floor((pos.y + DEB_R) / 16.0))
+		var bty: int = int(floor((pos.y + extv) / 16.0))
 		if bty >= ground_y or WorldManager.is_solid_at(bcx, bty):
 			var top: float = float(bty) * 16.0
-			if pos.y + DEB_R > top and vel.y > 0.0:
-				pos.y = top - DEB_R
+			if pos.y + extv > top and vel.y > 0.0:
+				pos.y = top - extv
 				if vel.y > 240.0 and int(d.get("bn", 0)) < 2:
 					d.bn = int(d.get("bn", 0)) + 1
 					vel.y = -vel.y * 0.36
@@ -496,6 +534,11 @@ func _step_debris(delta: float) -> void:
 					vel.y = 0.0
 					vel.x *= 0.55
 					supported = true
+		if supported:
+			# Settle: gently square up (blocks may keep SOME tilt — rest
+			# snaps to 15 degrees — but piles read as stacked blocks)
+			var tgt: float = round(float(d.rot) / (PI / 2.0)) * (PI / 2.0)
+			d.rot = move_toward(float(d.rot), tgt, 2.4 * delta)
 		# rest: supported and slow — become rubble EXACTLY here
 		if supported and vel.length() < REST_SPEED:
 			if pc.x != INF and pos.distance_to(pc) < 18.0:
