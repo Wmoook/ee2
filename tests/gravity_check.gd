@@ -3,11 +3,15 @@ extends Node
 ## falling debris, debris settles back into grid tiles (mass conserved).
 
 func _count_loose() -> int:
+	# Grid blocks + resting rubble free blocks (tilted rest keeps mass)
 	var n: int = 0
 	for y in range(1, GravityMode.GROUND_Y):
 		for x in range(1, WorldManager.world_width - 1):
 			if WorldManager.get_tile(x, y) != 0 and WorldManager.get_tile(x, y) != 9:
 				n += 1
+	for fb in WorldManager.free_blocks:
+		if fb.get("rubble", false):
+			n += 1
 	return n
 
 func _ready() -> void:

@@ -647,6 +647,8 @@ const MAX_CHAT_MESSAGES: int = 50
 
 var _zoom_container: HBoxContainer
 var _rotate_btn: Button
+var _gravity_btn: Button
+var _gravity_node: Node = null
 var _zoom_label: Label
 var _trails_btn: Button
 
@@ -712,6 +714,18 @@ func _build_zoom_buttons() -> void:
 	_rotate_btn.focus_mode = Control.FOCUS_NONE
 	_rotate_btn.pressed.connect(_on_rotate_toggle)
 	_zoom_container.add_child(_rotate_btn)
+
+	# BLOCK GRAVITY toggle — offline sandbox only (never the shared world).
+	# ON: everything falls, curves crumble. Exiting the world restores it.
+	if not GameState.battle_mode and not NetPlay.online:
+		_gravity_btn = Button.new()
+		_gravity_btn.text = "Gravity OFF"
+		_gravity_btn.custom_minimum_size = Vector2(88, 32)
+		_gravity_btn.add_theme_font_size_override("font_size", 11)
+		_gravity_btn.add_theme_stylebox_override("normal", btn_style)
+		_gravity_btn.focus_mode = Control.FOCUS_NONE
+		_gravity_btn.pressed.connect(_on_gravity_toggle)
+		_zoom_container.add_child(_gravity_btn)
 
 func _get_camera() -> Camera2D:
 	return get_viewport().get_camera_2d()
@@ -797,6 +811,22 @@ func _on_trails_toggle() -> void:
 func _on_rotate_toggle() -> void:
 	GameState.rotation_enabled = not GameState.rotation_enabled
 	_rotate_btn.text = "Rotate ON" if GameState.rotation_enabled else "Rotate OFF"
+
+func _on_gravity_toggle() -> void:
+	if _gravity_node != null and is_instance_valid(_gravity_node):
+		_gravity_node.queue_free()
+		_gravity_node = null
+		_gravity_btn.text = "Gravity OFF"
+		return
+	# First activation this visit: snapshot the world so leaving restores it
+	if GameState.gravity_snapshot.is_empty():
+		GameState.gravity_snapshot = WorldManager.serialize_world()
+	var grav: GravityMode = GravityMode.new()
+	grav.attached = true
+	grav.name = "BlockGravity"
+	get_parent().add_child(grav)
+	_gravity_node = grav
+	_gravity_btn.text = "Gravity ON"
 
 func _on_zoom_out() -> void:
 	var cam: Camera2D = _get_camera()

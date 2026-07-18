@@ -275,7 +275,13 @@ func _leave_to_menu() -> void:
 	# scene start: after a connection DROP NetPlay.online is already false,
 	# and saving then would clobber the local world with the shared one.
 	if not GameState.battle_mode and not _online_guest:
+		# BLOCK GRAVITY was toggled this visit: restore the pre-gravity world
+		# so the collapse never overwrites the player's build
+		if not GameState.gravity_snapshot.is_empty():
+			WorldManager.deserialize_world(GameState.gravity_snapshot)
+			GameState.gravity_snapshot = {}
 		WorldManager.save_to_file("user://world_save.json")
+	GameState.gravity_snapshot = {}
 	NetPlay.leave_room()
 	GameState.battle_mode = false
 	GameState.boss_fight = false
