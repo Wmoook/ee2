@@ -257,6 +257,20 @@ signal state_channel_changed(channel_id: int, value: int)
 
 func _ready() -> void:
 	load_profile()
+	# Web has NO system font fallback — every symbol/emoji beyond the built-in
+	# font (hearts, skulls, arrows, planets, the reconnect spinner) rendered as
+	# a hex box (e.g. "27F3"). Bundle Noto symbol + emoji fonts as global
+	# fallbacks so every platform shows the same glyphs.
+	var _fbf: Font = ThemeDB.fallback_font
+	if _fbf != null:
+		var _sym: Font = load("res://assets/fonts/NotoSansSymbols2-Regular.ttf")
+		var _emo: Font = load("res://assets/fonts/NotoEmoji-Regular.ttf")
+		var _fbs = _fbf.get("fallbacks")
+		if _fbs != null and _sym != null and _emo != null:
+			var _list: Array = _fbs.duplicate()
+			_list.append(_sym)
+			_list.append(_emo)
+			_fbf.set("fallbacks", _list)
 	# Uncapped FPS + no vsync so render framerate is independent of physics (100Hz).
 	# Frame interpolation in player_controller makes motion smooth at any FPS.
 	# On the web, browsers own the frame loop — leave vsync/fps defaults alone.

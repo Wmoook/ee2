@@ -392,45 +392,41 @@ func _draw() -> void:
 							r_bot[mi] = cut_bot
 						if md - prev_md < 0.5 and md < max_d:
 							continue
-						# Tiling UV: repeat every 16px, mirror every other tile for seamless pattern
-						var tile_num_l: int = int(prev_md / 16.0)
-						var tile_num_r: int = int(md / 16.0)
-						var mirror: bool = (tile_num_l % 2) == 1
-						var raw_uv_l: float = fmod(prev_md / 16.0, 1.0)
-						var raw_uv_r: float = fmod(md / 16.0, 1.0)
-						var uv_l: float
-						var uv_r: float
-						if mirror:
-							uv_l = u0 + raw_uv_l * (u1 - u0)
-							uv_r = u0 + raw_uv_r * (u1 - u0)
-						else:
-							uv_l = u1 - raw_uv_l * (u1 - u0)
-							uv_r = u1 - raw_uv_r * (u1 - u0)
-						# Handle UV wrap-around (tile boundary crossed when tile_num changes)
-						if tile_num_r != tile_num_l:
-							var wrap_t: float = (1.0 - fmod(prev_md / 16.0, 1.0)) / maxf((md - prev_md) / 16.0, 0.001)
-							wrap_t = clampf(wrap_t, 0.0, 1.0)
-							var mid_top: Vector2 = prev_mt.lerp(r_top[mi], wrap_t)
-							var mid_bot: Vector2 = prev_mb.lerp(r_bot[mi], wrap_t)
-							# First half: current tile direction
-							var uv_end1: float = u0 if not mirror else u1  # End of current tile
-							mverts.append(prev_mt); mverts.append(mid_top); mverts.append(mid_bot)
-							mverts.append(prev_mt); mverts.append(mid_bot); mverts.append(prev_mb)
-							muvs.append(Vector2(uv_l, v1)); muvs.append(Vector2(uv_end1, v1)); muvs.append(Vector2(uv_end1, v0))
-							muvs.append(Vector2(uv_l, v1)); muvs.append(Vector2(uv_end1, v0)); muvs.append(Vector2(uv_l, v0))
-							# Second half: next tile (opposite mirror)
-							var mirror2: bool = not mirror
-							var uv_start2: float = u0 if not mirror2 else u1
-							mverts.append(mid_top); mverts.append(r_top[mi]); mverts.append(r_bot[mi])
-							mverts.append(mid_top); mverts.append(r_bot[mi]); mverts.append(mid_bot)
-							muvs.append(Vector2(uv_start2, v1)); muvs.append(Vector2(uv_r, v1)); muvs.append(Vector2(uv_r, v0))
-							muvs.append(Vector2(uv_start2, v1)); muvs.append(Vector2(uv_r, v0)); muvs.append(Vector2(uv_start2, v0))
-						else:
-							# Normal quad (flipped V: top=v1, bot=v0)
-							mverts.append(prev_mt); mverts.append(r_top[mi]); mverts.append(r_bot[mi])
-							mverts.append(prev_mt); mverts.append(r_bot[mi]); mverts.append(prev_mb)
+						# Tiling UV: repeat every 16px, mirror every other tile.
+						# WALK every 16px boundary inside this chord — a chord can
+						# cross SEVERAL (old coarse-decimated curves have ~30px
+						# chords), and any un-cut boundary smeared the texture's
+						# edge pixels across the whole tile (dark streak glitch).
+						var seg_d: float = prev_md
+						var seg_top: Vector2 = prev_mt
+						var seg_bot: Vector2 = prev_mb
+						var chord: float = maxf(md - prev_md, 0.001)
+						while true:
+							var tile_n: int = int(seg_d / 16.0)
+							var tile_end: float = float(tile_n + 1) * 16.0
+							var piece_end: float = minf(md, tile_end)
+							var pt_t: float = clampf((piece_end - prev_md) / chord, 0.0, 1.0)
+							var piece_top: Vector2 = prev_mt.lerp(r_top[mi], pt_t)
+							var piece_bot: Vector2 = prev_mb.lerp(r_bot[mi], pt_t)
+							var raw_l: float = (seg_d - float(tile_n) * 16.0) / 16.0
+							var raw_r: float = (piece_end - float(tile_n) * 16.0) / 16.0
+							var uv_l: float
+							var uv_r: float
+							if (tile_n % 2) == 1:
+								uv_l = u0 + raw_l * (u1 - u0)
+								uv_r = u0 + raw_r * (u1 - u0)
+							else:
+								uv_l = u1 - raw_l * (u1 - u0)
+								uv_r = u1 - raw_r * (u1 - u0)
+							mverts.append(seg_top); mverts.append(piece_top); mverts.append(piece_bot)
+							mverts.append(seg_top); mverts.append(piece_bot); mverts.append(seg_bot)
 							muvs.append(Vector2(uv_l, v1)); muvs.append(Vector2(uv_r, v1)); muvs.append(Vector2(uv_r, v0))
 							muvs.append(Vector2(uv_l, v1)); muvs.append(Vector2(uv_r, v0)); muvs.append(Vector2(uv_l, v0))
+							if piece_end >= md - 0.0001:
+								break
+							seg_d = piece_end
+							seg_top = piece_top
+							seg_bot = piece_bot
 						prev_mt = r_top[mi]
 						prev_mb = r_bot[mi]
 						prev_md = md
