@@ -1422,10 +1422,27 @@ func remove_polyline_near(pos: Vector2, radius: float = 16.0) -> void:
 					if rpts[0].distance_to(cpts[0]) < 2.0 or rpts[-1].distance_to(cpts[-1]) < 2.0 or rpts[0].distance_to(cpts[-1]) < 2.0 or rpts[-1].distance_to(cpts[0]) < 2.0:
 						if not to_remove.has(j):
 							to_remove.append(j)
+	# Capture endpoints of everything being erased so legacy end-cap free
+	# blocks (pre-capless era) vanish with their curve
+	var _cap_ends: Array = []
+	for ri in to_remove:
+		var rp: Dictionary = polylines[ri]
+		var rpp: PackedVector2Array = rp.points
+		if rpp.size() >= 2:
+			_cap_ends.append([rpp[0], rp.get("block_id", 9)])
+			_cap_ends.append([rpp[rpp.size() - 1], rp.get("block_id", 9)])
 	# Remove in reverse order so indices stay valid
 	to_remove.sort()
 	for k in range(to_remove.size() - 1, -1, -1):
 		polylines.remove_at(to_remove[k])
+	var _fbi: int = free_blocks.size() - 1
+	while _fbi >= 0:
+		var _cfb: Dictionary = free_blocks[_fbi]
+		for ce in _cap_ends:
+			if _cfb.id == ce[1] and ((_cfb.pos as Vector2) + Vector2(8, 8)).distance_to(ce[0]) < 16.0:
+				free_blocks.remove_at(_fbi)
+				break
+		_fbi -= 1
 	# Rebuild spatial hashes and wedge pairs after removal
 	# Invalidate cached mesh on remaining polylines (indices shifted)
 	for p in polylines:
@@ -1742,7 +1759,50 @@ func deserialize_world(data: Dictionary) -> void:
 	gravity_zones.deserialize(data.get("gravity_zones", []))
 	_regenerate_curve_collision_blocks()
 	build_curve_colliders()
+	purge_legacy_curve_caps()
 	world_loaded.emit()
+
+func purge_legacy_curve_caps() -> void:
+	## Pre-capless-era curves placed square cap FREE BLOCKS at their ends —
+	## some are near-invisible (dark ribbon art on black) and act as phantom
+	## hitboxes. Remove anything provably a cap: (a) a free block sitting on
+	## a live polyline endpoint with that polyline's own block id, or (b) a
+	## Curves-tab ribbon block at a non-45-degree rotation (only the old cap
+	## placement produced those angles).
+	var ends: Array = []
+	for poly in polylines:
+		if poly.get("collision_only", false):
+			continue
+		var pts: PackedVector2Array = poly.points
+		if pts.size() >= 2:
+			ends.append([pts[0], poly.get("block_id", 9)])
+			ends.append([pts[pts.size() - 1], poly.get("block_id", 9)])
+	var removed: int = 0
+	var i: int = free_blocks.size() - 1
+	while i >= 0:
+		var fb: Dictionary = free_blocks[i]
+		if fb.get("curve_visual", false) or fb.get("curve_collision", false):
+			i -= 1
+			continue
+		var is_cap: bool = false
+		var fc: Vector2 = (fb.pos as Vector2) + Vector2(8, 8)
+		for e in ends:
+			if fb.id == e[1] and fc.distance_to(e[0]) < 16.0:
+				is_cap = true
+				break
+		if not is_cap:
+			var rid: int = int(fb.id)
+			if (rid >= 5058 and rid <= 5067) or (rid >= 6080 and rid <= 6089):
+				var rr: float = absf(fmod(float(fb.get("rotation", 0.0)), 45.0))
+				if rr > 1.0 and rr < 44.0:
+					is_cap = true
+		if is_cap:
+			free_blocks.remove_at(i)
+			removed += 1
+		i -= 1
+	if removed > 0:
+		free_blocks_changed.emit()
+		print("[world] purged %d legacy curve end-cap blocks" % removed)
 
 func add_line(start: Vector2, end: Vector2, color: Color, width: float = 3.0) -> void:
 	lines.append({"start": start, "end": end, "color": color, "width": width})
