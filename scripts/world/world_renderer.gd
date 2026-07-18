@@ -369,11 +369,11 @@ func _draw() -> void:
 					var cmesh: ArrayMesh = ArrayMesh.new()
 					var mverts: PackedVector2Array = PackedVector2Array()
 					var muvs: PackedVector2Array = PackedVector2Array()
-					# Truncate at last full 16px tile boundary
+					# Full length — the ribbon runs to the very end of the spline
+					# (the old 16px truncation left a gap patched by a square
+					# end-cap block, which broke the curve's consistency)
 					var total_d: float = r_dists[-1] if r_dists.size() > 0 else 0.0
-					var max_d: float = round(total_d / 16.0) * 16.0
-					if max_d < 16.0:
-						max_d = total_d  # Too short, show everything
+					var max_d: float = total_d
 					var prev_mt: Vector2 = r_top[0]
 					var prev_mb: Vector2 = r_bot[0]
 					var prev_md: float = 0.0

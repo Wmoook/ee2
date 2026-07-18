@@ -1165,25 +1165,9 @@ func _process(_delta: float) -> void:
 					if spline_pts.size() > 0 and spline_pts[-1].distance_to(cpts[-1]) > 0.5:
 						spline_pts.append(cpts[-1])
 					if spline_pts.size() >= 2:
-						# Truncate spline to last full 16px tile boundary
-						var _tlen: float = 0.0
-						for _ti in range(1, spline_pts.size()):
-							_tlen += spline_pts[_ti].distance_to(spline_pts[_ti - 1])
-						var _tmax: float = floor(_tlen / 16.0) * 16.0
-						var _orig_pts: int = spline_pts.size()
-						push_warning("CURVE_TRUNC len=%.1f max=%.1f remainder=%.1f pts=%d" % [_tlen, _tmax, _tlen - _tmax, spline_pts.size()])
-						if _tmax >= 16.0:
-							var _taccum: float = 0.0
-							for _ti in range(1, spline_pts.size()):
-								var _tseg: float = spline_pts[_ti].distance_to(spline_pts[_ti - 1])
-								if _taccum + _tseg >= _tmax:
-									var _tt: float = (_tmax - _taccum) / maxf(_tseg, 0.001)
-									var _tcut: Vector2 = spline_pts[_ti - 1].lerp(spline_pts[_ti], _tt)
-									spline_pts.resize(_ti)
-									spline_pts.append(_tcut)
-									push_warning("CURVE_TRUNC CUT at idx=%d new_pts=%d cut_pos=(%.1f,%.1f)" % [_ti, spline_pts.size(), _tcut.x, _tcut.y])
-									break
-								_taccum += _tseg
+						# No truncation and NO end-cap blocks: the mesh renders
+						# the full spline, so the curve is one consistent ribbon
+						# from the first control point to the last.
 						# Decimate long splines: 1px resolution on a huge curve is
 						# thousands of points, and EVERYTHING downstream pays per
 						# point (pinch scan, colliders, mesh, network payload,
@@ -1199,37 +1183,6 @@ func _process(_delta: float) -> void:
 								dec.append(spline_pts[spline_pts.size() - 1])
 							spline_pts = dec
 						WorldManager.net_add_polyline(spline_pts, "both", GameState.selected_block_id)
-						# End cap blocks: centered at endpoints, rotated to tangent
-						# Start cap: direction from point 0 toward point 1
-						var s_dir: Vector2 = (spline_pts[1] - spline_pts[0]).normalized()
-						var s_pos: Vector2 = spline_pts[0] - s_dir * 7.7 - Vector2(8, 8)
-						var s_rot: float = rad_to_deg(atan2(s_dir.y, s_dir.x))
-						WorldManager.net_add_free_block({"pos": s_pos, "id": GameState.selected_block_id, "rotation": s_rot})
-						# End cap: spline already truncated to 16px boundary
-						# Use a point 10px+ back for stable direction
-						var e_ref_idx: int = spline_pts.size() - 2
-						for _ei in range(spline_pts.size() - 2, 0, -1):
-							if spline_pts[-1].distance_to(spline_pts[_ei]) >= 10.0:
-								e_ref_idx = _ei
-								break
-						var e_dir: Vector2 = (spline_pts[-1] - spline_pts[e_ref_idx]).normalized()
-						var e_pos: Vector2 = spline_pts[-1] + e_dir * 7.7 - Vector2(8, 8)
-						# Check what render_dists ended up as
-						var _rd: Array = WorldManager.polylines[-1].get("render_dists", [])
-						var _rd_total: float = _rd[-1] if _rd.size() > 0 else -1.0
-						var _rd_max: float = round(_rd_total / 16.0) * 16.0
-						push_warning("ENDCAP spline_end=(%.1f,%.1f) cap_pos=(%.1f,%.1f) render_dist_total=%.1f render_max=%.1f" % [spline_pts[-1].x, spline_pts[-1].y, e_pos.x, e_pos.y, _rd_total, _rd_max])
-						var e_rot: float = rad_to_deg(atan2(e_dir.y, e_dir.x))
-						# Compute mirror from the mesh's actual truncation distance
-						# Use the SPLINE truncation distance (_tmax) which we computed
-						# _tmax is floor(_tlen/16)*16 — always exact multiple of 16
-						var tile_count_from_trunc: int = int(_tmax / 16.0)
-						var end_fb: Dictionary = {"pos": e_pos, "id": GameState.selected_block_id, "rotation": e_rot}
-						# End cap is the tile AFTER the last mesh tile
-						if tile_count_from_trunc % 2 == 1:
-							end_fb["flip_h"] = true
-						push_warning("ENDCAP_MIRROR trunc_tiles=%d rd_tiles=%d flip=%s" % [tile_count_from_trunc, int(round(_rd_total / 16.0)), str(end_fb.get("flip_h", false))])
-						WorldManager.net_add_free_block(end_fb)
 				_curve_points.clear()
 				_curve_preview.clear()
 				_curve_mode = false
