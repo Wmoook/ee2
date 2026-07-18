@@ -227,10 +227,9 @@ func _on_mode_msg(from_id: int, data: Dictionary) -> void:
 				# Charge-up glow: everyone SEES a dash winding up
 				ra.charging = bool(data.get("chgon", false))
 				ra.charge = float(data.get("chg", 0.0))
-				if bool(data.get("fire", false)) and ra.weapon != "" \
-						and WeaponSystem.WEAPONS.get(ra.weapon, {}).get("beam", false):
-					ra.cooldown = 0.0
-					weapons.try_shoot(rid)
+				# Beam firing is a HELD state — the per-frame pump in _process
+				# re-requests it (one-shot at 20Hz strobed the doom ray)
+				ra["net_fire"] = bool(data.get("fire", false))
 			_net_hp[from_id] = int(data.get("hp", MAX_HP))
 			var new_lives: int = int(data.get("lives", MAX_LIVES))
 			_net_lives[from_id] = new_lives
@@ -371,7 +370,7 @@ func _collide_online(pid: int) -> void:
 	# push via kb instead of grinding against the lagged ghost
 	var sep_w: float = 0.5
 	if my_anchor or i_aggress:
-		sep_w = 0.15
+		sep_w = 0.05
 	if their_sh and i_aggress:
 		sep_w = 1.0  # shoved off a defending shield for real
 	var sep: Vector2 = -n * overlap * sep_w
@@ -384,15 +383,17 @@ func _collide_online(pid: int) -> void:
 		# I rammed a raised shield: full-momentum rejection off its face
 		av = -n * maxf(av.length() * 1.2, 4.5)
 	elif i_aggress:
-		# I plow through and DELIVER their blast — instant on their sim
-		av += n * (-approach * 0.45)
+		# I plow through nearly unimpeded and DELIVER their blast — self-
+		# slowing against their lagged ghost read as hitting an invisible wall
+		av += n * (-approach * 0.22)
 		var blast: Vector2 = n * approach * 1.05
 		NetPlay.send_mode({"m": "kb", "tgt": pid, "x": blast.x, "y": blast.y})
 		if my_sh:
-			# Shield-shoving drains the shield fast — no infinite bulldozer
+			# Shield-shoving drains over TIME (a brush of contact shouldn't
+			# dump the whole charge) — ~2s of continuous shoving empties it
 			var pa_sh: Dictionary = weapons._actors.get("player", {})
 			if not pa_sh.is_empty():
-				pa_sh.shield_energy = maxf(0.0, pa_sh.shield_energy - 0.55)
+				pa_sh.shield_energy = maxf(0.0, pa_sh.shield_energy - 1.2 * get_process_delta_time())
 	# Passive side: no self-blast — the aggressor's kb message delivers it
 	ap._speedX = av.x
 	ap._speedY = av.y
@@ -674,6 +675,16 @@ func _process(delta: float) -> void:
 	# Online: pump my state + resolve my side of ball-vs-ball contacts
 	if net and not _over and is_instance_valid(player):
 		_net_pump(delta)
+		# Remote beams (doom) must be re-requested EVERY FRAME or they strobe
+		for pid_b in _net_ids:
+			if pid_b == NetPlay.my_id():
+				continue
+			var ra_b: Dictionary = weapons._actors.get(_rid(pid_b), {})
+			if not ra_b.is_empty() and ra_b.get("net_fire", false) and ra_b.weapon != "" \
+					and WeaponSystem.WEAPONS.get(ra_b.weapon, {}).get("beam", false) \
+					and _remote_alive(pid_b):
+				ra_b.cooldown = 0.0
+				weapons.try_shoot(_rid(pid_b))
 		if not player._is_dead and not _eliminated:
 			for pid in _net_ids:
 				if pid != NetPlay.my_id() and not _net_out.get(pid, false):
@@ -818,9 +829,9 @@ func _collide_pair(a: Dictionary, b: Dictionary) -> void:
 	var a_sh: bool = a_sh_raw and not a_aggressing
 	var b_sh: bool = b_sh_raw and a_aggressing
 	if a_sh_raw and a_aggressing and pre_an - pre_bn > 0.5:
-		weapons._actors[a.id]["shield_energy"] = maxf(0.0, weapons._actors[a.id].shield_energy - 0.5)
+		weapons._actors[a.id]["shield_energy"] = maxf(0.0, weapons._actors[a.id].shield_energy - 1.2 * get_process_delta_time())
 	if b_sh_raw and not a_aggressing and pre_bn - pre_an > 0.5:
-		weapons._actors[b.id]["shield_energy"] = maxf(0.0, weapons._actors[b.id].shield_energy - 0.5)
+		weapons._actors[b.id]["shield_energy"] = maxf(0.0, weapons._actors[b.id].shield_energy - 1.2 * get_process_delta_time())
 	# Separate — but NEVER push a ball inside solid tiles (that was the
 	# stuck-in-a-block bug). A shield holder is an ANCHOR: the rammer takes
 	# ALL of the push-out. If one side is wall-pinned, the OTHER side takes

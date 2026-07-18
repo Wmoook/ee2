@@ -1184,6 +1184,20 @@ func _process(_delta: float) -> void:
 									push_warning("CURVE_TRUNC CUT at idx=%d new_pts=%d cut_pos=(%.1f,%.1f)" % [_ti, spline_pts.size(), _tcut.x, _tcut.y])
 									break
 								_taccum += _tseg
+						# Decimate long splines: 1px resolution on a huge curve is
+						# thousands of points, and EVERYTHING downstream pays per
+						# point (pinch scan, colliders, mesh, network payload,
+						# every peer's re-apply). ~2-3px chords are visually
+						# identical and physics-safe (capsule contacts use
+						# closest-segment distance) — giant curves place instantly.
+						if spline_pts.size() > 700:
+							var keep_step: int = int(ceil(float(spline_pts.size()) / 700.0))
+							var dec: PackedVector2Array = PackedVector2Array()
+							for _di in range(0, spline_pts.size(), keep_step):
+								dec.append(spline_pts[_di])
+							if dec[dec.size() - 1] != spline_pts[spline_pts.size() - 1]:
+								dec.append(spline_pts[spline_pts.size() - 1])
+							spline_pts = dec
 						WorldManager.net_add_polyline(spline_pts, "both", GameState.selected_block_id)
 						# End cap blocks: centered at endpoints, rotated to tangent
 						# Start cap: direction from point 0 toward point 1

@@ -300,10 +300,7 @@ func _on_mode_msg(from_id: int, data: Dictionary) -> void:
 				_mirror_weapon(ra, str(data.get("wpn", "")))
 				ra.charging = bool(data.get("chgon", false))
 				ra.charge = float(data.get("chg", 0.0))
-				if bool(data.get("fire", false)) and ra.weapon != "" \
-						and WeaponSystem.WEAPONS.get(ra.weapon, {}).get("beam", false):
-					ra.cooldown = 0.0
-					weapons.try_shoot(rid)
+				ra["net_fire"] = bool(data.get("fire", false))
 			_net_hp[from_id] = int(data.get("hp", MAX_HP))
 			if int(data.get("lives", MAX_LIVES)) <= 0:
 				_net_out[from_id] = true
@@ -699,6 +696,16 @@ func _process(delta: float) -> void:
 		return
 	if net:
 		_net_pump(delta)
+		# Remote beams must be re-requested EVERY FRAME or they strobe
+		for pid_b in _net_ids:
+			if pid_b == NetPlay.my_id():
+				continue
+			var ra_b: Dictionary = weapons._actors.get(_rid(pid_b), {})
+			if not ra_b.is_empty() and ra_b.get("net_fire", false) and ra_b.weapon != "" \
+					and WeaponSystem.WEAPONS.get(ra_b.weapon, {}).get("beam", false) \
+					and _remote_alive(pid_b):
+				ra_b.cooldown = 0.0
+				weapons.try_shoot(_rid(pid_b))
 
 	var p_ok: bool = is_instance_valid(player) and not player._is_dead and not _eliminated
 	var pc: Vector2 = Vector2(player.physics.x + 8.0, player.physics.y + 8.0) if p_ok else Vector2.ZERO

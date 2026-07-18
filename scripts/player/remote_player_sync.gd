@@ -21,6 +21,10 @@ const SYNC_INTERVAL: float = 0.05  # 50ms = 20Hz
 func receive_state(data: Dictionary) -> void:
 	prev_pos = target_pos if interp_t < 1.5 else target_pos
 	target_pos = Vector2(data.get("x", 0), data.get("y", 0))
+	# Respawns and other teleports must SNAP — interpolating a cross-map jump
+	# streaks the ball over everything ("teleporting around after death")
+	if prev_pos.distance_to(target_pos) > 96.0:
+		prev_pos = target_pos
 	speed = Vector2(data.get("sx", 0), data.get("sy", 0))
 	anim_frame = data.get("af", 0)
 	flip_h = data.get("fh", false)
@@ -35,5 +39,16 @@ func receive_state(data: Dictionary) -> void:
 
 func get_interpolated_position(delta: float) -> Vector2:
 	interp_t += delta / SYNC_INTERVAL
-	interp_t = clampf(interp_t, 0.0, 1.2)
-	return prev_pos.lerp(target_pos, minf(interp_t, 1.0))
+	interp_t = clampf(interp_t, 0.0, 2.6)
+	if is_dead:
+		return target_pos
+	# Lead the last packet by half an interval and extrapolate a little past
+	# it: pure interpolation rendered remote balls ~100ms in the PAST, so
+	# contacts looked like hitting an invisible spot ahead of the other ball.
+	# (EE speed units are px per 100Hz tick → px/s = speed * 100.)
+	var vel_px: Vector2 = speed * 100.0
+	var lead: Vector2 = target_pos + vel_px * (SYNC_INTERVAL * 0.5)
+	if interp_t <= 1.0:
+		return prev_pos.lerp(lead, interp_t)
+	var extra: float = minf((interp_t - 1.0) * SYNC_INTERVAL, 0.08)
+	return lead + vel_px * extra

@@ -95,6 +95,14 @@ func _find_pinch_point(pts: PackedVector2Array) -> Dictionary:
 		if not buckets.has(key):
 			buckets[key] = []
 		buckets[key].append(i)
+	# Prefix-summed arc lengths: the old code WALKED the arc for every
+	# candidate pair (O(pairs x n)) — placing a big curve froze the game,
+	# catastrophically so on web. cum[j]-cum[i] is the same arc in O(1).
+	var cum: PackedFloat64Array = PackedFloat64Array()
+	cum.resize(pts.size())
+	cum[0] = 0.0
+	for ci in range(1, pts.size()):
+		cum[ci] = cum[ci - 1] + pts[ci - 1].distance_to(pts[ci])
 	# Find pinch pairs and pick the one that splits most evenly
 	var _min_pts: int = int(pts.size() * 0.15)  # Each half must be at least 15% of total
 	var best_mid: int = -1
@@ -117,14 +125,10 @@ func _find_pinch_point(pts: PackedVector2Array) -> Dictionary:
 						# line, arc ≈ distance. On a real U/V, arc >> distance.
 						var lo2: int = mini(i, j)
 						var hi2: int = maxi(i, j)
-						var arc_len: float = 0.0
-						for k in range(lo2, hi2):
-							arc_len += pts[k].distance_to(pts[k + 1])
+						var arc_len: float = cum[hi2] - cum[lo2]
 						if arc_len < d * 2.5:
 							continue  # Not a real fold — just nearby on a straight/gentle curve
-						var lo: int = lo2
-						var hi: int = hi2
-						var mid: int = int((lo + hi) / 2)
+						var mid: int = int((lo2 + hi2) / 2)
 						# Reject splits too close to edges
 						if mid <= _min_pts or mid >= pts.size() - _min_pts:
 							continue
