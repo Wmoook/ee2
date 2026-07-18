@@ -161,6 +161,10 @@ func _spawn_local_player() -> void:
 	player.player_name = GameState.player_name
 	player.smiley_id = GameState.player_smiley_id
 	player.position = WorldManager.get_spawn_pixel(0)
+	if GameState.rejoin_pos.x != INF:
+		# Auto-rejoin after a connection drop: resume where the run left off
+		player.position = GameState.rejoin_pos
+		GameState.rejoin_pos = Vector2.INF
 	add_child(player)
 	_players[my_id] = player
 
@@ -275,6 +279,7 @@ func _leave_to_menu() -> void:
 	GameState.zombies_mode = false
 	GameState.player_stunned = false
 	GameState.net_freeze = false
+	GameState.rejoin_pos = Vector2.INF
 	GameState.cam_shake = 0.0
 	get_tree().paused = false
 	NetworkManager.disconnect_game()
@@ -296,10 +301,17 @@ func _start_rejoin() -> void:
 	_rejoining = true
 	_rejoin_t = 0.0
 	GameState.net_freeze = false
+	# Resume in place after the reconnect instead of back at spawn
+	var my_id: int = 1
+	if NetworkManager._peer != null:
+		my_id = multiplayer.get_unique_id()
+	var me: Node = _players.get(my_id)
+	if me != null:
+		GameState.rejoin_pos = me.position
 	var lay: CanvasLayer = CanvasLayer.new()
 	lay.layer = 90
 	var lbl: Label = Label.new()
-	lbl.text = "⟳  Reconnecting…"
+	lbl.text = "Reconnecting..."
 	lbl.add_theme_font_size_override("font_size", 30)
 	lbl.add_theme_color_override("font_color", Color(1, 1, 1))
 	lbl.add_theme_color_override("font_outline_color", Color(0, 0, 0))

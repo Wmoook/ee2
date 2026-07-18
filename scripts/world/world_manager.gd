@@ -2006,11 +2006,15 @@ func send_world_to_peer(peer_id: int) -> void:
 ## Network-aware polyline add
 func net_add_polyline(pts: PackedVector2Array, side: String, block_id: int) -> void:
 	add_polyline(pts, side, block_id)
-	# Serialize points for network
-	var pts_arr: Array = []
-	for p in pts:
-		pts_arr.append({"x": p.x, "y": p.y})
-	_pending_net_polylines.append({"pts": pts_arr, "side": side, "bid": block_id})
+	# Flat float array on the wire: ~10x smaller than per-point dicts — a
+	# 4000-pt curve is ~32KB instead of ~200KB (single giant WS messages
+	# stress the edge and slow every peer's re-apply)
+	var flat: PackedFloat32Array = PackedFloat32Array()
+	flat.resize(pts.size() * 2)
+	for i in range(pts.size()):
+		flat[i * 2] = pts[i].x
+		flat[i * 2 + 1] = pts[i].y
+	_pending_net_polylines.append({"f": flat, "side": side, "bid": block_id})
 
 ## Network-aware free block remove by index (syncs by position)
 func net_remove_free_block(idx: int) -> void:

@@ -80,6 +80,20 @@ static func resolve_and_clip(p, prev_x: float, prev_y: float) -> Array:
 				cb = c
 		if ca.is_empty():
 			break
+		# In a shallow CONVERGING corridor there is no valid spot at this
+		# depth-x: the solver must push back ALONG the corridor. With only
+		# the penetrating contact it ping-pongs (resolve one arm -> the
+		# other penetrates) and exits its passes ~2px inside one arm. Let a
+		# TOUCHING opposing contact act as the second constraint so the
+		# 2-contact solve (or the dead-pinch stop) sees both walls.
+		if cb.is_empty():
+			var best_t: float = -TOUCH
+			for c in contacts:
+				if c.depth > 0.01 or c.depth <= -TOUCH:
+					continue
+				if c.n.dot(ca.n) < 0.5 and c.depth > best_t:
+					best_t = c.depth
+					cb = c
 		var push: Vector2
 		if not cb.is_empty():
 			var na: Vector2 = ca.n

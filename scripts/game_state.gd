@@ -11,6 +11,7 @@ var state_channels: Dictionary = {}
 var player_name: String = "Player"
 var player_smiley_id: int = -1  # -1 = DREAMER ball; 0..187 EE smileys; 188..375 gold
 var net_freeze: bool = false    # online 3-2-1-GO: input locked until GO
+var rejoin_pos: Vector2 = Vector2.INF  # respawn HERE after an auto-rejoin (drop mid-run)
 
 func save_profile() -> void:
 	var f: FileAccess = FileAccess.open("user://profile.json", FileAccess.WRITE)

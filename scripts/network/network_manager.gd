@@ -347,13 +347,24 @@ func _receive_polylines(poly_data: Array) -> void:
 	if is_host and sender != 0 and not _world_edit_ok(sender):
 		return
 	for pl in poly_data:
-		var pts: PackedVector2Array = PackedVector2Array()
-		for p in pl.pts:
-			pts.append(Vector2(p.x, p.y))
-		WorldManager.add_polyline(pts, pl.side, pl.bid)
+		WorldManager.add_polyline(_decode_poly_pts(pl), pl.side, pl.bid)
 	if is_host and sender != 0:
 		for pid in _relay_ids(sender):
 			_receive_polylines.rpc_id(pid, poly_data)
+
+static func _decode_poly_pts(pl: Dictionary) -> PackedVector2Array:
+	## Flat PackedFloat32Array ("f") with legacy {x,y}-dict fallback ("pts")
+	## so stale cached clients keep working across the encoding change.
+	var pts: PackedVector2Array = PackedVector2Array()
+	if pl.has("f"):
+		var flat: PackedFloat32Array = pl.f
+		pts.resize(flat.size() / 2)
+		for i in range(pts.size()):
+			pts[i] = Vector2(flat[i * 2], flat[i * 2 + 1])
+	else:
+		for p in pl.get("pts", []):
+			pts.append(Vector2(p.x, p.y))
+	return pts
 
 func send_deletions(deletions: Array) -> void:
 	if _peer == null:
@@ -382,17 +393,20 @@ func _receive_deletions(deletions: Array) -> void:
 func send_poly_fullsync() -> void:
 	if _peer == null:
 		return
-	# Serialize all non-collision-only, non-render-only polylines
+	# Serialize all non-collision-only, non-render-only polylines (flat floats)
 	var poly_data: Array = []
 	for poly in WorldManager.polylines:
 		if poly.get("collision_only", false):
 			continue
 		if poly.get("render_only", false):
 			continue
-		var pts_arr: Array = []
-		for pt in poly.points:
-			pts_arr.append({"x": pt.x, "y": pt.y})
-		poly_data.append({"pts": pts_arr, "side": poly.side, "bid": poly.get("block_id", 9)})
+		var pts: PackedVector2Array = poly.points
+		var flat: PackedFloat32Array = PackedFloat32Array()
+		flat.resize(pts.size() * 2)
+		for i in range(pts.size()):
+			flat[i * 2] = pts[i].x
+			flat[i * 2 + 1] = pts[i].y
+		poly_data.append({"f": flat, "side": poly.side, "bid": poly.get("block_id", 9)})
 	_receive_poly_fullsync.rpc(poly_data)
 
 @rpc("any_peer", "reliable", "call_remote")
@@ -403,10 +417,7 @@ func _receive_poly_fullsync(poly_data: Array) -> void:
 	# Replace ALL polylines with the received set
 	WorldManager.polylines.clear()
 	for pd in poly_data:
-		var packed_pts: PackedVector2Array = PackedVector2Array()
-		for pt in pd.pts:
-			packed_pts.append(Vector2(pt.x, pt.y))
-		WorldManager.add_polyline(packed_pts, pd.side, pd.get("bid", 9))
+		WorldManager.add_polyline(_decode_poly_pts(pd), pd.side, pd.get("bid", 9))
 	WorldManager.polylines_changed.emit()
 	# Server relays
 	if is_host and _fs_sender != 0:
