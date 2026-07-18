@@ -875,7 +875,7 @@ func _on_np_failed() -> void:
 		_set_lobby_list_message("Could not reach the server — try again.")
 
 func _on_np_lost() -> void:
-	status_label.text = "Lost connection to the server."
+	status_label.text = "Lost connection — if this repeats, press Ctrl+Shift+R to update."
 	if join_world_btn:
 		join_world_btn.disabled = false
 	if _overlay.visible:

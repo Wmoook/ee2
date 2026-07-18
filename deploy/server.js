@@ -61,6 +61,7 @@ for (const f of fs.readdirSync(WEB_ROOT)) {
   const buf = fs.readFileSync(full);
   const entry = { buf, type: MIME[path.extname(f)] || "application/octet-stream", gz: null };
   if (buf.length > 8192) entry.gz = zlib.gzipSync(buf, { level: 6 });
+  entry.etag = '"' + require("crypto").createHash("sha1").update(buf).digest("hex").slice(0, 16) + '"';
   cache.set("/" + f, entry);
 }
 cache.set("/", cache.get("/index.html"));
@@ -80,10 +81,20 @@ const server = http.createServer((req, res) => {
     res.end("not found");
     return;
   }
+  // no-cache = browsers KEEP the bytes but revalidate every load (ETag 304
+  // when unchanged). Fixed-name assets with max-age served STALE clients for
+  // up to 1h after a deploy — mismatched RPC tables randomly killed their
+  // connections mid-game ("server kicked me").
   const headers = {
     "Content-Type": e.type,
-    "Cache-Control": url === "/" || url.endsWith(".html") ? "no-cache" : "public, max-age=3600",
+    "Cache-Control": "no-cache",
+    "ETag": e.etag,
   };
+  if (req.headers["if-none-match"] === e.etag) {
+    res.writeHead(304, headers);
+    res.end();
+    return;
+  }
   const acceptGz = /\bgzip\b/.test(req.headers["accept-encoding"] || "");
   if (e.gz && acceptGz) {
     headers["Content-Encoding"] = "gzip";

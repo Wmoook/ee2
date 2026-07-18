@@ -10,6 +10,11 @@ var selected_category: int = 0
 var state_channels: Dictionary = {}
 var player_name: String = "Player"
 var player_smiley_id: int = -1  # -1 = DREAMER ball; 0..187 EE smileys; 188..375 gold
+## Netcode build tag: BUMP whenever any @rpc method is added/removed/renamed
+## anywhere (Godot matches RPCs by table index — mixed builds misroute calls
+## and connections die randomly). The server refuses mismatched clients at
+## HELLO so a stale tab fails fast instead of mid-game.
+const NET_BUILD: String = "v19"
 var net_freeze: bool = false    # online 3-2-1-GO: input locked until GO
 var rejoin_pos: Vector2 = Vector2.INF  # respawn HERE after an auto-rejoin (drop mid-run)
 

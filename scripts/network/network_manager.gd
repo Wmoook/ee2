@@ -205,7 +205,7 @@ func _on_peer_disconnected(id: int) -> void:
 	player_disconnected.emit(id)
 
 func _on_connected_to_server() -> void:
-	var info: Dictionary = {"name": GameState.player_name, "smiley_id": GameState.player_smiley_id}
+	var info: Dictionary = {"name": GameState.player_name, "smiley_id": GameState.player_smiley_id, "ver": GameState.NET_BUILD}
 	_register_player.rpc_id(1, JSON.stringify(info))
 	connection_succeeded.emit()
 

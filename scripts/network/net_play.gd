@@ -189,7 +189,7 @@ func _on_conn_ok() -> void:
 		return  # LAN flow (main_menu handles it)
 	connecting = false
 	online = true
-	rq_hello.rpc_id(1, {"name": GameState.player_name, "smiley_id": GameState.player_smiley_id})
+	rq_hello.rpc_id(1, {"name": GameState.player_name, "smiley_id": GameState.player_smiley_id, "ver": GameState.NET_BUILD})
 	if _want_world_after_connect:
 		_want_world_after_connect = false
 		rq_join_world.rpc_id(1)
@@ -234,6 +234,12 @@ func server_peer_left(id: int) -> void:
 	print("[NetPlay] peer %d left (%d online)" % [id, _peers.size()])
 
 func _server_hello(id: int, info: Dictionary) -> void:
+	# Stale cached client (old RPC table): refuse NOW with a clean drop —
+	# mixed builds misroute RPC indices and die randomly mid-game otherwise.
+	if str(info.get("ver", "")) != GameState.NET_BUILD:
+		print("[net] peer %d REFUSED: build '%s' != '%s' (stale cache — needs refresh)" % [id, str(info.get("ver", "?")), GameState.NET_BUILD])
+		multiplayer.multiplayer_peer.disconnect_peer(id)
+		return
 	_peers[id] = {
 		"name": str(info.get("name", "Player")).substr(0, 20),
 		"smiley_id": clampi(int(info.get("smiley_id", -1)), -1, 375),
