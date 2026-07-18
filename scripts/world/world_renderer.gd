@@ -86,9 +86,13 @@ func _on_world_loaded_grid() -> void:
 		_full_grid_sync()
 
 func _start_grid_bake() -> void:
-	# Every id that can appear in a cell: the palette + every registered
-	# custom texture (maps place BG ids that aren't in the palette) + slopes
+	# Every id that can appear in a cell: the ENTIRE block database (the world
+	# BORDER is id 9 and the classic EE bricks aren't in the palette at all),
+	# plus custom textures (maps place BG ids directly) and slopes.
 	var ids: Dictionary = {}
+	for dbid in GameState._block_db:
+		if dbid is int and dbid > 0:
+			ids[dbid] = true
 	for pid in GameState.BLOCK_PALETTE:
 		if pid > 0:
 			ids[pid] = true

@@ -816,34 +816,7 @@ func _input(event: InputEvent) -> void:
 		if event is InputEventMouseMotion and Input.is_action_pressed("place_block"):
 			_place_aligned = true
 		if _place_aligned:
-			var snap_pos: Vector2 = _get_aligned_snap(get_global_mouse_position())
-			# Fill line from last placed to current (prevents skipping at speed)
-			var positions: Array = [snap_pos]
-			if _last_align_place.x > -99000:
-				var dist: float = snap_pos.distance_to(_last_align_place)
-				if dist > 17.0:
-					var steps: int = int(ceil(dist / 16.0))
-					positions.clear()
-					for si in range(steps + 1):
-						var frac: float = float(si) / float(steps)
-						var interp: Vector2 = _last_align_place.lerp(snap_pos, frac)
-						var isnap: Vector2 = _get_aligned_snap(interp)
-						if positions.is_empty() or positions[-1].distance_to(isnap) > 2.0:
-							positions.append(isnap)
-			var is_bg: bool = Input.is_key_pressed(KEY_TAB)
-			for ppos in positions:
-				var same_block: bool = false
-				for fb in WorldManager.free_blocks:
-					if fb.pos.distance_to(ppos) < 2.0 and fb.id == GameState.selected_block_id and fb.get("bg", false) == is_bg:
-						same_block = true
-						break
-				if not same_block:
-					var new_fb: Dictionary = {"pos": ppos, "id": GameState.selected_block_id, "rotation": _align_angle}
-					if is_bg:
-						new_fb["bg"] = true
-					WorldManager.net_add_free_block(new_fb)
-			_last_align_place = snap_pos
-			queue_redraw()
+			_aligned_paint_at_mouse()
 		if event.is_action_pressed("remove_block"):
 			_save_undo()  # Save once at start of erase drag
 		if event.is_action_pressed("remove_block") or (event is InputEventMouseMotion and Input.is_action_pressed("remove_block")):
@@ -1158,6 +1131,7 @@ func _on_spin_pressed() -> void:
 
 var _c_was_pressed: bool = false
 func _process(_delta: float) -> void:
+	_held_paint_poll()
 	# C key for curve mode (polled to avoid input consumption issues)
 	if GameState.is_edit_mode:
 		var c_now: bool = Input.is_physical_key_pressed(KEY_C)
@@ -1549,6 +1523,63 @@ func _get_selection_center_world() -> Vector2:
 func _get_tile() -> Vector2i:
 	var m: Vector2 = get_global_mouse_position()
 	return Vector2i(int(floor(m.x / 16.0)), int(floor(m.y / 16.0)))
+
+func _aligned_paint_at_mouse() -> void:
+	## One aligned-mode paint step at the current mouse position (shared by
+	## mouse-motion drags AND the camera-move poll in _process).
+	var snap_pos: Vector2 = _get_aligned_snap(get_global_mouse_position())
+	# Fill line from last placed to current (prevents skipping at speed)
+	var positions: Array = [snap_pos]
+	if _last_align_place.x > -99000:
+		var dist: float = snap_pos.distance_to(_last_align_place)
+		if dist > 17.0:
+			var steps: int = int(ceil(dist / 16.0))
+			positions.clear()
+			for si in range(steps + 1):
+				var frac: float = float(si) / float(steps)
+				var interp: Vector2 = _last_align_place.lerp(snap_pos, frac)
+				var isnap: Vector2 = _get_aligned_snap(interp)
+				if positions.is_empty() or positions[-1].distance_to(isnap) > 2.0:
+					positions.append(isnap)
+	var is_bg: bool = Input.is_key_pressed(KEY_TAB)
+	for ppos in positions:
+		var same_block: bool = false
+		for fb in WorldManager.free_blocks:
+			if fb.pos.distance_to(ppos) < 2.0 and fb.id == GameState.selected_block_id and fb.get("bg", false) == is_bg:
+				same_block = true
+				break
+		if not same_block:
+			var new_fb: Dictionary = {"pos": ppos, "id": GameState.selected_block_id, "rotation": _align_angle}
+			if is_bg:
+				new_fb["bg"] = true
+			WorldManager.net_add_free_block(new_fb)
+	_last_align_place = snap_pos
+	queue_redraw()
+
+func _held_paint_poll() -> void:
+	## Holding LMB/RMB and MOVING (walking, camera pan) produces no mouse-
+	## motion events — but the hovered tile still changes. Poll the held
+	## buttons every frame so painting/erasing follows the camera. Same
+	## guards as the motion-event path.
+	if not GameState.is_edit_mode or _is_mouse_over_ui():
+		return
+	if _line_mode or _curve_mode or _grav_zone_mode or _sel_dragging \
+			or _shift_dragging or _rot_dragging or _ctrl_line_active or _line_drawing:
+		return
+	if Input.is_key_pressed(KEY_SHIFT) or Input.is_key_pressed(KEY_CTRL):
+		return
+	if Input.is_action_pressed("place_block"):
+		if _align_mode:
+			if not _align_has_sel and _last_align_place.x > -99000:
+				_aligned_paint_at_mouse()
+		else:
+			var t: Vector2i = _get_tile()
+			if t != _last_place and _last_place.x > -900:
+				_place_at(t)
+				_last_place = t
+	elif Input.is_action_pressed("remove_block"):
+		if not _align_mode:
+			_erase_at(_get_tile())
 
 func _place_at(t: Vector2i) -> void:
 	if t.x <= 0 or t.x >= WorldManager.world_width - 1: return

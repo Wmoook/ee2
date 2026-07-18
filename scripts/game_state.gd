@@ -182,6 +182,7 @@ func get_category_color(i: int) -> Color:
 
 # Display names for every custom block (palette tooltips + info bar).
 var custom_block_names: Dictionary = {
+	9: "World Border",
 	5000: "Dream Slab", 5001: "Dream Panel", 5002: "Dream Tile", 5003: "Dream Plate", 5004: "Dream Core",
 	5005: "Arena Plate", 5006: "Hazard Core", 5007: "Arena Rail", 5008: "Arena Vent", 5009: "Arena Glass", 5010: "Plasma Spike",
 	5011: "Obsidian Wall", 5012: "Ribbed Floor", 5013: "Rune Core", 5014: "Void Fill", 5015: "Warden Energy",
@@ -324,6 +325,12 @@ func _register_custom_blocks() -> void:
 			"path": "res://assets/sprites/BLOCK_PACKS/%d.png" % mp_id,
 			"path16": "res://assets/sprites/BLOCK_PACKS/%d_16.png" % mp_id,
 			"bg_off": 1000})
+	# The world BORDER (id 9) wears the standard block art — identical to the
+	# normal blocks in the game instead of the legacy EE gray brick.
+	custom_blocks.append({"id": 9,
+		"path": "res://assets/sprites/NEW_BLOCK_SPRITE/block_1.png",
+		"path16": "res://assets/sprites/NEW_BLOCK_SPRITE/block_1_16.png",
+		"no_bg": true})  # id 9+100=109 is a REAL EE block — no BG twin here
 	for cb in custom_blocks:
 		var tex: Texture2D = load(cb.path) as Texture2D
 		var tex16: Texture2D = load(cb.path16) as Texture2D
@@ -333,6 +340,8 @@ func _register_custom_blocks() -> void:
 				_custom_block_textures[cb.id * -1] = tex16  # 16x16 for grid (negative key)
 			_block_db[cb.id] = {"atlas": "custom", "layer": "foreground", "artoffset": 0, "custom_tex": true}
 			_solid_set[cb.id] = true
+			if cb.get("no_bg", false):
+				continue
 			# Register BG version — same texture, background layer. Classic
 			# customs use +100; the 6000-range mega packs use +1000.
 			var bg_id: int = cb.id + int(cb.get("bg_off", 100))
