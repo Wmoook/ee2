@@ -183,13 +183,8 @@ static func gather_contacts(cx: float, cy: float, ref_x: float, ref_y: float) ->
 		var cs: int = shash.get("cell_size", 32)
 		var gx: int = int(floor(cx / cs))
 		var gy: int = int(floor(cy / cs))
-		var best_d: float = 999999.0
-		var best_si: int = -1
-		var best_on: Vector2 = Vector2.ZERO
-		var sec_d: float = 999999.0
-		var sec_si: int = -1
-		var sec_on: Vector2 = Vector2.ZERO
 		var checked: Dictionary = {}
+		var cands: Array = []  # [dist, seg_idx, on_pt] within reach
 		for dx in range(-2, 3):
 			for dy in range(-2, 3):
 				var key: int = (gx + dx) * 10000 + (gy + dy)
@@ -206,23 +201,38 @@ static func gather_contacts(cx: float, cy: float, ref_x: float, ref_y: float) ->
 					var t: float = clampf((Vector2(cx, cy) - sa).dot(ab) / maxf(ab.dot(ab), 0.001), 0.0, 1.0)
 					var on_pt: Vector2 = sa + ab * t
 					var d: float = Vector2(cx, cy).distance_to(on_pt)
-					if d < best_d:
-						if best_si >= 0 and abs(si - best_si) > BRANCH_GAP and best_d < sec_d:
-							sec_d = best_d
-							sec_si = best_si
-							sec_on = best_on
-						best_d = d
-						best_si = si
-						best_on = on_pt
-					elif best_si >= 0 and abs(si - best_si) > BRANCH_GAP and d < sec_d:
-						sec_d = d
-						sec_si = si
-						sec_on = on_pt
-		if best_si < 0 or best_d >= max_d:
+					if d < max_d:
+						cands.append([d, si, on_pt])
+		if cands.is_empty():
 			continue
+		var bi: int = 0
+		for ci in range(1, cands.size()):
+			if cands[ci][0] < cands[bi][0]:
+				bi = ci
+		var best_d: float = cands[bi][0]
+		var best_si: int = cands[bi][1]
+		var best_on: Vector2 = cands[bi][2]
 		out.append(_make_contact(cx, cy, ref_x, ref_y, best_d, best_on, pi))
-		if sec_si >= 0 and sec_d < max_d and abs(sec_si - best_si) > BRANCH_GAP and sec_on.distance_to(best_on) > 6.0:
-			out.append(_make_contact(cx, cy, ref_x, ref_y, sec_d, sec_on, pi))
+		# Second branch = closest candidate whose contact DIRECTION genuinely
+		# differs (the other wall of a hairpin). A pure index-gap rule failed
+		# near hairpin vertices — the two walls are arc-CLOSE there, so the
+		# wedge lost its second contact (no cradle grounding -> no jump).
+		var bdir: Vector2 = Vector2(cx, cy) - best_on
+		bdir = bdir.normalized() if bdir.length() > 0.01 else Vector2.ZERO
+		var sec_i: int = -1
+		var sec_d: float = max_d
+		for ci in range(cands.size()):
+			if ci == bi or cands[ci][0] >= sec_d:
+				continue
+			if (cands[ci][2] as Vector2).distance_to(best_on) <= 6.0 or absi(cands[ci][1] - best_si) <= 2:
+				continue
+			var cdir: Vector2 = Vector2(cx, cy) - (cands[ci][2] as Vector2)
+			cdir = cdir.normalized() if cdir.length() > 0.01 else Vector2.ZERO
+			if bdir.dot(cdir) < 0.7 or absi(cands[ci][1] - best_si) > BRANCH_GAP:
+				sec_d = cands[ci][0]
+				sec_i = ci
+		if sec_i >= 0:
+			out.append(_make_contact(cx, cy, ref_x, ref_y, cands[sec_i][0], cands[sec_i][2], pi))
 	return out
 
 
